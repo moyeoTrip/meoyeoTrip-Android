@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.MoyeoTrip" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">@drawable/splash_window_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:statusBarColor">@color/soft_leaf</item>
+        <item name="android:navigationBarColor">@color/cream_background</item>
+    </style>
+</resources>

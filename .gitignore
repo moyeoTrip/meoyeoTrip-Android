@@ -1,0 +1,41 @@
+# macOS and IDE state
+.DS_Store
+*.iml
+.idea/
+
+# Gradle and Kotlin output
+.gradle/
+.kotlin/
+**/build/
+
+# Local Android configuration
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Local service configuration
+**/google-services.json
+
+# Signing material
+*.jks
+*.keystore
+*.pem
+*.key
+keystore.properties
+signing.properties
+
+# Exported application packages
+*.apk
+*.aab
+
+# Test and tooling output
+*.hprof
+*.log
+test-results/
+reports/
+
+# Local environment files
+.env
+.env.*
+!.env.example
