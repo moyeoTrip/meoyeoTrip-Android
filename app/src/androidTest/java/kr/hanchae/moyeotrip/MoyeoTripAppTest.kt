@@ -306,6 +306,7 @@ class MoyeoTripAppTest {
     fun googleLoginJoinsTheServerDrivenSignupFlow() {
         openAuthLogin()
 
+        composeRule.onNodeWithTag("auth-login-welcome-image").assertIsDisplayed()
         val kakaoTop = composeRule.onNodeWithTag("auth-login-kakao").getUnclippedBoundsInRoot().top
         val googleTop = composeRule.onNodeWithTag("auth-login-google").getUnclippedBoundsInRoot().top
         val emailTop = composeRule.onNodeWithTag("auth-login-email").getUnclippedBoundsInRoot().top
@@ -315,6 +316,13 @@ class MoyeoTripAppTest {
             val bounds = composeRule.onNodeWithTag(tag).getUnclippedBoundsInRoot()
             assertEquals(54.dp, bounds.bottom - bounds.top)
         }
+        val iconSlotLefts = listOf("kakao", "google", "email", "apple").map { provider ->
+            composeRule
+                .onNodeWithTag("auth-login-$provider-icon-slot", useUnmergedTree = true)
+                .getUnclippedBoundsInRoot()
+                .left
+        }
+        iconSlotLefts.drop(1).forEach { left -> assertEquals(iconSlotLefts.first(), left) }
         composeRule.onNodeWithContentDescription("Google G", useUnmergedTree = true).assertIsDisplayed()
         composeRule.onNodeWithText("Google로 계속하기").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Apple로 계속하기").assertIsDisplayed()
@@ -322,7 +330,7 @@ class MoyeoTripAppTest {
         composeRule.waitUntil(timeoutMillis = 5_000) {
             composeRule.onAllNodesWithTag("auth-nickname-option-0").fetchSemanticsNodes().isNotEmpty()
         }
-        composeRule.onNodeWithText("어떤 친구로\n시작할까요?").assertIsDisplayed()
+        composeRule.onNodeWithText("어떤 친구로 시작할까요?").assertIsDisplayed()
     }
 
     @Test

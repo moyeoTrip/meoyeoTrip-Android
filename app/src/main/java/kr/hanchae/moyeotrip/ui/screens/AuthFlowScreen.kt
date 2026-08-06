@@ -1,7 +1,6 @@
 package kr.hanchae.moyeotrip.ui.screens
 
 import android.app.DatePickerDialog
-import android.graphics.BitmapFactory
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -15,6 +14,7 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Star
@@ -53,7 +52,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -62,8 +60,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -78,13 +74,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.net.URL
 import java.time.LocalDate
 import java.util.Locale
-import kotlinx.coroutines.Dispatchers
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.auth.AuthDependencies
@@ -98,10 +92,8 @@ import kr.hanchae.moyeotrip.domain.auth.Gender
 import kr.hanchae.moyeotrip.domain.auth.NicknameCandidate
 import kr.hanchae.moyeotrip.domain.auth.NicknameSelectionState
 import kr.hanchae.moyeotrip.domain.auth.ProfileImageCandidate
-import kr.hanchae.moyeotrip.ui.theme.Coral
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
-import kr.hanchae.moyeotrip.ui.theme.SkyBlue
-import kr.hanchae.moyeotrip.ui.theme.SunYellow
 
 @Composable
 fun AuthFlowScreen(
@@ -134,6 +126,10 @@ fun AuthFlowScreen(
     var passwordConfirmation by rememberSaveable { mutableStateOf("") }
     var emailActionName by rememberSaveable { mutableStateOf(EmailAuthAction.SIGN_IN.name) }
     val step = AuthStep.valueOf(stepName)
+
+    LaunchedEffect(coordinator) {
+        coordinator.restoreSession()
+    }
 
     LaunchedEffect(authState.destination) {
         when (authState.destination) {
@@ -424,12 +420,7 @@ private fun SplashStep(onNext: () -> Unit) {
 
 @Composable
 private fun OnboardingStep(page: OnboardingPage, onNext: () -> Unit) {
-    AuthHeroPanel(
-        icon = page.icon,
-        title = page.title,
-        subtitle = page.subtitle,
-        accentColor = page.accentColor
-    )
+    AuthOnboardingHeroPanel(page = page)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
@@ -467,6 +458,21 @@ private fun LoginStep(
     onProviderClick: (AuthProvider) -> Unit,
     onRetry: () -> Unit
 ) {
+    val welcomeImage = if (isSystemInDarkTheme()) {
+        R.drawable.login_welcome_night
+    } else {
+        R.drawable.login_welcome
+    }
+    Image(
+        painter = painterResource(welcomeImage),
+        contentDescription = "첨성대 앞에서 여행을 시작하는 모여트립 친구들",
+        modifier = Modifier
+            .fillMaxWidth()
+            .aspectRatio(16f / 9f)
+            .clip(RoundedCornerShape(12.dp))
+            .testTag("auth-login-welcome-image"),
+        contentScale = ContentScale.Crop
+    )
     StepTitle(
         title = "모여트립에 오신 걸 환영해요",
         subtitle = "30초 안에 시작할 수 있어요"
@@ -562,7 +568,6 @@ private fun BrandedLoginButton(
     contentColor: Color,
     enabled: Boolean,
     onClick: () -> Unit,
-    iconStartPadding: androidx.compose.ui.unit.Dp = 12.dp,
     border: BorderStroke? = null
 ) {
     Surface(
@@ -578,16 +583,21 @@ private fun BrandedLoginButton(
         border = border
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            Image(
-                painter = painterResource(icon),
-                contentDescription = iconDescription,
+            Box(
                 modifier = Modifier
-                    .padding(start = iconStartPadding)
-                    .size(iconSize)
+                    .size(width = 58.dp, height = 54.dp)
+                    .testTag("$tag-icon-slot")
                     .align(Alignment.CenterStart),
-                contentScale = ContentScale.Fit,
-                alpha = if (enabled) 1f else 0.5f
-            )
+                contentAlignment = Alignment.Center
+            ) {
+                Image(
+                    painter = painterResource(icon),
+                    contentDescription = iconDescription,
+                    modifier = Modifier.size(iconSize),
+                    contentScale = ContentScale.Fit,
+                    alpha = if (enabled) 1f else 0.5f
+                )
+            }
             Text(
                 text = text,
                 fontSize = 15.sp,
@@ -1103,7 +1113,7 @@ private fun ProfileImageGeneratingCard(nickname: String?) {
     var elapsedSeconds by remember { mutableStateOf(0) }
     LaunchedEffect(Unit) {
         while (true) {
-            delay(1_000)
+            delay(1_000.milliseconds)
             elapsedSeconds += 1
         }
     }
@@ -1239,31 +1249,12 @@ private fun ProfileImageCandidateCard(
 
 @Composable
 private fun ProfileImageThumbnail(candidate: ProfileImageCandidate) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = candidate.profileImageUrl) {
-        val isRemoteImage =
-            candidate.profileImageUrl.startsWith("https://") ||
-                candidate.profileImageUrl.startsWith("http://")
-        value =
-            if (isRemoteImage) {
-                withContext(Dispatchers.IO) {
-                    runCatching {
-                        URL(candidate.profileImageUrl).openStream().use {
-                            BitmapFactory.decodeStream(it)?.asImageBitmap()
-                        }
-                    }.getOrNull()
-                }
-            } else {
-                null
-            }
-    }
-    if (bitmap != null) {
-        Image(
-            bitmap = requireNotNull(bitmap),
-            contentDescription = "생성된 프로필 이미지",
-            modifier = Modifier.fillMaxSize(),
-            contentScale = ContentScale.Crop
-        )
-    } else {
+    CachedRemoteImage(
+        url = candidate.profileImageUrl,
+        contentDescription = "생성된 프로필 이미지",
+        modifier = Modifier.fillMaxSize(),
+        contentScale = ContentScale.Crop
+    ) {
         Text(text = "🧭", style = MaterialTheme.typography.headlineMedium)
     }
 }
@@ -1720,6 +1711,50 @@ private fun AuthHeroPanel(icon: ImageVector, title: String, subtitle: String, ac
 }
 
 @Composable
+private fun AuthOnboardingHeroPanel(page: OnboardingPage) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(18.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(
+            modifier = Modifier.padding(24.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Image(
+                painter = painterResource(page.imageRes),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(220.dp)
+                    .clip(RoundedCornerShape(24.dp))
+                    .testTag("auth-onboarding-illustration-${page.number}")
+            )
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text(
+                    text = page.title,
+                    style = MaterialTheme.typography.headlineMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = page.subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
+}
+
+@Composable
 private fun StepTitle(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
@@ -1799,18 +1834,24 @@ private fun ProviderButton(
         ) {
             Box(
                 modifier = Modifier
-                    .padding(start = 12.dp)
-                    .size(26.dp)
-                    .background(markBackground, CircleShape)
+                    .size(width = 58.dp, height = 54.dp)
+                    .testTag("$tag-icon-slot")
                     .align(Alignment.CenterStart),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = mark,
-                    fontSize = 15.sp,
-                    color = markColor,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Box(
+                    modifier = Modifier
+                        .size(26.dp)
+                        .background(markBackground, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = mark,
+                        fontSize = 15.sp,
+                        color = markColor,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
             Text(
                 text = text,
@@ -2054,8 +2095,7 @@ private data class OnboardingPage(
     val subtitle: String,
     val badge: String,
     val body: String,
-    val icon: ImageVector,
-    val accentColor: Color
+    val imageRes: Int
 )
 
 private fun onboardingPageFor(step: AuthStep): OnboardingPage = when (step) {
@@ -2065,8 +2105,7 @@ private fun onboardingPageFor(step: AuthStep): OnboardingPage = when (step) {
         subtitle = "날씨와 취향에 맞춰 추천해요",
         badge = "1/3",
         body = "날씨와 취향에 맞춰 오늘 떠나기 좋은 코스를 추천해요.",
-        icon = Icons.Filled.Favorite,
-        accentColor = Coral
+        imageRes = R.drawable.onboarding_1
     )
 
     AuthStep.ONBOARDING_TWO -> OnboardingPage(
@@ -2075,8 +2114,7 @@ private fun onboardingPageFor(step: AuthStep): OnboardingPage = when (step) {
         subtitle = "모집 확정 후 바로 대화해요",
         badge = "2/3",
         body = "모집이 확정되면 바로 대화가 시작돼요.",
-        icon = Icons.Filled.CalendarToday,
-        accentColor = SkyBlue
+        imageRes = R.drawable.onboarding_2
     )
 
     else -> OnboardingPage(
@@ -2085,7 +2123,6 @@ private fun onboardingPageFor(step: AuthStep): OnboardingPage = when (step) {
         subtitle = "경로 피드와 도감으로 남겨요",
         badge = "3/3",
         body = "경로 피드와 도감으로 함께한 순간을 남겨요.",
-        icon = Icons.Filled.Star,
-        accentColor = SunYellow
+        imageRes = R.drawable.onboarding_3
     )
 }

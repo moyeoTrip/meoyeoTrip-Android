@@ -1,5 +1,7 @@
 package kr.hanchae.moyeotrip.domain.auth
 
+import kr.hanchae.moyeotrip.data.auth.AuthApiException
+
 enum class AuthDestination {
     LOGIN,
     NICKNAME,
@@ -37,6 +39,64 @@ class AuthFlowCoordinator(
 ) {
     var state: AuthFlowState = AuthFlowState()
         private set
+
+    suspend fun restoreSession() {
+        val stored = sessionStore.current
+        val refreshToken = stored.refreshToken
+        val provider = stored.provider
+        if (refreshToken.isNullOrBlank() || provider == null) {
+            if (stored.accessToken != null || stored.signupState != null || stored.provider != null) {
+                sessionStore.clear()
+            }
+            return
+        }
+
+        update(state.copy(isLoading = true, errorMessage = null, noticeMessage = null))
+        runCatching { authGateway.refresh(refreshToken) }
+            .onSuccess { refreshed ->
+                sessionStore.saveSignup(provider, refreshed)
+                userProfileStore.updateFromAccessToken(refreshed.accessToken)
+                when (refreshed.signupState) {
+                    SignupState.SIGNUP_COMPLETE -> {
+                        runCatching { authGateway.profileImages(refreshed.accessToken) }
+                            .getOrNull()
+                            ?.candidates
+                            ?.firstOrNull(ProfileImageCandidate::selected)
+                            ?.profileImageUrl
+                            ?.let(userProfileStore::saveProfileImage)
+                        update(state.copy(destination = AuthDestination.COMPLETE, isLoading = false))
+                    }
+
+                    SignupState.PROFILE_IMAGE_REQUIRED -> {
+                        runCatching { authGateway.profileImages(refreshed.accessToken) }
+                            .onSuccess { images ->
+                                update(
+                                    state.copy(
+                                        destination = AuthDestination.PROFILE_IMAGE,
+                                        profileImages = images,
+                                        selectedProfileImageId = images.selectedCandidateId,
+                                        isLoading = false
+                                    )
+                                )
+                            }
+                            .onFailure(::showError)
+                    }
+
+                    SignupState.USER_INFO_REQUIRED -> {
+                        sessionStore.clear()
+                        userProfileStore.clear()
+                        update(state.copy(destination = AuthDestination.LOGIN, isLoading = false))
+                    }
+                }
+            }
+            .onFailure { error ->
+                if (error is AuthApiException && error.statusCode in setOf(400, 401, 404)) {
+                    sessionStore.clear()
+                    userProfileStore.clear()
+                }
+                showError(error)
+            }
+    }
 
     suspend fun login(provider: AuthProvider) {
         require(provider != AuthProvider.EMAIL) { "이메일은 이메일 로그인 화면에서 진행해 주세요." }

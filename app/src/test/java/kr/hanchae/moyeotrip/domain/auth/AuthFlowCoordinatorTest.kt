@@ -9,6 +9,64 @@ import org.junit.Test
 
 class AuthFlowCoordinatorTest {
     @Test
+    fun storedCompleteSessionIsValidatedAndRefreshedAtStartup() = runBlocking {
+        val store = InMemoryAuthSessionStore().apply {
+            saveSignup(
+                AuthProvider.GOOGLE,
+                ServiceSession("old-access", "old-refresh", SignupState.SIGNUP_COMPLETE)
+            )
+        }
+        val gateway = FakeAuthGateway(
+            refreshResult = ServiceSession("new-access", "new-refresh", SignupState.SIGNUP_COMPLETE)
+        )
+        val coordinator = coordinator(gateway, store)
+
+        coordinator.restoreSession()
+
+        assertEquals(AuthDestination.COMPLETE, coordinator.state.destination)
+        assertEquals("old-refresh", gateway.lastRefreshToken)
+        assertEquals("new-access", store.current.accessToken)
+        assertEquals("new-refresh", store.current.refreshToken)
+    }
+
+    @Test
+    fun storedIncompleteSessionResumesAtServerProfileImageStep() = runBlocking {
+        val images = profileImages(
+            listOf(ProfileImageCandidate(21, "https://cdn.example/21.png", true)),
+            generationCount = 1,
+            remainingCount = 2
+        )
+        val store = InMemoryAuthSessionStore().apply {
+            saveSignup(
+                AuthProvider.KAKAO,
+                ServiceSession("old-access", "old-refresh", SignupState.PROFILE_IMAGE_REQUIRED)
+            )
+        }
+        val gateway = FakeAuthGateway(
+            profileImages = images,
+            refreshResult = ServiceSession("new-access", "new-refresh", SignupState.PROFILE_IMAGE_REQUIRED)
+        )
+        val coordinator = coordinator(gateway, store)
+
+        coordinator.restoreSession()
+
+        assertEquals(AuthDestination.PROFILE_IMAGE, coordinator.state.destination)
+        assertEquals(21L, coordinator.state.selectedProfileImageId)
+        assertEquals(1, gateway.profileListRequests)
+    }
+
+    @Test
+    fun startupWithoutStoredRefreshTokenDoesNotCallServer() = runBlocking {
+        val gateway = FakeAuthGateway()
+        val coordinator = coordinator(gateway, InMemoryAuthSessionStore())
+
+        coordinator.restoreSession()
+
+        assertNull(gateway.lastRefreshToken)
+        assertEquals(AuthDestination.LOGIN, coordinator.state.destination)
+    }
+
+    @Test
     fun newUserFollowsNicknameInfoSignupAndProfileFlow() = runBlocking {
         val gateway = FakeAuthGateway()
         val sessionStore = InMemoryAuthSessionStore()
@@ -300,14 +358,25 @@ private class FakeAuthGateway(
         remainingGenerationCount = 3,
         signupState = SignupState.PROFILE_IMAGE_REQUIRED
     ),
-    private val generatedImages: ProfileImageCandidates = profileImages
+    private val generatedImages: ProfileImageCandidates = profileImages,
+    private val refreshResult: ServiceSession = ServiceSession(
+        "refreshed-access",
+        "refreshed-refresh",
+        SignupState.SIGNUP_COMPLETE
+    )
 ) : AuthGateway {
     var lastSignupInput: SignupInput? = null
     var profileListRequests: Int = 0
     var profileGenerationRequests: Int = 0
     var selectedProfileImageId: Long? = null
+    var lastRefreshToken: String? = null
 
     override suspend fun login(identity: IdentityToken): LoginResult = loginResult
+
+    override suspend fun refresh(refreshToken: String): ServiceSession {
+        lastRefreshToken = refreshToken
+        return refreshResult
+    }
 
     override suspend fun nicknameCandidates(): NicknameCandidateResponse = NicknameCandidateResponse(
         selectionToken = "selection-token",

@@ -1,7 +1,5 @@
 package kr.hanchae.moyeotrip.ui.screens
 
-import android.graphics.BitmapFactory
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -9,44 +7,27 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.TextUnit
-import java.net.URL
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 
 @Composable
 internal fun UserAvatar(imageUrl: String?, nickname: String?, modifier: Modifier, fallbackFontSize: TextUnit) {
-    val bitmap by produceState<ImageBitmap?>(initialValue = null, key1 = imageUrl) {
-        value = imageUrl?.takeIf { it.startsWith("https://") || it.startsWith("http://") }?.let { url ->
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    URL(url).openStream().use { BitmapFactory.decodeStream(it)?.asImageBitmap() }
-                }.getOrNull()
-            }
-        }
-    }
     Box(
         modifier = modifier
             .clip(CircleShape)
             .background(MaterialTheme.colorScheme.primaryContainer),
         contentAlignment = Alignment.Center
     ) {
-        if (bitmap != null) {
-            Image(
-                bitmap = requireNotNull(bitmap),
-                contentDescription = "내 프로필 이미지",
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop
-            )
-        } else {
+        CachedRemoteImage(
+            url = imageUrl,
+            contentDescription = "내 프로필 이미지",
+            modifier = Modifier.fillMaxSize(),
+            contentScale = ContentScale.Crop
+        ) {
             Text(text = nickname.animalEmoji(), fontSize = fallbackFontSize)
         }
     }

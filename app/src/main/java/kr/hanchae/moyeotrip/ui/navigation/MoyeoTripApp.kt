@@ -64,6 +64,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 import kr.hanchae.moyeotrip.data.auth.AuthDependencies
 import kr.hanchae.moyeotrip.ui.screens.AuthFlowScreen
@@ -120,9 +121,7 @@ fun MoyeoTripApp(startScreen: String? = null, skipStartupSplash: Boolean = false
             val authDependencies = remember(context) { AuthDependencies.appDefault(context) }
             val userProfile by authDependencies.userProfileStore.profile.collectAsState()
             val bypassAuthentication = skipAuthentication || startScreen != null
-            var authenticationComplete by remember(authDependencies) {
-                mutableStateOf(authDependencies.sessionStore.current.isAuthenticated)
-            }
+            var authenticationComplete by remember(authDependencies) { mutableStateOf(false) }
             LaunchedEffect(authDependencies, authenticationComplete) {
                 if (authenticationComplete) {
                     authDependencies.sessionStore.current.accessToken?.let { accessToken ->
@@ -161,8 +160,8 @@ fun MoyeoTripApp(startScreen: String? = null, skipStartupSplash: Boolean = false
                 label = "startupContentOffset"
             )
             val qaStartRequest = remember(startScreen) { QaStartRequest.parse(startScreen) }
-            val qaStartRoute = remember(qaStartRequest) { qaStartRequest?.toRoute() }
-            val qaStartsInExploreMap = qaStartRequest?.startsInExploreMap == true
+            val qaStartRoute = remember(qaStartRequest) { qaStartRequest.toRoute() }
+            val qaStartsInExploreMap = qaStartRequest.startsInExploreMap
             val navController = rememberNavController()
             val backStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = backStackEntry?.destination?.route
@@ -171,7 +170,7 @@ fun MoyeoTripApp(startScreen: String? = null, skipStartupSplash: Boolean = false
 
             LaunchedEffect(skipStartupSplash) {
                 if (!skipStartupSplash) {
-                    delay(STARTUP_SPLASH_HOLD_MILLIS)
+                    delay(STARTUP_SPLASH_HOLD_MILLIS.milliseconds)
                     showStartupSplash = false
                 }
             }
@@ -403,7 +402,7 @@ fun MoyeoTripApp(startScreen: String? = null, skipStartupSplash: Boolean = false
                         }
                     }
                 }
-                if (!showStartupSplash && !bypassAuthentication && !authenticationComplete) {
+                if (!bypassAuthentication && !authenticationComplete) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -477,7 +476,7 @@ internal data class QaStartRequest(private val key: String, private val identifi
     }
 
     companion object {
-        fun parse(value: String?): QaStartRequest? {
+        fun parse(value: String?): QaStartRequest {
             val rawValue = value?.trim().orEmpty()
             if (rawValue.isEmpty()) {
                 return QaStartRequest(key = "", identifier = null)
