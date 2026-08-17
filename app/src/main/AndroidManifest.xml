@@ -4,6 +4,7 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:name=".MoyeoTripApplication"
@@ -19,6 +20,17 @@
         <meta-data
             android:name="io.sentry.auto-init"
             android:value="false" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="moyeo_updates" />
+
+        <service
+            android:name=".notifications.MoyeoFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
         <activity
             android:name="com.kakao.sdk.auth.AuthCodeHandlerActivity"

@@ -3,10 +3,12 @@ package kr.hanchae.moyeotrip
 import android.app.Application
 import com.kakao.sdk.common.KakaoSdk
 import io.sentry.android.core.SentryAndroid
+import kr.hanchae.moyeotrip.notifications.MoyeoPushNotificationChannels
 
 class MoyeoTripApplication : Application() {
     override fun onCreate() {
         super.onCreate()
+        MoyeoPushNotificationChannels.create(this)
         if (BuildConfig.KAKAO_NATIVE_APP_KEY.isNotBlank()) {
             KakaoSdk.init(this, BuildConfig.KAKAO_NATIVE_APP_KEY)
         }

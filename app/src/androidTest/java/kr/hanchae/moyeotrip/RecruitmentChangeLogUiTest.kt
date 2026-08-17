@@ -106,6 +106,7 @@ class RecruitmentChangeLogUiTest {
     fun offlineStatesKeepCachedContentAndQueueChatWithoutExposingQaAuth() {
         show("offline")
         composeRule.onNodeWithTag("offline-no-cache").assertIsDisplayed()
+        composeRule.onNodeWithTag("offline-connection-icon").assertIsDisplayed()
         composeRule.onNodeWithText("연결 상태를 확인해주세요").assertIsDisplayed()
         composeRule.onNodeWithText("다시 시도").assertIsDisplayed()
 

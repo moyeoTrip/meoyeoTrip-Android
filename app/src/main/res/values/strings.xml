@@ -1,3 +1,5 @@
 <resources>
     <string name="app_name">모여트립 in 경북</string>
+    <string name="push_channel_name">여행 소식</string>
+    <string name="push_channel_description">모임, 채팅, 친구와 여행 일정 알림</string>
 </resources>

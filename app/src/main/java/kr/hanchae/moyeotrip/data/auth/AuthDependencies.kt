@@ -19,6 +19,7 @@ import kr.hanchae.moyeotrip.domain.auth.IdentityToken
 import kr.hanchae.moyeotrip.domain.auth.IdentityTokenProvider
 import kr.hanchae.moyeotrip.domain.auth.InMemoryAuthSessionStore
 import kr.hanchae.moyeotrip.domain.auth.MockIdentityTokenProvider
+import kr.hanchae.moyeotrip.notifications.MoyeoPushTokenStore
 
 data class AuthDependencies(
     val identityTokenProvider: IdentityTokenProvider,
@@ -104,7 +105,10 @@ data class AuthDependencies(
                 kakaoNativeAppKey = BuildConfig.KAKAO_NATIVE_APP_KEY,
                 kakaoCustomTokenExchanger = KakaoCustomTokenClient(BuildConfig.AUTH_API_BASE_URL),
                 fcmTokenProvider = {
-                    runCatching { currentMessagingToken().awaitResult() }.getOrNull()
+                    runCatching { currentMessagingToken().awaitResult() }
+                        .onSuccess { MoyeoPushTokenStore.save(context, it) }
+                        .getOrNull()
+                        ?: MoyeoPushTokenStore.read(context)
                 }
             )
         }

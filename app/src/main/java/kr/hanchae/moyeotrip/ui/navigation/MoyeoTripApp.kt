@@ -142,7 +142,13 @@ private const val STARTUP_SPLASH_HOLD_MILLIS = 1_150L
 private const val STARTUP_SPLASH_TRANSITION_MILLIS = 420
 
 @Composable
-fun MoyeoTripApp(startScreen: String? = null, skipStartupSplash: Boolean = false, skipAuthentication: Boolean = false) {
+fun MoyeoTripApp(
+    startScreen: String? = null,
+    pushRoute: String? = null,
+    skipStartupSplash: Boolean = false,
+    skipAuthentication: Boolean = false,
+    onAuthenticationComplete: () -> Unit = {}
+) {
     MoyeoTripTheme {
         val currentDensity = LocalDensity.current
         val context = LocalContext.current
@@ -170,6 +176,7 @@ fun MoyeoTripApp(startScreen: String? = null, skipStartupSplash: Boolean = false
             var authenticationComplete by remember(authDependencies) { mutableStateOf(false) }
             LaunchedEffect(authDependencies, authenticationComplete) {
                 if (authenticationComplete) {
+                    onAuthenticationComplete()
                     authDependencies.sessionStore.current.accessToken?.let { accessToken ->
                         authDependencies.userProfileStore.updateFromAccessToken(accessToken)
                         runCatching { authDependencies.authGateway.profileImages(accessToken) }
@@ -227,6 +234,16 @@ fun MoyeoTripApp(startScreen: String? = null, skipStartupSplash: Boolean = false
                         popUpTo(AppRoutes.HOME) {
                             inclusive = false
                         }
+                        launchSingleTop = true
+                    }
+                }
+            }
+
+            LaunchedEffect(pushRoute, authenticationComplete, bypassAuthentication) {
+                if (pushRoute != null && (authenticationComplete || bypassAuthentication)) {
+                    val targetRoute = QaStartRequest.parse(pushRoute).toRoute() ?: AppRoutes.HOME
+                    navController.navigate(targetRoute) {
+                        popUpTo(AppRoutes.HOME) { inclusive = false }
                         launchSingleTop = true
                     }
                 }

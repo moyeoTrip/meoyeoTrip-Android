@@ -14,10 +14,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.DownloadDone
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -43,15 +43,17 @@ fun OfflineNoCacheScreen(onRetry: () -> Unit) {
     ) {
         Spacer(modifier = Modifier.weight(.55f))
         Surface(
-            modifier = Modifier.size(88.dp),
+            modifier = Modifier.size(108.dp),
             shape = CircleShape,
-            color = MaterialTheme.colorScheme.primaryContainer
+            color = MaterialTheme.colorScheme.surfaceVariant
         ) {
             Icon(
-                imageVector = Icons.Filled.CloudOff,
-                contentDescription = null,
-                modifier = Modifier.padding(22.dp),
-                tint = MaterialTheme.colorScheme.primary
+                imageVector = Icons.Filled.WifiOff,
+                contentDescription = "인터넷 연결 없음",
+                modifier = Modifier
+                    .padding(30.dp)
+                    .testTag("offline-connection-icon"),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
         Text(
@@ -116,7 +118,7 @@ fun OfflineCachedBanner(modifier: Modifier = Modifier) {
         horizontalArrangement = Arrangement.Center
     ) {
         Icon(
-            imageVector = Icons.Filled.CloudOff,
+            imageVector = Icons.Filled.WifiOff,
             contentDescription = null,
             modifier = Modifier.size(15.dp),
             tint = MaterialTheme.colorScheme.onPrimaryContainer
