@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.GroupAdd
 import androidx.compose.material.icons.filled.NotificationsNone
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -70,9 +71,18 @@ fun NotificationCenterScreen(
     onBack: () -> Unit,
     onOpenTrip: (String) -> Unit,
     onOpenPost: (String) -> Unit,
-    onOpenCourse: (String) -> Unit
+    onOpenCourse: (String) -> Unit,
+    onOpenTripConfirmed: () -> Unit = {},
+    onOpenTripMessage: () -> Unit = {}
 ) {
     val notifications = listOf(
+        NotificationItem(
+            "여행이 확정됐어요 🎉",
+            "주왕산 & 주산지 힐링 트레킹에 5명이 모였어요",
+            "방금",
+            "confirmed",
+            "trip-cheongsong-juwangsan"
+        ),
         NotificationItem(
             "출발 확정까지 1명 남았어요",
             "주왕산 & 주산지 힐링 트레킹",
@@ -100,6 +110,13 @@ fun NotificationCenterScreen(
             "어제",
             "trip",
             "trip-andong-hahoe"
+        ),
+        NotificationItem(
+            "여행의 한 줄을 남겨주세요",
+            "함께 걸은 친구의 도감 카드가 기다리고 있어요",
+            "3일 전",
+            "message",
+            "trip-gyeongju-night"
         )
     )
 
@@ -111,6 +128,8 @@ fun NotificationCenterScreen(
                         when (item.type) {
                             "feed" -> onOpenPost(item.targetId)
                             "course" -> onOpenCourse(item.targetId)
+                            "confirmed" -> onOpenTripConfirmed()
+                            "message" -> onOpenTripMessage()
                             else -> onOpenTrip(item.targetId)
                         }
                     }
@@ -317,7 +336,12 @@ fun CreateRecruitmentScreen(
 }
 
 @Composable
-fun HostManageScreen(tripId: String, onBack: () -> Unit, onOpenChat: (String) -> Unit) {
+fun HostManageScreen(
+    tripId: String,
+    onBack: () -> Unit,
+    onOpenChat: (String) -> Unit,
+    onOpenRoute: (String) -> Unit = {}
+) {
     val trip = MockTripRepository.findTrip(tripId)
     var pendingApplicants by remember {
         mutableStateOf(
@@ -341,6 +365,37 @@ fun HostManageScreen(tripId: String, onBack: () -> Unit, onOpenChat: (String) ->
                 pendingCount = pendingApplicants.size,
                 isRecruitmentClosed = isRecruitmentClosed
             )
+        }
+        item {
+            Surface(
+                modifier = Modifier.fillMaxWidth().clickable { onOpenRoute(trip.id) }.testTag("host-manage-route"),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surface,
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+            ) {
+                Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Route, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Column(Modifier.padding(start = 12.dp).weight(1f)) {
+                        Text(
+                            "여행 경로 · 방문지 ${trip.routeStops.size.takeIf {
+                                it > 0
+                            } ?: MockTripRepository.findCourseForTrip(trip).stops.size}곳",
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            if (trip.courseSource ==
+                                kr.hanchae.moyeotrip.data.CourseSource.Custom
+                            ) {
+                                "여행 확정 전까지 수정 가능 · 저장 시 멤버 알림"
+                            } else {
+                                "등록된 코스 · 방문지와 순서 수정 불가"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
         }
         item {
             HostManageSectionTitle(title = "승인 대기", count = pendingApplicants.size)

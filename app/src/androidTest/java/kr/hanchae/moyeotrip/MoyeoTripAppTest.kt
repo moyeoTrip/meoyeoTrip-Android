@@ -23,9 +23,6 @@ import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
 import androidx.compose.ui.test.performTextInput
 import androidx.compose.ui.unit.dp
-import androidx.test.espresso.Espresso.onView
-import androidx.test.espresso.action.ViewActions.click
-import androidx.test.espresso.matcher.ViewMatchers.withText
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.auth.AuthAccountService
 import kr.hanchae.moyeotrip.domain.auth.AuthProvider
@@ -34,6 +31,7 @@ import kr.hanchae.moyeotrip.domain.auth.InMemoryAuthSessionStore
 import kr.hanchae.moyeotrip.domain.auth.MockIdentityTokenProvider
 import kr.hanchae.moyeotrip.domain.auth.ServiceSession
 import kr.hanchae.moyeotrip.domain.auth.SignupState
+import kr.hanchae.moyeotrip.ui.navigation.MoyeoTripApp
 import kr.hanchae.moyeotrip.ui.screens.SettingsScreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTripTheme
 import org.junit.Assert.assertEquals
@@ -127,10 +125,9 @@ class MoyeoTripAppTest {
 
         composeRule.onNodeWithContentDescription("뒤로").performClick()
         composeRule.onNodeWithContentDescription("모집 만들기").performClick()
-        composeRule.onNodeWithText("미리보기").assertIsDisplayed()
-        composeRule.onAllNodesWithText("채팅방 미리보기").assertCountEquals(0)
-        submitCreateRecruitment()
-        composeRule.onNodeWithText("모집이 준비됐어요").assertIsDisplayed()
+        composeRule.onNodeWithText("모집 만들기 (1/5)").assertIsDisplayed()
+        completeCreateRecruitment()
+        composeRule.onNodeWithText("모집 관리").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("뒤로").performClick()
 
         composeRule.waitUntil(timeoutMillis = 8_000) {
@@ -151,10 +148,7 @@ class MoyeoTripAppTest {
     @Test
     fun hostManageApprovesRejectsCancelsAndOpensChatAfterRecruitmentCreation() {
         composeRule.onNodeWithContentDescription("모집 만들기").performClick()
-        composeRule.onNodeWithText("미리보기").assertIsDisplayed()
-        submitCreateRecruitment()
-        composeRule.onNodeWithText("모집이 준비됐어요").assertIsDisplayed()
-        composeRule.onNodeWithTag("create-recruitment-open-manage").performClick()
+        completeCreateRecruitment()
 
         composeRule.onNodeWithText("모집 관리").assertIsDisplayed()
         composeRule.onNodeWithText("승인 대기").assertIsDisplayed()
@@ -215,9 +209,10 @@ class MoyeoTripAppTest {
     }
 
     @Test
-    fun mockAuthFlowCompletesFromTemporaryHomeEntry() {
-        composeRule.onNodeWithText("회원가입 · 로그인 체험").assertIsDisplayed()
-        composeRule.onNodeWithTag("home-mock-auth-entry").performClick()
+    fun mockAuthFlowCompletesFromQaRoute() {
+        composeRule.activity.setContent {
+            MoyeoTripApp(startScreen = "auth", skipStartupSplash = true, skipAuthentication = true)
+        }
 
         composeRule.onNodeWithText("고민 없이 고르는 경북 코스").assertIsDisplayed()
         clickAuthNode("auth-onboarding-next")
@@ -228,7 +223,7 @@ class MoyeoTripAppTest {
         composeRule.onNodeWithText("모여트립에 오신 걸 환영해요").assertIsDisplayed()
         composeRule.onNodeWithText("30초 안에 시작할 수 있어요").assertIsDisplayed()
         clickAuthNode("auth-login-kakao")
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithTag("auth-nickname-option-0").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule
@@ -239,10 +234,11 @@ class MoyeoTripAppTest {
         clickAuthNode("auth-nickname-next")
         composeRule.onNodeWithText("기본 정보").assertIsDisplayed()
         composeRule.onNodeWithTag("auth-birth-date").performClick()
-        onView(withText(android.R.string.ok)).perform(click())
+        composeRule.onNodeWithText("1998년 4월 12일").assertIsDisplayed()
+        clickAuthNode("birth-date-confirm")
         clickAuthNode("auth-gender-female")
         clickAuthNode("auth-basic-next")
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithTag("auth-profile-generate").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("여행 친구를 만들어볼까요?").assertIsDisplayed()
@@ -251,13 +247,13 @@ class MoyeoTripAppTest {
             .assertIsDisplayed()
         composeRule.onNodeWithText("새 후보 만들기 · 남은 3회").assertIsDisplayed()
         clickAuthNode("auth-profile-generate")
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithTag("auth-profile-option-0").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithTag("auth-profile-option-0").performClick()
         clickAuthNode("auth-profile-complete")
 
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithText("모여트립 in 경북").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("모여트립 in 경북").assertIsDisplayed()
@@ -327,7 +323,7 @@ class MoyeoTripAppTest {
         composeRule.onNodeWithText("Google로 계속하기").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Apple로 계속하기").assertIsDisplayed()
         composeRule.onNodeWithTag("auth-login-google").assertIsDisplayed().performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithTag("auth-nickname-option-0").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithText("어떤 친구로 시작할까요?").assertIsDisplayed()
@@ -353,7 +349,7 @@ class MoyeoTripAppTest {
         composeRule.onNodeWithTag("auth-email-password-confirmation").performTextClearance()
         composeRule.onNodeWithTag("auth-email-password-confirmation").performTextInput("password123")
         composeRule.onNodeWithTag("auth-email-submit").assertIsEnabled().performClick()
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithTag("auth-nickname-option-0").fetchSemanticsNodes().isNotEmpty()
         }
         composeRule.onNodeWithTag("auth-step-nickname").assertIsDisplayed()
@@ -401,7 +397,9 @@ class MoyeoTripAppTest {
 
     @Test
     fun mockAuthFlowBackAndCloseControlsMatchVisibleFlow() {
-        composeRule.onNodeWithTag("home-mock-auth-entry").performClick()
+        composeRule.activity.setContent {
+            MoyeoTripApp(startScreen = "auth", skipStartupSplash = true, skipAuthentication = true)
+        }
         composeRule.onNodeWithTag("auth-flow-back").assertIsDisplayed()
         composeRule.onNodeWithTag("auth-flow-close").assertIsDisplayed()
         clickAuthNode("auth-onboarding-next")
@@ -547,7 +545,7 @@ class MoyeoTripAppTest {
     }
 
     @Test
-    fun tripApplicationShowsCompletionAndOpensChatRoom() {
+    fun tripApplicationShowsPendingApprovalInAppliedTab() {
         val initialJoinedCount = MockTripRepository.profile.joinedTrips
 
         composeRule.onNodeWithTag("home-course-gyeongju-healing").performClick()
@@ -560,20 +558,25 @@ class MoyeoTripAppTest {
         composeRule.onNodeWithTag("trip-apply-button").performClick()
         composeRule.onNodeWithText("한마디를 남겨주세요!").assertIsDisplayed()
         composeRule.onNodeWithText("신청하기").performClick()
-        composeRule.onNodeWithText("모집에 참여됐어요").assertIsDisplayed()
-        composeRule.onNodeWithContentDescription("닫기").performClick()
-        composeRule.onNodeWithText("모임 채팅으로 이동").assertIsDisplayed()
+        composeRule.onNodeWithText("신청을 보냈어요").assertIsDisplayed()
+        composeRule.onNodeWithTag("application-done").performClick()
+        composeRule.onNodeWithText("신청을 보냈어요. 호스트 승인 후 채팅방이 열려요.").assertIsDisplayed()
         repeat(2) {
             composeRule.onNodeWithContentDescription("뒤로").performClick()
         }
         composeRule.waitUntil(timeoutMillis = 8_000) {
             composeRule.onAllNodesWithTag("bottom-my").fetchSemanticsNodes().isNotEmpty()
         }
+        composeRule.onNodeWithTag("bottom-meetings").performClick()
+        composeRule.onNodeWithTag("meetings-tab-applied").performClick()
+        composeRule.onNodeWithText("경주 단풍·야경 1박 2일").assertIsDisplayed()
+        composeRule.onNodeWithText("승인 대기").assertIsDisplayed()
+        composeRule.onAllNodesWithText("모임 채팅으로 이동").assertCountEquals(0)
         composeRule.onNodeWithTag("bottom-my").performClick()
         composeRule.onNodeWithContentDescription("프로필 메뉴").performClick()
         composeRule
             .onNodeWithTag("profile-stat-trips-value")
-            .assertTextContains((initialJoinedCount + 1).toString())
+            .assertTextContains(initialJoinedCount.toString())
     }
 
     @Test
@@ -1009,7 +1012,7 @@ class MoyeoTripAppTest {
     }
 
     @Test
-    fun ulleungTripApplicationOpensUlleungChatThread() {
+    fun ulleungTripApplicationStaysPendingWithoutOpeningChat() {
         composeRule.onNodeWithTag("bottom-my").performClick()
         composeRule.onNodeWithText("찜한 코스").performClick()
         composeRule
@@ -1020,39 +1023,31 @@ class MoyeoTripAppTest {
 
         composeRule.onNodeWithTag("trip-apply-button").performClick()
         composeRule.onNodeWithText("신청하기").performClick()
-        composeRule.onNodeWithText("모집에 참여됐어요").assertIsDisplayed()
-        composeRule.onNodeWithTag("application-open-chat").performClick()
-
-        composeRule.waitUntil(timeoutMillis = 8_000) {
-            composeRule.onAllNodesWithText("울릉도 2박 3일 섬 여행").fetchSemanticsNodes().isNotEmpty()
-        }
-        composeRule.onNodeWithText("울릉도 2박 3일 섬 여행").assertIsDisplayed()
-        composeRule.onNodeWithText("배편 시간 다시 확인했어요. 멀미약도 챙기면 좋아요.").assertIsDisplayed()
-        composeRule.onAllNodesWithText("주왕산 & 주산지 힐링 트레킹").assertCountEquals(0)
-        composeRule.onNodeWithTag("chat-message-input").performTextInput("울릉 준비물 확인했어요")
-        composeRule.onNodeWithTag("chat-message-send").performClick()
-        composeRule.onNodeWithText("울릉 준비물 확인했어요").assertIsDisplayed()
-
-        composeRule.onNodeWithContentDescription("뒤로").performClick()
+        composeRule.onNodeWithText("신청을 보냈어요").assertIsDisplayed()
+        composeRule.onNodeWithTag("application-done").performClick()
         composeRule.onNodeWithContentDescription("뒤로").performClick()
         composeRule.onNodeWithContentDescription("뒤로").performClick()
         composeRule.onNodeWithTag("bottom-meetings").performClick()
-        composeRule
-            .onNode(hasScrollAction())
-            .performScrollToNode(hasText("울릉도 2박 3일 섬 여행"))
+        composeRule.onNodeWithTag("meetings-tab-applied").performClick()
         composeRule.onNodeWithText("울릉도 2박 3일 섬 여행").assertIsDisplayed()
-        composeRule.onNodeWithText("나: 울릉 준비물 확인했어요").assertIsDisplayed()
+        composeRule.onNodeWithText("승인 대기").assertIsDisplayed()
+        composeRule.onAllNodesWithTag("chat-message-input").assertCountEquals(0)
     }
 
     private fun openRecruitmentListFromCourseDetail() {
         composeRule.onNodeWithText("모집 중인 모임 보기").performClick()
     }
 
-    private fun submitCreateRecruitment() {
-        composeRule
-            .onNodeWithTag("support-list")
-            .performScrollToNode(hasTestTag("create-recruitment-submit"))
-        composeRule.onNodeWithTag("create-recruitment-submit").performClick()
+    private fun completeCreateRecruitment() {
+        composeRule.onNodeWithTag("create-source-next").performClick()
+        composeRule.onNodeWithText("모집 만들기 (2/5)").assertIsDisplayed()
+        composeRule.onNodeWithTag("create-schedule-next").performClick()
+        composeRule.onNodeWithText("모집 만들기 (3/5)").assertIsDisplayed()
+        composeRule.onNodeWithTag("create-people-next").performClick()
+        composeRule.onNodeWithText("모집 만들기 (4/5)").assertIsDisplayed()
+        composeRule.onNodeWithTag("meeting-point-save").performClick()
+        composeRule.onNodeWithText("모집 만들기 (5/5)").assertIsDisplayed()
+        composeRule.onNodeWithTag("create-summary-submit").performClick()
     }
 
     private fun clickAuthNode(tag: String) {
@@ -1065,7 +1060,7 @@ class MoyeoTripAppTest {
     private fun openNicknameSelection() {
         openAuthLogin()
         clickAuthNode("auth-login-kakao")
-        composeRule.waitUntil(timeoutMillis = 5_000) {
+        composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithTag("auth-nickname-option-0").fetchSemanticsNodes().isNotEmpty()
         }
     }

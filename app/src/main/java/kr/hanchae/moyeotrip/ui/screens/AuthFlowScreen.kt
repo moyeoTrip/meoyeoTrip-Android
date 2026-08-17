@@ -1,6 +1,5 @@
 package kr.hanchae.moyeotrip.ui.screens
 
-import android.app.DatePickerDialog
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -39,10 +38,13 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -74,8 +76,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.time.Instant
 import java.time.LocalDate
-import java.util.Locale
+import java.time.ZoneOffset
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1377,6 +1380,7 @@ private fun BasicInfoStep(
     onNext: () -> Unit,
     onRetry: () -> Unit
 ) {
+    var showBirthDateSheet by rememberSaveable { mutableStateOf(false) }
     StepTitle(
         title = "기본 정보",
         subtitle = "생년월일과 성별만 먼저 알려주세요."
@@ -1392,42 +1396,13 @@ private fun BasicInfoStep(
     val birthDateLabel = selectedBirthDate?.let { date ->
         "${date.year}년 ${date.monthValue}월 ${date.dayOfMonth}일"
     } ?: "연도 / 월 / 일"
-    val context = LocalContext.current
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .height(68.dp)
             .testTag("auth-birth-date")
             .semantics { contentDescription = "생년월일 $birthDateLabel 선택" }
-            .clickable {
-                val initialDate = selectedBirthDate ?: LocalDate.of(1998, 4, 12)
-                val dialog = DatePickerDialog(
-                    context,
-                    { _, year, month, day ->
-                        onSelectBirth("%04d-%02d-%02d".format(year, month + 1, day))
-                    },
-                    initialDate.year,
-                    initialDate.monthValue - 1,
-                    initialDate.dayOfMonth
-                )
-                dialog.datePicker.maxDate = System.currentTimeMillis()
-                dialog.setOnShowListener {
-                    val headerId = context.resources.getIdentifier("date_picker_header_date", "id", "android")
-                    val header = dialog.findViewById<android.widget.TextView>(headerId)
-                    fun updateHeader(year: Int, month: Int, day: Int) {
-                        header?.text = String.format(Locale.KOREA, "%d년 %d월 %d일", year, month + 1, day)
-                    }
-                    dialog.datePicker.init(
-                        initialDate.year,
-                        initialDate.monthValue - 1,
-                        initialDate.dayOfMonth
-                    ) { _, year, month, day ->
-                        updateHeader(year, month, day)
-                    }
-                    updateHeader(initialDate.year, initialDate.monthValue - 1, initialDate.dayOfMonth)
-                }
-                dialog.show()
-            },
+            .clickable { showBirthDateSheet = true },
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
@@ -1489,6 +1464,96 @@ private fun BasicInfoStep(
         onClick = onNext
     )
     errorMessage?.let { AuthErrorCard(message = it, onRetry = onRetry) }
+    if (showBirthDateSheet) {
+        BirthDateBottomSheet(
+            initialDate = selectedBirthDate ?: LocalDate.of(1998, 4, 12),
+            onDismiss = { showBirthDateSheet = false },
+            onConfirm = { date ->
+                onSelectBirth("%04d-%02d-%02d".format(date.year, date.monthValue, date.dayOfMonth))
+                showBirthDateSheet = false
+            }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BirthDateBottomSheet(initialDate: LocalDate, onDismiss: () -> Unit, onConfirm: (LocalDate) -> Unit) {
+    val today = LocalDate.now()
+    val initialMillis = initialDate
+        .atStartOfDay(ZoneOffset.UTC)
+        .toInstant()
+        .toEpochMilli()
+    val state = androidx.compose.material3.rememberDatePickerState(
+        initialSelectedDateMillis = initialMillis,
+        yearRange = 1900..today.year
+    )
+    val selectedDate = state.selectedDateMillis?.let { millis ->
+        Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate()
+    }
+    val selectedLabel = selectedDate?.let { date ->
+        "${date.year}년 ${date.monthValue}월 ${date.dayOfMonth}일"
+    } ?: "날짜를 선택해주세요"
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MaterialTheme.colorScheme.surface,
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Text(
+                text = "생년월일 선택",
+                style = MaterialTheme.typography.headlineSmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Text(
+                text = selectedLabel,
+                modifier = Modifier.testTag("birth-date-selected-label"),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "연도부터 확인한 뒤 월과 일을 골라주세요.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            DatePicker(
+                state = state,
+                modifier = Modifier.fillMaxWidth(),
+                showModeToggle = false,
+                title = null,
+                headline = null
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.weight(1f).height(50.dp)
+                ) {
+                    Text("취소")
+                }
+                Button(
+                    onClick = { selectedDate?.let(onConfirm) },
+                    enabled = selectedDate != null && !selectedDate.isAfter(today),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(50.dp)
+                        .testTag("birth-date-confirm")
+                ) {
+                    Text("선택 완료")
+                }
+            }
+        }
+    }
 }
 
 internal fun isValidBirthDate(value: String, today: LocalDate = LocalDate.now()): Boolean = runCatching {

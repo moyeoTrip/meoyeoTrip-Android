@@ -30,6 +30,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -62,7 +63,9 @@ fun MyScreen(
     onOpenMyFeed: () -> Unit,
     onOpenFriendDex: () -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenCustomerCenter: () -> Unit
+    onOpenCustomerCenter: () -> Unit,
+    onOpenFriends: () -> Unit = {},
+    onOpenCoursePublish: () -> Unit = {}
 ) {
     var selectedTab by remember { mutableStateOf(MyTripTab.Ongoing) }
     val courses = MockTripRepository.courses
@@ -126,15 +129,27 @@ fun MyScreen(
             MyTripTab.Past -> {
                 pastTrips.forEachIndexed { index, course ->
                     item {
-                        MySummaryCourseCard(
-                            course = course,
-                            title = pastTripTitle(course),
-                            summary = pastTripSummary(course),
-                            meta = "${pastTripDate(index)} · 여행 기록",
-                            testTagPrefix = "my-past-trip-${course.id}",
-                            modifier = Modifier.testTag("my-past-trip-${course.id}"),
-                            onClick = { onOpenCourse(course.id) }
-                        )
+                        Column {
+                            MySummaryCourseCard(
+                                course = course,
+                                title = pastTripTitle(course),
+                                summary = pastTripSummary(course),
+                                meta = "${pastTripDate(index)} · 여행 기록",
+                                testTagPrefix = "my-past-trip-${course.id}",
+                                modifier = Modifier.testTag("my-past-trip-${course.id}"),
+                                onClick = { onOpenCourse(course.id) }
+                            )
+                            if (index == 0) {
+                                TextButton(
+                                    onClick = onOpenCoursePublish,
+                                    modifier = Modifier
+                                        .align(Alignment.End)
+                                        .testTag("my-course-publish")
+                                ) {
+                                    Text("코스 공개하기")
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -162,6 +177,7 @@ fun MyScreen(
             MyHubMenuPanel(
                 onOpenMyFeed = onOpenMyFeed,
                 onOpenFriendDex = onOpenFriendDex,
+                onOpenFriends = onOpenFriends,
                 onOpenCustomerCenter = onOpenCustomerCenter
             )
         }
@@ -395,7 +411,12 @@ private fun MyMiniChip(text: String, tint: Color) {
 }
 
 @Composable
-private fun MyHubMenuPanel(onOpenMyFeed: () -> Unit, onOpenFriendDex: () -> Unit, onOpenCustomerCenter: () -> Unit) {
+private fun MyHubMenuPanel(
+    onOpenMyFeed: () -> Unit,
+    onOpenFriendDex: () -> Unit,
+    onOpenFriends: () -> Unit,
+    onOpenCustomerCenter: () -> Unit
+) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
             text = "메뉴",
@@ -415,6 +436,13 @@ private fun MyHubMenuPanel(onOpenMyFeed: () -> Unit, onOpenFriendDex: () -> Unit
                 subtitle = "내가 기록한 경북 여행",
                 onClick = onOpenMyFeed,
                 modifier = Modifier.testTag("my-feed-shortcut")
+            )
+            MyHubMenuDivider()
+            MyHubMenuRow(
+                title = "친구 관리",
+                subtitle = "친구 신청 · 수락 · 내 친구",
+                onClick = onOpenFriends,
+                modifier = Modifier.testTag("my-friends-shortcut")
             )
             MyHubMenuDivider()
             MyHubMenuRow(

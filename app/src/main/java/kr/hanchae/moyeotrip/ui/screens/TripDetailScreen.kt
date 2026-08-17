@@ -117,7 +117,7 @@ fun TripDetailScreen(tripId: String, onBack: () -> Unit, onOpenChatRoom: (String
             },
             onApply = {
                 if (isApplied) {
-                    onOpenChatRoom(MockTripRepository.chatThreadIdForTrip(trip.id))
+                    actionMessage = "모임 탭의 신청중에서 승인 상태를 확인할 수 있어요."
                 } else if (trip.statusLabel == "모집취소") {
                     actionMessage = "모집이 취소되어 신청할 수 없어요."
                 } else {
@@ -136,9 +136,9 @@ fun TripDetailScreen(tripId: String, onBack: () -> Unit, onOpenChatRoom: (String
                         MockTripRepository.applyToTrip(trip.id)
                     }
                 },
-                onOpenChat = {
+                onDone = {
                     showApplySheet = false
-                    onOpenChatRoom(MockTripRepository.chatThreadIdForTrip(trip.id))
+                    actionMessage = "신청을 보냈어요. 호스트 승인 후 채팅방이 열려요."
                 }
             )
         }
@@ -253,6 +253,11 @@ private fun GroupDetailPanel(course: TripCourse, trip: TripRecruitment) {
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                StatusChip(
+                    text = trip.courseSource.label,
+                    container = colors.primaryContainer,
+                    content = colors.primary
+                )
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -292,9 +297,33 @@ private fun GroupDetailPanel(course: TripCourse, trip: TripRecruitment) {
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                DetailInfoRow(label = "일정", value = trip.scheduleDate)
-                DetailInfoRow(label = "시간", value = trip.scheduleTime)
-                DetailInfoRow(label = "모이는 곳", value = trip.meetingPoint)
+                DetailInfoRow(label = "일정", value = "${trip.scheduleDate} · ${trip.scheduleType.label}")
+                DetailInfoRow(label = "여행 시간", value = trip.scheduleTime)
+                DetailInfoRow(
+                    label = "집합",
+                    value =
+                        "${trip.meetingLocation.meetingTime} · ${trip.meetingLocation.name} " +
+                            trip.meetingLocation.detail
+                )
+                DetailInfoRow(
+                    label = "좌표",
+                    value = "${trip.meetingLocation.latitude}, ${trip.meetingLocation.longitude} · 길 찾기"
+                )
+            }
+
+            if (trip.courseSource == kr.hanchae.moyeotrip.data.CourseSource.Custom) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    color = colors.primaryContainer
+                ) {
+                    Text(
+                        "호스트가 직접 만든 코스예요. 여행 확정 전에는 경로가 바뀔 수 있으며, 변경 내용은 채팅방에 안내돼요.",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onPrimaryContainer
+                    )
+                }
             }
 
             HostSummary(trip = trip, rating = course.rating)
@@ -313,7 +342,7 @@ private fun GroupDetailPanel(course: TripCourse, trip: TripRecruitment) {
                 )
             }
 
-            RoutePreview(stops = course.stops)
+            RoutePreview(stops = trip.routeStops.map { it.name }.ifEmpty { course.stops })
         }
     }
 }
@@ -497,7 +526,7 @@ private fun ApplicationSheet(
     course: TripCourse,
     onDismiss: () -> Unit,
     onApplicationSubmit: () -> Unit,
-    onOpenChat: () -> Unit
+    onDone: () -> Unit
 ) {
     var message by rememberSaveable {
         mutableStateOf("처음 참여라 집결지에서 같이 움직이고 싶어요.")
@@ -572,17 +601,15 @@ private fun ApplicationSheet(
                 if (isSubmitted) {
                     ApplicationCompletionCard(message = message)
                     Button(
-                        onClick = onOpenChat,
+                        onClick = onDone,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("application-open-chat"),
+                            .testTag("application-done"),
                         colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
                         shape = RoundedCornerShape(9.dp)
                     ) {
-                        Icon(imageVector = Icons.Filled.ChatBubble, contentDescription = null)
                         Text(
-                            text = "모임 채팅으로 이동",
-                            modifier = Modifier.padding(start = 8.dp),
+                            text = "신청 상태 확인하기",
                             fontWeight = FontWeight.ExtraBold
                         )
                     }
@@ -687,13 +714,13 @@ private fun ApplicationCompletionCard(message: String) {
             )
             Column {
                 Text(
-                    text = "모집에 참여됐어요",
+                    text = "신청을 보냈어요",
                     style = MaterialTheme.typography.titleMedium,
                     color = colors.onPrimaryContainer,
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    text = "이제 모임 채팅에서 인사하고 집결 정보를 확인해요.",
+                    text = "호스트가 승인하면 채팅방이 열려요. 모임 탭에서 상태를 확인할 수 있어요.",
                     style = MaterialTheme.typography.bodySmall,
                     color = colors.onPrimaryContainer.copy(alpha = 0.78f)
                 )
@@ -848,7 +875,7 @@ private fun TripRecruitment.detailStatusText(): String = when {
 }
 
 private fun TripRecruitment.applyActionLabel(isApplied: Boolean): String = when {
-    isApplied -> "모임 채팅으로 이동"
+    isApplied -> "신청 상태 보기"
     statusLabel == "모집취소" -> "모집 종료"
     joined >= capacity -> "대기 신청"
     else -> "함께 가기 신청"

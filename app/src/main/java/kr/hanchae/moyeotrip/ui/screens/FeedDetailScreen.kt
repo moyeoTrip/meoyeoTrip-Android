@@ -29,6 +29,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -50,7 +51,7 @@ import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 
 @Composable
-fun FeedDetailScreen(postId: String, onBack: () -> Unit) {
+fun FeedDetailScreen(postId: String, onBack: () -> Unit, onOpenAllComments: () -> Unit = {}) {
     val post = MockTripRepository.findFeedPost(postId)
     var comment by rememberSaveable { mutableStateOf("") }
     var actionMessage by rememberSaveable(postId) { mutableStateOf<String?>(null) }
@@ -107,6 +108,17 @@ fun FeedDetailScreen(postId: String, onBack: () -> Unit) {
                 }
                 item {
                     FeedDetailMetrics(post = post, modifier = Modifier.padding(top = 18.dp))
+                }
+                item {
+                    TextButton(
+                        onClick = onOpenAllComments,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .testTag("feed-comments-open")
+                    ) {
+                        Text("댓글 ${post.comments}개 모두 보기")
+                    }
                 }
                 if (submittedComments.isNotEmpty()) {
                     items(submittedComments.size) { index ->

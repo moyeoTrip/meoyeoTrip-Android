@@ -658,7 +658,14 @@ private fun CustomerCenterRow(title: String, subtitle: String, badge: String) {
 }
 
 @Composable
-fun SettingsScreen(onBack: () -> Unit, accountService: AuthAccountService, onAuthenticationCleared: () -> Unit) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    accountService: AuthAccountService,
+    onAuthenticationCleared: () -> Unit,
+    onOpenNotificationDetail: () -> Unit = {},
+    onOpenBlockedUsers: () -> Unit = {},
+    onOpenAccountDelete: () -> Unit = {}
+) {
     val coroutineScope = rememberCoroutineScope()
     var chatEnabled by remember { mutableStateOf(true) }
     var deadlineEnabled by remember { mutableStateOf(true) }
@@ -699,6 +706,9 @@ fun SettingsScreen(onBack: () -> Unit, accountService: AuthAccountService, onAut
                     SettingsToggleRow("마케팅 알림", "이벤트·새 코스 소개", marketingEnabled) {
                         marketingEnabled = it
                     }
+                    SettingsValueRow(title = "알림 세부 설정", value = "방해금지 · 모임별") {
+                        onOpenNotificationDetail()
+                    }
                 }
             }
 
@@ -731,7 +741,7 @@ fun SettingsScreen(onBack: () -> Unit, accountService: AuthAccountService, onAut
                         }
                     )
                     SettingsValueRow(action = SettingsMockAction.BlockedUsers) {
-                        selectedAction = it
+                        onOpenBlockedUsers()
                     }
                     SettingsValueRow(action = SettingsMockAction.PrivacyPolicy) {
                         selectedAction = it
@@ -757,7 +767,7 @@ fun SettingsScreen(onBack: () -> Unit, accountService: AuthAccountService, onAut
                         selectedAction = it
                     }
                     SettingsDangerRow(action = SettingsMockAction.DeleteAccount) {
-                        selectedAction = it
+                        onOpenAccountDelete()
                     }
                 }
             }
@@ -1874,10 +1884,10 @@ private enum class SettingsMockAction(
     ),
     DeleteAccount(
         rowTitle = "계정 탈퇴",
-        rowValue = "즉시 영구 삭제",
+        rowValue = "30일 안에는 되살릴 수 있어요",
         dialogTitle = "계정 탈퇴 안내",
-        dialogBody = "사용자 정보와 로그인 연결, 프로필 이미지 후보가 즉시 영구 삭제되며 복구할 수 없어요. 외부 로그인 제공자의 계정은 삭제되지 않아요.",
-        confirmLabel = "영구 탈퇴",
+        dialogBody = "탈퇴 요청 후 30일 동안 복구할 수 있고, 이후 사용자 정보와 로그인 연결이 영구 삭제돼요.",
+        confirmLabel = "탈퇴 계속하기",
         danger = true
     )
 }

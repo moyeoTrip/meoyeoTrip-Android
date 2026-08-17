@@ -212,27 +212,22 @@ class MockTripRepositoryTest {
     }
 
     @Test
-    fun applyingToTripIncrementsJoinedStateOnceAndPromotesOwnedTrip() {
+    fun applyingToTripCreatesOnePendingApplicationWithoutOpeningChat() {
         MockTripRepository.resetSessionFeedPostsForTests()
 
         try {
             val trip = MockTripRepository.findTrip("trip-yeongju-buseoksa")
-            val initialProfileJoined = MockTripRepository.profile.joinedTrips
-
             MockTripRepository.applyToTrip(trip.id)
             MockTripRepository.applyToTrip(trip.id)
 
             val updatedTrip = MockTripRepository.findTrip(trip.id)
-            val updatedThread = MockTripRepository.findThread(updatedTrip.chatThreadId)
+            val application = MockTripRepository.applicationForTrip(trip.id)
 
-            assertEquals(initialProfileJoined + 1, MockTripRepository.profile.joinedTrips)
-            assertEquals(trip.joined + 1, updatedTrip.joined)
-            assertEquals("마감", updatedTrip.statusLabel)
-            assertEquals(updatedTrip.id, MockTripRepository.trips.first().id)
+            assertEquals(trip.joined, updatedTrip.joined)
+            assertEquals(trip.statusLabel, updatedTrip.statusLabel)
             assertTrue(MockTripRepository.isAppliedToTrip(trip.id))
-            assertEquals("${updatedTrip.joined}/${updatedTrip.capacity}명", updatedThread.countText)
-            assertEquals(updatedTrip.statusLabel, updatedThread.statusText)
-            assertEquals("진행중", updatedThread.stateLabel)
+            assertEquals(1, MockTripRepository.applications.count { it.tripId == trip.id })
+            assertEquals(TripApplicationStatus.PendingApproval, application?.status)
         } finally {
             MockTripRepository.resetSessionFeedPostsForTests()
         }

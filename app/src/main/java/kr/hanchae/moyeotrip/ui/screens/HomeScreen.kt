@@ -3,7 +3,6 @@ package kr.hanchae.moyeotrip.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -24,10 +23,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.NotificationsNone
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
@@ -38,12 +35,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -64,7 +63,7 @@ fun HomeScreen(
     onOpenExplore: () -> Unit,
     onOpenNotifications: () -> Unit,
     onCreateRecruitment: (String) -> Unit,
-    onOpenMockAuth: () -> Unit
+    isOnline: Boolean = true
 ) {
     val weatherSignal = MockTripRepository.currentWeatherSignal
     val recommendedCourses = WeatherCoursePolicy.recommendedCourses(weatherSignal, MockTripRepository.courses)
@@ -95,12 +94,6 @@ fun HomeScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                item {
-                    AuthFlowEntryCard(
-                        completed = MockTripRepository.isAuthCompleted,
-                        onClick = onOpenMockAuth
-                    )
-                }
                 item {
                     HomeHero(hero = hero)
                 }
@@ -136,15 +129,29 @@ fun HomeScreen(
                 }
             }
             FloatingActionButton(
-                onClick = { onCreateRecruitment(featuredCourse.id) },
+                onClick = { if (isOnline) onCreateRecruitment(featuredCourse.id) },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 20.dp, bottom = 14.dp)
-                    .size(54.dp),
+                    .size(54.dp)
+                    .alpha(if (isOnline) 1f else .45f)
+                    .semantics { if (!isOnline) disabled() },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary
             ) {
                 Icon(imageVector = Icons.Filled.Add, contentDescription = "모집 만들기", modifier = Modifier.size(26.dp))
+            }
+            if (!isOnline) {
+                Text(
+                    text = "연결되면 모집을 만들 수 있어요",
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 20.dp, bottom = 74.dp)
+                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -341,59 +348,6 @@ private fun PopularCourseRow(course: HomePopularCourse, onClick: () -> Unit) {
                 imageVector = Icons.Filled.ChevronRight,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun AuthFlowEntryCard(completed: Boolean, onClick: () -> Unit) {
-    val label = if (completed) "프로필 설정 완료" else "회원가입 · 로그인 체험"
-    val icon = if (completed) Icons.Filled.CheckCircle else Icons.Filled.Person
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.End
-    ) {
-        Row(
-            modifier = Modifier
-                .height(34.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.surface)
-                .border(BorderStroke(1.dp, MaterialTheme.colorScheme.outline), CircleShape)
-                .clickable(onClick = onClick)
-                .testTag("home-mock-auth-entry")
-                .semantics { contentDescription = label }
-                .padding(horizontal = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(24.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(14.dp)
-                )
-            }
-            Text(
-                text = label,
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.ExtraBold,
-                maxLines = 1
-            )
-            Icon(
-                imageVector = Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(12.dp)
             )
         }
     }

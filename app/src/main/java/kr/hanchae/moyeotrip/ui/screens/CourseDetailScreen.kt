@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -333,14 +332,6 @@ private fun CourseMetricGrid(course: TripCourse) {
                 icon = Icons.Filled.Route,
                 label = "이동거리",
                 value = course.distance
-            ),
-            modifier = Modifier.weight(1f)
-        )
-        CourseMetric(
-            info = CourseMetricInfo(
-                icon = Icons.Filled.WbSunny,
-                label = "추천시기",
-                value = course.recommendedSeason
             ),
             modifier = Modifier.weight(1f)
         )

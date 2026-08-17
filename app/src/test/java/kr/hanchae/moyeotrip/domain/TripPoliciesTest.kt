@@ -176,7 +176,6 @@ class TripPoliciesTest {
         duration = "당일",
         courseTime = "2시간",
         distance = "4.2km",
-        recommendedSeason = "사계절",
         price = "0원",
         host = "테스터",
         hostAvatar = "*",

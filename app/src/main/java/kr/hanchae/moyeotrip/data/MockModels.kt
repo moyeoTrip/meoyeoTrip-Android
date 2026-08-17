@@ -9,7 +9,6 @@ data class TripCourse(
     val duration: String,
     val courseTime: String,
     val distance: String,
-    val recommendedSeason: String,
     val price: String,
     val host: String,
     val hostAvatar: String,
@@ -23,6 +22,26 @@ data class TripCourse(
     val tags: List<String>,
     val stops: List<String>,
     val recruitmentNote: String
+)
+
+enum class CourseSource(val label: String) {
+    Linked("등록된 코스"),
+    Custom("호스트 직접 코스")
+}
+
+enum class TripScheduleType(val label: String) {
+    DayTrip("당일치기"),
+    Overnight("1박 이상")
+}
+
+data class RouteStop(val id: String, val day: Int = 1, val time: String, val name: String, val memo: String)
+
+data class MeetingLocation(
+    val name: String,
+    val detail: String,
+    val latitude: Double,
+    val longitude: Double,
+    val meetingTime: String
 )
 
 data class TripRecruitment(
@@ -39,7 +58,59 @@ data class TripRecruitment(
     val statusLabel: String,
     val host: String,
     val hostAvatar: String,
-    val chatThreadId: String
+    val chatThreadId: String,
+    val courseSource: CourseSource = CourseSource.Linked,
+    val scheduleType: TripScheduleType = TripScheduleType.DayTrip,
+    val endDate: String? = null,
+    val recruitmentDeadline: String = "",
+    val meetingLocation: MeetingLocation = MeetingLocation(
+        name = meetingPoint,
+        detail = "정문 앞",
+        latitude = 36.435612,
+        longitude = 129.057214,
+        meetingTime = scheduleTime.substringBefore(" ").substringBefore("-").trim()
+    ),
+    val routeStops: List<RouteStop> = emptyList()
+)
+
+enum class TripApplicationStatus(val label: String) {
+    PendingApproval("승인 대기"),
+    Waitlisted("대기열")
+}
+
+data class TripApplication(
+    val id: String,
+    val tripId: String,
+    val status: TripApplicationStatus,
+    val waitlistPosition: Int? = null
+)
+
+data class RecruitmentNotice(
+    val id: String,
+    val tripId: String,
+    val title: String,
+    val body: String,
+    val author: String,
+    val createdAt: String,
+    val isPinned: Boolean,
+    val includesMap: Boolean = false
+)
+
+data class RecruitmentDraft(
+    val id: String,
+    val selectedCourseId: String,
+    val courseSource: CourseSource = CourseSource.Linked,
+    val scheduleType: TripScheduleType = TripScheduleType.DayTrip,
+    val travelDate: String,
+    val startTime: String = "08:00",
+    val endTime: String = "18:00",
+    val endDate: String? = null,
+    val recruitmentDeadline: String = "2026.05.22 (목) 23:59",
+    val meetingLocation: MeetingLocation,
+    val routeStops: List<RouteStop>,
+    val capacity: Int,
+    val minParticipants: Int,
+    val note: String
 )
 
 data class ChatThread(

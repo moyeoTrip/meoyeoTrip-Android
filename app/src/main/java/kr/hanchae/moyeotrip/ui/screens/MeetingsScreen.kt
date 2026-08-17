@@ -23,9 +23,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Badge
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -48,12 +50,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.ChatThread
 import kr.hanchae.moyeotrip.data.MockTripRepository
+import kr.hanchae.moyeotrip.data.TripApplication
+import kr.hanchae.moyeotrip.data.TripApplicationStatus
 import kr.hanchae.moyeotrip.data.TripCourse
 
 @Composable
-fun MeetingsScreen(onOpenRoom: (String) -> Unit, onOpenSpecialMessages: () -> Unit = {}) {
+fun MeetingsScreen(
+    onOpenRoom: (String) -> Unit,
+    onOpenTrip: (String) -> Unit = {},
+    onOpenSpecialMessages: () -> Unit = {},
+    initialTab: MeetingChatTab = MeetingChatTab.Active
+) {
     MeetingChatList(
         onOpenRoom = onOpenRoom,
+        onOpenTrip = onOpenTrip,
+        initialTab = initialTab,
         onOpenSpecialMessages = onOpenSpecialMessages
     )
 }
@@ -61,17 +72,22 @@ fun MeetingsScreen(onOpenRoom: (String) -> Unit, onOpenSpecialMessages: () -> Un
 @Composable
 internal fun MeetingChatList(
     onOpenRoom: (String) -> Unit,
+    onOpenTrip: (String) -> Unit = {},
+    initialTab: MeetingChatTab = MeetingChatTab.Active,
     showTitle: Boolean = true,
     onOpenSpecialMessages: () -> Unit = {}
 ) {
-    var selectedTab by remember { mutableStateOf(MeetingChatTab.Active) }
+    var selectedTab by remember { mutableStateOf(initialTab) }
     val allThreads = MockTripRepository.chatThreads.sortedForMeetings()
     val threads = allThreads.filterFor(selectedTab)
+    var applications by remember { mutableStateOf(MockTripRepository.applications.toList()) }
     val counts = MeetingChatTab.entries.associateWith { tab ->
         when (tab) {
             MeetingChatTab.Active -> allThreads.count {
                 !it.isReadOnly
             }
+
+            MeetingChatTab.Applied -> applications.size
 
             MeetingChatTab.Confirmed -> allThreads.count { !it.isReadOnly && it.statusText.contains("확정") }
 
@@ -112,7 +128,18 @@ internal fun MeetingChatList(
             contentPadding = PaddingValues(start = 18.dp, top = 0.dp, end = 18.dp, bottom = 132.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            if (threads.isEmpty()) {
+            if (selectedTab == MeetingChatTab.Applied && applications.isNotEmpty()) {
+                items(applications, key = { it.id }) { application ->
+                    ApplicationStatusCard(
+                        application = application,
+                        onCancel = {
+                            MockTripRepository.cancelApplication(application.tripId)
+                            applications = MockTripRepository.applications.toList()
+                        },
+                        onOpenDetail = { onOpenTrip(application.tripId) }
+                    )
+                }
+            } else if (threads.isEmpty()) {
                 item {
                     EmptyMeetingChatState(tab = selectedTab)
                 }
@@ -120,6 +147,65 @@ internal fun MeetingChatList(
                 items(threads, key = { it.id }) { thread ->
                     MeetingChatThreadCard(thread = thread, onClick = { onOpenRoom(thread.id) })
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ApplicationStatusCard(application: TripApplication, onCancel: () -> Unit, onOpenDetail: () -> Unit) {
+    val trip = MockTripRepository.findTrip(application.tripId)
+    Surface(
+        modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("meeting-application-${application.tripId}"),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(trip.title, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        "${trip.scheduleDate} · ${trip.scheduleType.label}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primaryContainer) {
+                    Text(
+                        if (application.status ==
+                            TripApplicationStatus.Waitlisted
+                        ) {
+                            "대기 ${application.waitlistPosition ?: 1}번"
+                        } else {
+                            "승인 대기"
+                        },
+                        Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+            Text(
+                if (application.status ==
+                    TripApplicationStatus.Waitlisted
+                ) {
+                    "자리가 나면 신청 순서대로 알려드려요. 아직 채팅방에는 입장할 수 없어요."
+                } else {
+                    "호스트가 신청을 확인하고 있어요. 승인되면 모임 채팅방이 열려요."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = onCancel,
+                    modifier = Modifier.weight(1f).height(42.dp).testTag("application-cancel-${trip.id}")
+                ) {
+                    Text("신청 취소")
+                }
+                Button(onClick = onOpenDetail, modifier = Modifier.weight(1f).height(42.dp)) { Text("상세 보기") }
             }
         }
     }
@@ -253,7 +339,7 @@ private fun SpecialMessagesEntry(onClick: () -> Unit) {
 }
 
 @Composable
-fun SpecialMessagesScreen(onBack: () -> Unit) {
+fun SpecialMessagesScreen(onBack: () -> Unit, onOpenTripConfirmed: () -> Unit = {}) {
     val colorScheme = MaterialTheme.colorScheme
 
     Column(
@@ -342,7 +428,8 @@ fun SpecialMessagesScreen(onBack: () -> Unit) {
                     eyebrow = "확정",
                     title = "여행이 확정됐어요!",
                     subtitle = "좋은 여행 되세요",
-                    body = "모임 채팅방에서 준비물을 확인해요"
+                    body = "모임 채팅방에서 준비물을 확인해요",
+                    onClick = onOpenTripConfirmed
                 )
             }
             item {
@@ -363,12 +450,15 @@ private fun SpecialMessageCard(
     title: String,
     subtitle: String,
     body: String,
+    onClick: (() -> Unit)? = null,
     preview: (@Composable () -> Unit)? = null
 ) {
     val colorScheme = MaterialTheme.colorScheme
 
     Surface(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
         color = colorScheme.surface,
         shape = RoundedCornerShape(12.dp),
         border = BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.55f))
@@ -616,6 +706,7 @@ private fun ChatThread.previewCourse(): TripCourse {
 
 private fun List<ChatThread>.filterFor(tab: MeetingChatTab): List<ChatThread> = when (tab) {
     MeetingChatTab.Active -> filter { !it.isReadOnly }
+    MeetingChatTab.Applied -> emptyList()
     MeetingChatTab.Confirmed -> filter { !it.isReadOnly && it.statusText.contains("확정") }
     MeetingChatTab.Ended -> filter { it.isReadOnly }
 }
@@ -637,8 +728,9 @@ private fun List<ChatThread>.sortedForMeetings(): List<ChatThread> {
     return sortedBy { thread -> order[thread.id] ?: Int.MAX_VALUE }
 }
 
-private enum class MeetingChatTab(val label: String) {
+enum class MeetingChatTab(val label: String) {
     Active("진행중"),
+    Applied("신청중"),
     Confirmed("확정"),
     Ended("종료")
 }

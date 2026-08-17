@@ -18,7 +18,6 @@ object MockTripRepository {
             duration = "당일",
             courseTime = "2시간",
             distance = "6.2km",
-            recommendedSeason = "봄~가을",
             price = "42,000원",
             host = "숲속 사슴 2417",
             hostAvatar = "🦌",
@@ -41,7 +40,6 @@ object MockTripRepository {
             duration = "당일",
             courseTime = "4시간",
             distance = "8.1km",
-            recommendedSeason = "사계절",
             price = "39,000원",
             host = "초록 여우 5824",
             hostAvatar = "🦊",
@@ -64,7 +62,6 @@ object MockTripRepository {
             duration = "1박 2일",
             courseTime = "5시간",
             distance = "7.3km",
-            recommendedSeason = "봄~가을",
             price = "68,000원",
             host = "달빛 토끼 6142",
             hostAvatar = "🐰",
@@ -87,7 +84,6 @@ object MockTripRepository {
             duration = "당일",
             courseTime = "4시간",
             distance = "9.1km",
-            recommendedSeason = "여름",
             price = "35,000원",
             host = "우직한 곰 7821",
             hostAvatar = "🐻",
@@ -110,7 +106,6 @@ object MockTripRepository {
             duration = "2박 3일",
             courseTime = "2박 3일",
             distance = "12.4km",
-            recommendedSeason = "봄~가을",
             price = "189,000원",
             host = "고요한 두루미 1130",
             hostAvatar = "🪽",
@@ -133,7 +128,6 @@ object MockTripRepository {
             duration = "당일",
             courseTime = "3시간",
             distance = "5.6km",
-            recommendedSeason = "가을",
             price = "28,000원",
             host = "달빛 토끼 6142",
             hostAvatar = "🐰",
@@ -156,7 +150,6 @@ object MockTripRepository {
             duration = "당일",
             courseTime = "2시간",
             distance = "4.2km",
-            recommendedSeason = "겨울",
             price = "31,000원",
             host = "느긋한 토끼 7821",
             hostAvatar = "🐰",
@@ -179,7 +172,6 @@ object MockTripRepository {
             duration = "반나절",
             courseTime = "2시간",
             distance = "3.8km",
-            recommendedSeason = "여름",
             price = "24,000원",
             host = "잔잔한 거북이 9032",
             hostAvatar = "🐢",
@@ -371,7 +363,10 @@ object MockTripRepository {
     private val tripOverrides = mutableStateMapOf<String, TripRecruitment>()
     private val chatThreadOverrides = mutableStateMapOf<String, ChatThread>()
     private val appliedTripIds = mutableStateMapOf<String, Boolean>()
+    private val tripApplications = mutableStateListOf<TripApplication>()
     private val ownedTripIds = mutableStateListOf<String>()
+    private val recruitmentDrafts = mutableStateMapOf<String, RecruitmentDraft>()
+    private val notices = mutableStateListOf<RecruitmentNotice>()
     private var sessionTripSequence = 0
     private val sessionFeedPosts = mutableStateListOf<FeedPost>()
     private val feedCommentIncrements = mutableStateMapOf<String, Int>()
@@ -390,6 +385,9 @@ object MockTripRepository {
     val chatThreads: List<ChatThread>
         get() = sessionChatThreads.map { chatThreadOverrides[it.id] ?: it } +
             mockChatThreads.map { chatThreadOverrides[it.id] ?: it }
+
+    val applications: List<TripApplication>
+        get() = tripApplications.toList()
 
     val feedPosts: List<FeedPost>
         get() = (sessionFeedPosts + mockFeedPosts).map { post ->
@@ -412,7 +410,22 @@ object MockTripRepository {
             statusLabel = "모집중",
             host = "숲속여행자",
             hostAvatar = "🌲",
-            chatThreadId = "chat-cheongsong-juwangsan"
+            chatThreadId = "chat-cheongsong-juwangsan",
+            courseSource = CourseSource.Custom,
+            recruitmentDeadline = "2026.06.03 (수) 23:59",
+            meetingLocation = MeetingLocation(
+                name = "청송 시외버스터미널",
+                detail = "정문 앞",
+                latitude = 36.435612,
+                longitude = 129.057214,
+                meetingTime = "07:50"
+            ),
+            routeStops = listOf(
+                RouteStop("cheongsong-1", time = "09:00", name = "청송 시외버스터미널", memo = "집합 장소"),
+                RouteStop("cheongsong-2", time = "10:30", name = "주왕산 국립공원", memo = "대전사 ~ 제3폭포"),
+                RouteStop("cheongsong-3", time = "14:00", name = "주산지", memo = "왕버들 산책로"),
+                RouteStop("cheongsong-4", time = "16:30", name = "달기약수탕", memo = "늦은 점심")
+            )
         ),
         TripRecruitment(
             id = "trip-andong-hahoe",
@@ -677,24 +690,117 @@ object MockTripRepository {
 
     fun isAppliedToTrip(tripId: String): Boolean = appliedTripIds[tripId] == true
 
+    fun applicationForTrip(tripId: String): TripApplication? =
+        tripApplications.firstOrNull { it.tripId == findTrip(tripId).id }
+
     fun applyToTrip(tripId: String) {
         val trip = findTrip(tripId)
         val wasAlreadyApplied = appliedTripIds[trip.id] == true
         appliedTripIds[trip.id] = true
-        promoteOwnedTrip(trip.id)
 
         if (!wasAlreadyApplied) {
-            val nextJoined = (trip.joined + 1).coerceAtMost(trip.capacity)
-            val updatedTrip = trip.copy(
-                joined = nextJoined,
-                statusLabel = trip.statusLabelFor(nextJoined)
+            tripApplications += TripApplication(
+                id = "application-${trip.id}",
+                tripId = trip.id,
+                status = if (trip.joined >= trip.capacity) {
+                    TripApplicationStatus.Waitlisted
+                } else {
+                    TripApplicationStatus.PendingApproval
+                },
+                waitlistPosition = if (trip.joined >= trip.capacity) 2 else null
             )
-            tripOverrides[trip.id] = updatedTrip
-            profileState.value = profile.copy(joinedTrips = profile.joinedTrips + 1)
-            updateTripChatThread(updatedTrip)
-        } else {
-            updateTripChatThread(trip)
         }
+    }
+
+    fun cancelApplication(tripId: String) {
+        val canonicalTripId = findTrip(tripId).id
+        tripApplications.removeAll { it.tripId == canonicalTripId }
+        appliedTripIds.remove(canonicalTripId)
+    }
+
+    fun beginRecruitmentDraft(courseId: String): RecruitmentDraft {
+        val course = findCourse(courseId)
+        val draftId = "draft-${course.id}"
+        return recruitmentDrafts.getOrPut(draftId) {
+            RecruitmentDraft(
+                id = draftId,
+                selectedCourseId = course.id,
+                travelDate = "2026.05.25 (토)",
+                meetingLocation = MeetingLocation(
+                    name = course.meetingPoint,
+                    detail = "정문 앞",
+                    latitude = 36.435612,
+                    longitude = 129.057214,
+                    meetingTime = "07:50"
+                ),
+                routeStops = course.defaultRouteStops(),
+                capacity = course.capacity,
+                minParticipants = course.minParticipants,
+                note = course.recruitmentNote
+            )
+        }
+    }
+
+    fun findRecruitmentDraft(draftId: String): RecruitmentDraft =
+        recruitmentDrafts[draftId] ?: beginRecruitmentDraft("cheongsong-juwangsan")
+
+    fun updateRecruitmentDraft(draft: RecruitmentDraft) {
+        require(draft.routeStops.size in 2..20) { "방문지는 2개 이상 20개 이하여야 해요." }
+        recruitmentDrafts[draft.id] = draft
+    }
+
+    fun noticesForTrip(tripId: String): List<RecruitmentNotice> {
+        val canonicalTripId = findTrip(tripId).id
+        ensureNoticesSeeded(canonicalTripId)
+        return notices.filter { it.tripId == canonicalTripId }
+    }
+
+    fun toggleNoticePinned(noticeId: String) {
+        val index = notices.indexOfFirst { it.id == noticeId }
+        if (index < 0) return
+        val notice = notices[index]
+        val pinnedCount = notices.count { it.tripId == notice.tripId && it.isPinned }
+        if (!notice.isPinned && pinnedCount >= 3) return
+        notices[index] = notice.copy(isPinned = !notice.isPinned)
+    }
+
+    fun addNotice(tripId: String, title: String, body: String): RecruitmentNotice {
+        val trip = findTrip(tripId)
+        ensureNoticesSeeded(trip.id)
+        val notice = RecruitmentNotice(
+            id = "notice-${trip.id}-${notices.count { it.tripId == trip.id } + 1}",
+            tripId = trip.id,
+            title = title,
+            body = body,
+            author = "${profile.name} (호스트)",
+            createdAt = "방금",
+            isPinned = notices.count { it.tripId == trip.id && it.isPinned } < 3
+        )
+        notices.add(0, notice)
+        updateTripChatThreadWithNotice(trip, "공지: $title")
+        return notice
+    }
+
+    fun updateCustomRoute(tripId: String, stops: List<RouteStop>) {
+        require(stops.size in 2..20)
+        val trip = findTrip(tripId)
+        require(trip.courseSource == CourseSource.Custom)
+        require(trip.statusLabel !in setOf("출발확정", "마감", "종료"))
+        val previous = trip.routeStops
+        val updated = trip.copy(routeStops = stops)
+        tripOverrides[trip.id] = updated
+        val changeText = routeChangeText(previous, stops)
+        updateTripChatThreadWithNotice(updated, "호스트가 경로를 수정했어요. $changeText")
+    }
+
+    fun updateMeetingLocation(tripId: String, location: MeetingLocation) {
+        val trip = findTrip(tripId)
+        val updated = trip.copy(meetingPoint = location.name, meetingLocation = location)
+        tripOverrides[trip.id] = updated
+        updateTripChatThreadWithNotice(
+            updated,
+            "집합 정보가 변경됐어요: ${location.meetingTime} ${location.name} ${location.detail}"
+        )
     }
 
     fun approveHostApplicant(tripId: String, applicantName: String) {
@@ -799,7 +905,10 @@ object MockTripRepository {
         tripOverrides.clear()
         chatThreadOverrides.clear()
         appliedTripIds.clear()
+        tripApplications.clear()
         ownedTripIds.clear()
+        recruitmentDrafts.clear()
+        notices.clear()
         sessionTripSequence = 0
         profileState.value = initialProfile
         authCompletedState.value = false
@@ -869,6 +978,35 @@ object MockTripRepository {
         return trip
     }
 
+    fun createRecruitmentFromDraft(draftId: String): TripRecruitment {
+        val draft = findRecruitmentDraft(draftId)
+        val course = findCourse(draft.selectedCourseId)
+        val trip = createRecruitment(
+            courseId = course.id,
+            scheduleDate = draft.travelDate,
+            scheduleTime = if (draft.scheduleType == TripScheduleType.DayTrip) {
+                "${draft.startTime} - ${draft.endTime}"
+            } else {
+                "${draft.startTime} - ${draft.endDate.orEmpty()}"
+            },
+            meetingPoint = draft.meetingLocation.name,
+            capacity = draft.capacity,
+            note = draft.note
+        )
+        val enriched = trip.copy(
+            courseSource = draft.courseSource,
+            scheduleType = draft.scheduleType,
+            endDate = draft.endDate,
+            recruitmentDeadline = draft.recruitmentDeadline,
+            meetingLocation = draft.meetingLocation,
+            routeStops = draft.routeStops
+        )
+        tripOverrides[trip.id] = enriched
+        ensureNoticesSeeded(trip.id)
+        recruitmentDrafts.remove(draftId)
+        return enriched
+    }
+
     fun chatThreadIdForTrip(tripId: String): String = findTrip(tripId).chatThreadId
 
     fun chatThreadIdForCourse(courseId: String): String = findTripForCourse(courseId).chatThreadId
@@ -922,6 +1060,78 @@ object MockTripRepository {
             stateLabel = "진행중",
             messages = thread.messages + notice
         )
+    }
+
+    private fun TripCourse.defaultRouteStops(): List<RouteStop> = stops.mapIndexed { index, stop ->
+        RouteStop(
+            id = "$id-stop-${index + 1}",
+            time = listOf("09:00", "10:30", "14:00", "16:30", "18:00").getOrElse(index) { "18:30" },
+            name = stop,
+            memo = if (index == 0) "집합 장소" else "방문지 ${index + 1}"
+        )
+    }
+
+    private fun ensureNoticesSeeded(tripId: String) {
+        if (notices.none { it.tripId == tripId }) {
+            notices += defaultNotices(tripId)
+        }
+    }
+
+    private fun defaultNotices(tripId: String): List<RecruitmentNotice> {
+        val trip = findTrip(tripId)
+        return listOf(
+            RecruitmentNotice(
+                id = "notice-$tripId-meeting",
+                tripId = tripId,
+                title = "집합 장소 · 시간",
+                body =
+                    "${trip.scheduleDate} ${trip.meetingLocation.meetingTime} " +
+                        "${trip.meetingLocation.name} ${trip.meetingLocation.detail}\n" +
+                        "정각에 출발해요. 늦으면 채팅방에 남겨주세요!",
+                author = "${trip.host} (호스트)",
+                createdAt = "5월 20일 오후 2:14",
+                isPinned = true,
+                includesMap = true
+            ),
+            RecruitmentNotice(
+                id = "notice-$tripId-items",
+                tripId = tripId,
+                title = "준비물",
+                body = "편한 운동화, 얇은 바람막이, 물 500ml 정도면 충분해요.",
+                author = "${trip.host} (호스트)",
+                createdAt = "5월 21일 오전 10:02",
+                isPinned = true
+            ),
+            RecruitmentNotice(
+                id = "notice-$tripId-parking",
+                tripId = tripId,
+                title = "주차 안내",
+                body = "터미널 공영주차장을 이용하면 돼요.",
+                author = "${trip.host} (호스트)",
+                createdAt = "5월 18일 오후 7:30",
+                isPinned = false
+            ),
+            RecruitmentNotice(
+                id = "notice-$tripId-lunch",
+                tripId = tripId,
+                title = "점심 메뉴 투표 결과",
+                body = "달기약수탕 백숙으로 정해졌어요.",
+                author = "${trip.host} (호스트)",
+                createdAt = "5월 17일 오후 9:12",
+                isPinned = false
+            )
+        )
+    }
+
+    private fun routeChangeText(previous: List<RouteStop>, updated: List<RouteStop>): String {
+        val changedIndex = previous.indices.firstOrNull { previous.getOrNull(it) != updated.getOrNull(it) }
+        return if (changedIndex == null) {
+            "방문지가 ${previous.size}곳에서 ${updated.size}곳으로 바뀌었어요."
+        } else {
+            val before = previous.getOrNull(changedIndex)?.name ?: "없음"
+            val after = updated.getOrNull(changedIndex)?.name ?: "삭제"
+            "${changedIndex + 1}번째 방문지가 $before → $after 로 바뀌었어요."
+        }
     }
 
     private fun TripRecruitment.statusLabelFor(joinedCount: Int): String = when {

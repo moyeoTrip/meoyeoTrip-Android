@@ -47,11 +47,18 @@ android {
         val authDemoMode = configuredProperty("MOYEO_AUTH_DEMO_MODE", "false").toBoolean()
         val googleWebClientId = configuredProperty("MOYEO_GOOGLE_WEB_CLIENT_ID")
         val kakaoNativeAppKey = configuredProperty("KAKAO_NATIVE_APP_KEY")
+        val sentryDsn = configuredProperty("SENTRY_DSN")
+        val sentryEnvironment = configuredProperty(
+            "SENTRY_ENVIRONMENT",
+            if (configuredProperty("CI", "false").toBoolean()) "ci" else "development"
+        )
         buildConfigField("String", "AUTH_API_BASE_URL", "\"$authApiBaseUrl\"")
         buildConfigField("boolean", "AUTH_DEMO_MODE", authDemoMode.toString())
         buildConfigField("boolean", "FIREBASE_CONFIGURED", hasFirebaseConfig.toString())
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
         buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"$kakaoNativeAppKey\"")
+        buildConfigField("String", "SENTRY_DSN", "\"$sentryDsn\"")
+        buildConfigField("String", "SENTRY_ENVIRONMENT", "\"$sentryEnvironment\"")
         manifestPlaceholders["kakaoRedirectScheme"] = if (kakaoNativeAppKey.isBlank()) {
             "kakao-not-configured"
         } else {
@@ -108,6 +115,7 @@ dependencies {
     implementation(libs.firebase.messaging)
     implementation(libs.google.id)
     implementation(libs.kakao.user)
+    implementation(libs.sentry.android)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
