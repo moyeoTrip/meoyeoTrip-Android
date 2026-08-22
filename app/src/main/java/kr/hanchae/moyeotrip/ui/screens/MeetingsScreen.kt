@@ -21,9 +21,14 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.Place
 import androidx.compose.material3.Badge
-import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -43,6 +48,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -53,6 +59,7 @@ import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripApplication
 import kr.hanchae.moyeotrip.data.TripApplicationStatus
 import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun MeetingsScreen(
@@ -129,14 +136,40 @@ internal fun MeetingChatList(
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
             if (selectedTab == MeetingChatTab.Applied && applications.isNotEmpty()) {
-                items(applications, key = { it.id }) { application ->
-                    ApplicationStatusCard(
-                        application = application,
-                        onCancel = {
-                            MockTripRepository.cancelApplication(application.tripId)
-                            applications = MockTripRepository.applications.toList()
-                        },
-                        onOpenDetail = { onOpenTrip(application.tripId) }
+                // 화면기획·웹처럼 상태별 섹션 머리말을 둔다
+                val waiting = applications.filter { it.status != TripApplicationStatus.Waitlisted }
+                val queued = applications.filter { it.status == TripApplicationStatus.Waitlisted }
+                listOf("호스트 승인을 기다리는 중" to waiting, "대기열에 있는 모임" to queued)
+                    .filter { it.second.isNotEmpty() }
+                    .forEach { (header, group) ->
+                        item(key = "applied-header-$header") {
+                            Text(
+                                text = header,
+                                modifier = Modifier.fillMaxWidth().padding(top = 14.dp)
+                                    .testTag("meeting-applied-header-$header"),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        items(group, key = { it.id }) { application ->
+                            ApplicationStatusCard(
+                                application = application,
+                                onCancel = {
+                                    MockTripRepository.cancelApplication(application.tripId)
+                                    applications = MockTripRepository.applications.toList()
+                                },
+                                onOpenDetail = { onOpenTrip(application.tripId) }
+                            )
+                        }
+                    }
+                item(key = "applied-footnote") {
+                    Text(
+                        text = "신청 상태에서는 아직 채팅방에 들어갈 수 없어요. " +
+                            "승인되거나 자리가 나면 알림으로 알려드릴게요.",
+                        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             } else if (threads.isEmpty()) {
@@ -155,6 +188,11 @@ internal fun MeetingChatList(
 @Composable
 private fun ApplicationStatusCard(application: TripApplication, onCancel: () -> Unit, onOpenDetail: () -> Unit) {
     val trip = MockTripRepository.findTrip(application.tripId)
+    val tints = MoyeoTheme.tints
+    val waitlisted = application.status == TripApplicationStatus.Waitlisted
+    // 승인 대기는 "기다리는 중"이라 경고 틴트, 대기열은 "자리가 나면 합류"라 브랜드 틴트
+    val badgeContainer = if (waitlisted) tints.primaryTint else tints.warningTint
+    val badgeContent = if (waitlisted) tints.onPrimaryTint else tints.onWarningTint
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 10.dp).testTag("meeting-application-${application.tripId}"),
         shape = RoundedCornerShape(12.dp),
@@ -164,48 +202,60 @@ private fun ApplicationStatusCard(application: TripApplication, onCancel: () -> 
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(trip.title, fontWeight = FontWeight.ExtraBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        trip.recruitmentName,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        "🗺 ${trip.title}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                     Text(
                         "${trip.scheduleDate} · ${trip.scheduleType.label}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-                Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.primaryContainer) {
+                Surface(shape = RoundedCornerShape(50), color = badgeContainer) {
                     Text(
-                        if (application.status ==
-                            TripApplicationStatus.Waitlisted
-                        ) {
-                            "대기 ${application.waitlistPosition ?: 1}번"
-                        } else {
-                            "승인 대기"
-                        },
+                        if (waitlisted) "대기열 ${application.waitlistPosition ?: 1}번" else "승인 대기",
                         Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        color = MaterialTheme.colorScheme.primary,
+                        color = badgeContent,
                         fontWeight = FontWeight.ExtraBold,
                         style = MaterialTheme.typography.labelMedium
                     )
                 }
             }
-            Text(
-                if (application.status ==
-                    TripApplicationStatus.Waitlisted
-                ) {
-                    "자리가 나면 신청 순서대로 알려드려요. 아직 채팅방에는 입장할 수 없어요."
-                } else {
-                    "호스트가 신청을 확인하고 있어요. 승인되면 모임 채팅방이 열려요."
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Surface(shape = RoundedCornerShape(10.dp), color = badgeContainer) {
+                Text(
+                    if (waitlisted) {
+                        "정원이 차서 대기 중이에요. 자리가 나면 순서대로 자동 합류돼요."
+                    } else {
+                        "호스트가 확인하면 채팅방이 열려요. 보통 24시간 이내에 응답해요."
+                    },
+                    Modifier.padding(11.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = badgeContent
+                )
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
                     onClick = onCancel,
-                    modifier = Modifier.weight(1f).height(42.dp).testTag("application-cancel-${trip.id}")
+                    modifier = Modifier.height(42.dp).testTag("application-cancel-${trip.id}"),
+                    shape = RoundedCornerShape(10.dp)
                 ) {
                     Text("신청 취소")
                 }
-                Button(onClick = onOpenDetail, modifier = Modifier.weight(1f).height(42.dp)) { Text("상세 보기") }
+                OutlinedButton(
+                    onClick = onOpenDetail,
+                    modifier = Modifier.height(42.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) { Text("모집 상세") }
             }
         }
     }
@@ -380,6 +430,7 @@ fun SpecialMessagesScreen(onBack: () -> Unit, onOpenTripConfirmed: () -> Unit = 
             item {
                 SpecialMessageCard(
                     eyebrow = "장소",
+                    eyebrowIcon = Icons.Filled.Place,
                     title = "동궁과 월지",
                     subtitle = "경북 경주시 원화로 102",
                     body = "09:00-22:00 · 지도 보기"
@@ -396,6 +447,7 @@ fun SpecialMessagesScreen(onBack: () -> Unit, onOpenTripConfirmed: () -> Unit = 
             item {
                 SpecialMessageCard(
                     eyebrow = "11/8 14:00 만남",
+                    eyebrowIcon = Icons.Filled.Map,
                     title = "경주역 2번 출구",
                     subtitle = "함께 출발하면 좋아요",
                     body = "길 찾기"
@@ -410,14 +462,17 @@ fun SpecialMessagesScreen(onBack: () -> Unit, onOpenTripConfirmed: () -> Unit = 
             item {
                 SpecialMessageCard(
                     eyebrow = "정산",
+                    eyebrowIcon = Icons.Filled.Payments,
                     title = "우직한 곰 7821님이 결제했어요",
                     subtitle = "한옥스테이 1박",
-                    body = "120,000원 · 4명 · 1인 30,000원"
+                    body = "120,000원 · 4명",
+                    trailingValue = "1인 30,000원"
                 )
             }
             item {
                 SpecialMessageCard(
                     eyebrow = "공지 · 호스트",
+                    eyebrowIcon = Icons.AutoMirrored.Filled.Article,
                     title = "집합: 경주역 2번 출구",
                     subtitle = "시간: 11/8 (토) 14:00",
                     body = "함께 출발하면 좋아요"
@@ -426,6 +481,8 @@ fun SpecialMessagesScreen(onBack: () -> Unit, onOpenTripConfirmed: () -> Unit = 
             item {
                 SpecialMessageCard(
                     eyebrow = "확정",
+                    eyebrowIcon = Icons.Filled.AutoAwesome,
+                    tinted = true,
                     title = "여행이 확정됐어요!",
                     subtitle = "좋은 여행 되세요",
                     body = "모임 채팅방에서 준비물을 확인해요",
@@ -435,6 +492,7 @@ fun SpecialMessagesScreen(onBack: () -> Unit, onOpenTripConfirmed: () -> Unit = 
             item {
                 SpecialMessageCard(
                     eyebrow = "종료",
+                    eyebrowIcon = Icons.Filled.Lock,
                     title = "아쉬운 모임이에요. 다음에 또 봐요!",
                     subtitle = "14일 후 자동으로 사라져요",
                     body = "친구 도감에는 추억이 남아요"
@@ -450,30 +508,57 @@ private fun SpecialMessageCard(
     title: String,
     subtitle: String,
     body: String,
+    /** 라벨 앞 아이콘. 화면기획은 카드 종류를 아이콘으로 먼저 구분한다. */
+    eyebrowIcon: ImageVector? = null,
+    /** 확정 카드처럼 브랜드 틴트를 쓰는 카드. */
+    tinted: Boolean = false,
+    /** 정산 카드의 우측 강조 값. */
+    trailingValue: String? = null,
     onClick: (() -> Unit)? = null,
     preview: (@Composable () -> Unit)? = null
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val tints = MoyeoTheme.tints
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
-        color = colorScheme.surface,
+        color = if (tinted) tints.primaryTint else colorScheme.surface,
         shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.55f))
+        border = BorderStroke(
+            1.dp,
+            if (tinted) {
+                colorScheme.primary.copy(alpha = 0.35f)
+            } else {
+                colorScheme.outline.copy(alpha = 0.55f)
+            }
+        )
     ) {
         Column(
             modifier = Modifier.padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            Text(
-                text = eyebrow,
-                fontSize = 12.sp,
-                lineHeight = 15.sp,
-                color = colorScheme.primary,
-                fontWeight = FontWeight.ExtraBold
-            )
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                if (eyebrowIcon != null) {
+                    Icon(
+                        imageVector = eyebrowIcon,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = if (tinted) tints.onPrimaryTint else colorScheme.primary
+                    )
+                }
+                Text(
+                    text = eyebrow,
+                    fontSize = 12.sp,
+                    lineHeight = 15.sp,
+                    color = if (tinted) tints.onPrimaryTint else colorScheme.primary,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
             Text(
                 text = title,
                 fontSize = 15.sp,
@@ -490,13 +575,33 @@ private fun SpecialMessageCard(
             if (preview != null) {
                 preview()
             }
-            Text(
-                text = body,
-                fontSize = 12.sp,
-                lineHeight = 15.sp,
-                color = colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.SemiBold
-            )
+            if (trailingValue != null) {
+                // 1인당 금액은 우측 정렬 강조 (화면기획)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = body,
+                        modifier = Modifier.weight(1f),
+                        fontSize = 12.sp,
+                        lineHeight = 15.sp,
+                        color = colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = trailingValue,
+                        fontSize = 14.sp,
+                        color = colorScheme.onSurface,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            } else {
+                Text(
+                    text = body,
+                    fontSize = 12.sp,
+                    lineHeight = 15.sp,
+                    color = if (tinted) tints.onPrimaryTint else colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
         }
     }
 }
@@ -550,11 +655,12 @@ private fun SpecialRoutePreview(modifier: Modifier = Modifier) {
 @Composable
 private fun MeetingChatThreadCard(thread: ChatThread, onClick: () -> Unit) {
     val colorScheme = MaterialTheme.colorScheme
+    val course = thread.previewCourse()
 
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(78.dp)
+            .height(94.dp)
             .testTag("meeting-thread-${thread.id}")
             .clickable(onClick = onClick),
         color = colorScheme.background,
@@ -606,6 +712,25 @@ private fun MeetingChatThreadCard(thread: ChatThread, onClick: () -> Unit) {
                             fontSize = 11.sp,
                             lineHeight = 14.sp,
                             color = colorScheme.onSurfaceVariant
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Map,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = thread.courseLine.ifBlank { course.title },
+                            fontSize = 12.sp,
+                            lineHeight = 16.sp,
+                            color = colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
                     Text(
@@ -694,11 +819,15 @@ private fun EmptyMeetingChatState(tab: MeetingChatTab) {
 }
 
 private fun ChatThread.previewCourse(): TripCourse {
+    val key = courseLine.ifBlank { title }
     val courseId = when {
-        title.contains("주왕산") -> "cheongsong-juwangsan"
-        title.contains("하회마을") -> "andong-hahoe"
-        title.contains("경주") -> "gyeongju-healing"
-        title.contains("포항") || title.contains("영덕") -> "pohang-sea"
+        key.contains("주왕산") -> "cheongsong-juwangsan"
+        key.contains("하회마을") -> "andong-hahoe"
+        key.contains("도산서원") -> "andong-dosan"
+        key.contains("경주") -> "gyeongju-healing"
+        key.contains("문경") -> "mungyeong-saejae"
+        key.contains("부석사") -> "yeongju-buseoksa"
+        key.contains("포항") || key.contains("영덕") -> "pohang-sea"
         else -> "ulleung-island"
     }
     return MockTripRepository.findCourse(courseId)

@@ -44,11 +44,57 @@ class RecruitmentChangeLogUiTest {
 
         show("createPeople")
         composeRule.onNodeWithText("모집 만들기 (3/5)").assertIsDisplayed()
+        composeRule.onNodeWithText("연령 제한은 최소·최대 모두 20~100세 안에서 설정할 수 있어요.")
+            .assertIsDisplayed()
+        composeRule.onNodeWithText("성별 조건").assertIsDisplayed()
         composeRule.onNodeWithTag("create-people-next").assertIsDisplayed()
 
-        show("createMeet")
+        show("create-detail")
         composeRule.onNodeWithText("모집 만들기 (4/5)").assertIsDisplayed()
-        composeRule.onNodeWithTag("meeting-point-save").assertIsDisplayed()
+        composeRule.onNodeWithText("모집 이름 (채팅방 이름) *").assertIsDisplayed()
+        composeRule.onNodeWithText("Step 1에서 고른 코스 이름이며 여기서는 바꿀 수 없어요.").assertIsDisplayed()
+        composeRule.onNodeWithTag("create-detail-introduction").assertIsDisplayed()
+        composeRule.onNodeWithTag("create-detail-save").assertIsDisplayed()
+    }
+
+    @Test
+    fun placeAndTermsScreensHaveDeterministicCaptureRoutes() {
+        show("place-search")
+        composeRule.onNodeWithTag("place-search-screen").assertIsDisplayed()
+        composeRule.onNodeWithText("달기약수터 백숙거리").assertIsDisplayed()
+
+        show("place-detail")
+        composeRule.onNodeWithTag("place-detail-screen").assertIsDisplayed()
+        composeRule.onNodeWithText("달기약수터 백숙거리").assertIsDisplayed()
+        composeRule.onNodeWithText("메뉴판 4").assertIsDisplayed()
+
+        show("terms-detail")
+        composeRule.onNodeWithText("이용약관").assertIsDisplayed()
+        composeRule.onNodeWithText("동의하고 돌아가기").assertIsDisplayed()
+
+        show("terms-settings")
+        composeRule.onNodeWithText("이용약관").assertIsDisplayed()
+        composeRule.onAllNodesWithText("동의하고 돌아가기").assertCountEquals(0)
+
+        show("terms-marketing")
+        composeRule.onNodeWithTag("terms-detail-marketing").assertIsDisplayed()
+        composeRule.onNodeWithText("마케팅 정보 수신").assertIsDisplayed()
+        composeRule.onNodeWithText("이 항목에 동의하기").assertIsDisplayed()
+    }
+
+    @Test
+    fun exactAuthApplyAndLeaveArtboardsOpenTheirOwnState() {
+        show("email-auth")
+        composeRule.onNodeWithTag("auth-step-email").assertIsDisplayed()
+        composeRule.onNodeWithTag("auth-email-address").assertIsDisplayed()
+
+        show("apply")
+        composeRule.onNodeWithTag("application-sheet").assertIsDisplayed()
+        composeRule.onAllNodesWithText("함께 가기 신청").assertCountEquals(2)
+
+        show("leave")
+        composeRule.onNodeWithTag("leave-alert-screen").assertIsDisplayed()
+        composeRule.onNodeWithText("호스트가 나가면\n이 모임은 종료돼요").assertIsDisplayed()
     }
 
     @Test
@@ -61,15 +107,18 @@ class RecruitmentChangeLogUiTest {
         composeRule.onNodeWithText("일정 정하기").assertIsDisplayed()
 
         composeRule.onNodeWithTag("create-schedule-next").performClick()
+        composeRule.onNodeWithText("집합 장소 지정").assertIsDisplayed()
+        composeRule.onNodeWithTag("meeting-point-save").performClick()
+
         composeRule.onNodeWithText("모집 만들기 (3/5)").assertIsDisplayed()
         composeRule.onNodeWithText("인원 정하기").assertIsDisplayed()
 
         composeRule.onNodeWithTag("create-people-next").performClick()
         composeRule.onNodeWithText("모집 만들기 (4/5)").assertIsDisplayed()
-        composeRule.onNodeWithText("집합 장소 정하기").assertIsDisplayed()
+        composeRule.onNodeWithText("어떤 여행인지 알려주세요").assertIsDisplayed()
         composeRule.onNodeWithText("이전").assertIsDisplayed()
 
-        composeRule.onNodeWithTag("meeting-point-save").performClick()
+        composeRule.onNodeWithTag("create-detail-save").performClick()
         composeRule.onNodeWithText("모집 만들기 (5/5)").assertIsDisplayed()
         composeRule.onNodeWithText("이대로 모집을 열까요?").assertIsDisplayed()
         composeRule.onNodeWithTag("create-summary-submit").assertIsDisplayed()

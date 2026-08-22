@@ -58,6 +58,42 @@ class RecruitmentChangeLogTest {
     }
 
     @Test
+    fun recruitmentNameAndConditionsStaySeparateFromCourse() {
+        val draft = MockTripRepository.beginRecruitmentDraft("cheongsong-juwangsan").copy(
+            recruitmentName = "30대끼리 느긋하게 힐링 여행가요~",
+            estimatedCostPerPerson = 62_000,
+            minimumAge = 30,
+            maximumAge = 39,
+            genderCondition = "성별 무관"
+        )
+        MockTripRepository.updateRecruitmentDraft(draft)
+
+        val trip = MockTripRepository.createRecruitmentFromDraft(draft.id)
+
+        assertEquals("30대끼리 느긋하게 힐링 여행가요~", trip.recruitmentName)
+        assertEquals("주왕산 & 주산지 힐링 트레킹", MockTripRepository.findCourse(trip.courseId).title)
+        assertEquals(62_000, trip.estimatedCostPerPerson)
+        assertEquals(30, trip.minimumAge)
+        assertEquals(39, trip.maximumAge)
+        assertEquals("30대끼리 느긋하게 힐링 여행가요~", MockTripRepository.findThread(trip.chatThreadId).title)
+    }
+
+    @Test
+    fun ageConditionsMustStayInsideTwentyToOneHundred() {
+        val draft = MockTripRepository.beginRecruitmentDraft("cheongsong-juwangsan")
+
+        assertThrows(IllegalArgumentException::class.java) {
+            MockTripRepository.updateRecruitmentDraft(draft.copy(minimumAge = 19))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            MockTripRepository.updateRecruitmentDraft(draft.copy(maximumAge = 101))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            MockTripRepository.updateRecruitmentDraft(draft.copy(minimumAge = 50, maximumAge = 40))
+        }
+    }
+
+    @Test
     fun onlyUnconfirmedCustomRouteCanChangeAndChangeIsRecordedInChat() {
         val custom = MockTripRepository.findTrip("trip-cheongsong-juwangsan")
         val nextStops = custom.routeStops + RouteStop("new-stop", time = "16:30", name = "달기약수탕", memo = "늦은 점심")

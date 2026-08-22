@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package kr.hanchae.moyeotrip.notifications
 
 import android.app.NotificationChannel
@@ -26,6 +28,15 @@ internal fun pushRoute(data: Map<String, String>): String = when (
     else -> "home"
 }
 
+data class PushNavigationEvent(val id: Long, val route: String)
+
+internal fun nextPushNavigationEvent(current: PushNavigationEvent?, route: String?): PushNavigationEvent? = route?.let {
+    PushNavigationEvent(id = (current?.id ?: 0L) + 1L, route = it)
+}
+
+internal fun consumePushNavigationEvent(current: PushNavigationEvent?, handledEventId: Long): PushNavigationEvent? =
+    current?.takeUnless { it.id == handledEventId }
+
 object MoyeoPushNotificationChannels {
     fun create(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -45,26 +56,50 @@ object MoyeoPushNotificationChannels {
 object MoyeoPushTokenStore {
     private const val PREFERENCES = "moyeo_push"
     private const val TOKEN = "fcm_token"
+    private const val PENDING_REGISTRATION = "pending_registration"
 
     fun save(context: Context, token: String) {
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        if (token.isBlank()) return
+        val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        val pendingRegistration = tokenRegistrationPending(
+            storedToken = preferences.getString(TOKEN, null),
+            incomingToken = token,
+            wasPending = preferences.getBoolean(PENDING_REGISTRATION, false)
+        )
+        preferences
             .edit()
             .putString(TOKEN, token)
+            .putBoolean(PENDING_REGISTRATION, pendingRegistration)
             .apply()
     }
 
     fun read(context: Context): String? = context
         .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
         .getString(TOKEN, null)
+
+    fun needsRegistration(context: Context): Boolean = context
+        .getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        .getBoolean(PENDING_REGISTRATION, false)
+
+    fun markRegistered(context: Context, token: String) {
+        val preferences = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
+        if (preferences.getString(TOKEN, null) != token) return
+        preferences.edit().putBoolean(PENDING_REGISTRATION, false).apply()
+    }
 }
+
+internal fun tokenRegistrationPending(storedToken: String?, incomingToken: String, wasPending: Boolean): Boolean =
+    storedToken != incomingToken || wasPending
 
 class MoyeoFirebaseMessagingService : FirebaseMessagingService() {
     @Suppress("OVERRIDE_DEPRECATION")
     override fun onNewToken(token: String) {
+        super.onNewToken(token)
         MoyeoPushTokenStore.save(this, token)
     }
 
     override fun onMessageReceived(message: RemoteMessage) {
+        MoyeoPushNotificationChannels.create(this)
         val title = message.notification?.title ?: message.data["title"] ?: getString(R.string.app_name)
         val body = message.notification?.body ?: message.data["body"] ?: return
         val route = pushRoute(message.data)
@@ -86,6 +121,7 @@ class MoyeoFirebaseMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .setColor(getColor(R.color.forest_green))
             .build()
         getSystemService(NotificationManager::class.java)
             .notify(message.messageId?.hashCode() ?: System.currentTimeMillis().toInt(), notification)

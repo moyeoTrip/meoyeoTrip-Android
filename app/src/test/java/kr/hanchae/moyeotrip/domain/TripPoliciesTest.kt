@@ -144,7 +144,8 @@ class TripPoliciesTest {
         assertEquals(false, ApplicationNotePolicy.isValid("짧음"))
         assertEquals(true, ApplicationNotePolicy.isValid("함께 천천히 걷고 싶어요"))
         assertEquals(200, ApplicationNotePolicy.sanitize("가".repeat(220)).length)
-        assertEquals("11/200자 · 최소 10자", ApplicationNotePolicy.helperText("  12345678901  "))
+        assertEquals("10자 이상 200자 이하로 남겨요.", ApplicationNotePolicy.helperText("  12345678901  "))
+        assertEquals("11/200", ApplicationNotePolicy.counterText("  12345678901  "))
     }
 
     @Test

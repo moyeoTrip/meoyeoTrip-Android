@@ -43,7 +43,7 @@ fun ChatListScreen(onBack: () -> Unit, onOpenRoom: (String) -> Unit) {
             }
             Spacer(modifier = Modifier.weight(1f))
             Text(
-                text = "모임 채팅",
+                text = "모임",
                 style = MaterialTheme.typography.titleSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.ExtraBold

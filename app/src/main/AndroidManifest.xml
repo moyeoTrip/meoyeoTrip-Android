@@ -23,7 +23,12 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_channel_id"
             android:value="moyeo_updates" />
-
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_stat_moyeo_notification" />
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/forest_green" />
         <service
             android:name=".notifications.MoyeoFirebaseMessagingService"
             android:exported="false">

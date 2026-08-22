@@ -35,6 +35,7 @@ class AuthFlowCoordinator(
     private val authGateway: AuthGateway,
     private val sessionStore: AuthSessionStore,
     private val userProfileStore: UserProfileStore = kr.hanchae.moyeotrip.data.auth.InMemoryUserProfileStore(),
+    private val onFcmTokenRegistered: (String) -> Unit = {},
     private val onStateChange: (AuthFlowState) -> Unit = {}
 ) {
     var state: AuthFlowState = AuthFlowState()
@@ -131,6 +132,7 @@ class AuthFlowCoordinator(
 
     private suspend fun finishLogin(identity: IdentityToken): AuthFlowState {
         val result = authGateway.login(identity)
+        identity.fcmToken?.let(onFcmTokenRegistered)
         require(result.providerType == identity.provider) { "로그인 제공자 정보가 일치하지 않아요." }
         sessionStore.saveLogin(identity.provider, result)
         result.accessToken?.let(userProfileStore::updateFromAccessToken)
@@ -225,6 +227,7 @@ class AuthFlowCoordinator(
                     birthDate = birthDate
                 )
             )
+            identity.fcmToken?.let(onFcmTokenRegistered)
             sessionStore.saveSignup(identity.provider, session)
             userProfileStore.updateFromAccessToken(session.accessToken)
             val selectedCandidate = state.nickname.candidates.firstOrNull { it.nickname == nickname }

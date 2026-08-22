@@ -39,7 +39,7 @@ class MockTripRepositoryTest {
         assertNotNull(MockTripRepository.profile)
         assertEquals("숲속여행자", MockTripRepository.feedPosts.first().author)
         assertEquals("주왕산 & 주산지 힐링 트레킹", MockTripRepository.feedPosts.first().title)
-        assertEquals("경주 단풍·야경", MockTripRepository.chatThreads.first().title)
+        assertEquals("가을 경주 야경 같이 봐요", MockTripRepository.chatThreads.first().title)
         assertTrue(
             MockTripRepository.trips.all { trip ->
                 MockTripRepository.findCourse(trip.courseId).id == trip.courseId
@@ -65,6 +65,29 @@ class MockTripRepositoryTest {
     }
 
     @Test
+    fun coursePublisherAndDiscoverFeedMatchPlanningContent() {
+        val publisher = MockTripRepository.findCourse("cheongsong-juwangsan").publisher
+        val discoverPosts = MockTripRepository.feedPosts.filter { it.visibility != FeedVisibility.Private }
+
+        assertNotNull(publisher)
+        assertEquals("숲속여행자", publisher?.name)
+        assertEquals("2026.05.25 여행 후 공개", publisher?.publishedAfterTrip)
+        assertEquals(3, publisher?.recruitmentCount)
+        assertEquals(6, discoverPosts.size)
+        assertEquals(
+            listOf(
+                "주왕산 & 주산지 힐링 트레킹",
+                "안동 하회마을, 잊지 못할 하루",
+                "경주 역사 감성 여행",
+                "포항 바다와 시장을 한 번에",
+                "문경새재 길은 천천히 걸을수록 좋아요",
+                "울릉도는 천천히 움직여야 보여요"
+            ),
+            discoverPosts.map { it.title }
+        )
+    }
+
+    @Test
     fun tripLookupUsesRecruitmentIdsInsteadOfCourseIds() {
         val gyeongjuTrip = MockTripRepository.findTripForCourse("gyeongju-healing")
 
@@ -77,10 +100,14 @@ class MockTripRepositoryTest {
         )
         assertEquals("chat-andong-hahoe", MockTripRepository.chatThreadIdForTrip("trip-andong-hahoe"))
         assertEquals(
-            "주왕산 & 주산지 힐링 트레킹",
+            "30대끼리 느긋하게 힐링 여행가요~",
             MockTripRepository.findThread("chat-cheongsong-juwangsan").title
         )
-        assertEquals("안동 하회마을 한옥체험", MockTripRepository.findThread("chat-andong-hahoe").title)
+        assertEquals(
+            "trip-cheongsong-juwangsan",
+            MockTripRepository.findThread("chat-cheongsong-juwangsan").tripId
+        )
+        assertEquals("한옥에서 하룻밤 어때요", MockTripRepository.findThread("chat-andong-hahoe").title)
     }
 
     @Test
@@ -175,7 +202,7 @@ class MockTripRepositoryTest {
             assertEquals(trip, MockTripRepository.trips[1])
             assertEquals(trip.id, MockTripRepository.tripIdForCourse("andong-hahoe"))
             assertEquals(trip.chatThreadId, MockTripRepository.chatThreadIdForTrip(trip.id))
-            assertEquals("안동 하회마을 하루 코스", MockTripRepository.findThread(trip.chatThreadId).title)
+            assertEquals("사진 좋아하는 분들과 하회마을 걸어요", MockTripRepository.findThread(trip.chatThreadId).title)
             assertTrue(MockTripRepository.findThread(trip.chatThreadId).messages.isNotEmpty())
             assertEquals(2, listOf(trip.id, secondTrip.id).toSet().size)
             assertEquals(2, listOf(trip.chatThreadId, secondTrip.chatThreadId).toSet().size)

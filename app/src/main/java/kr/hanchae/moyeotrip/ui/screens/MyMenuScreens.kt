@@ -3,7 +3,6 @@ package kr.hanchae.moyeotrip.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -29,10 +29,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Article
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.StarOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -59,6 +64,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
@@ -81,8 +87,10 @@ import kr.hanchae.moyeotrip.domain.auth.AuthProvider
 import kr.hanchae.moyeotrip.domain.auth.EmailAuthAction
 import kr.hanchae.moyeotrip.domain.auth.EmailAuthRequest
 import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
+import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun ProfileScreen(
@@ -114,21 +122,51 @@ fun ProfileScreen(
             }
         )
 
+        // 화면기획 구조: 커버 + 중앙 아바타 → 이름·매너 점수 → 통계 4칸 → 소개 → 메뉴 3줄.
+        // 선호 지역·이번 달 추천·만난 친구는 이 화면의 요소가 아니다(마이/도감에서 다룬다).
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = menuContentPadding(bottom = 28.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+            contentPadding = PaddingValues(bottom = 28.dp)
         ) {
-            item { ProfileHeaderCard(profile = profile, userProfile = userProfile) }
-            item { ProfileStatsRow(profile = profile) }
+            item { ProfileCoverHeader(profile = profile, userProfile = userProfile) }
             item {
-                ProfileMenuCard(
-                    onOpenProfileEdit = onOpenProfileEdit,
-                    onOpenFriendDex = onOpenFriendDex
-                )
+                Box(Modifier.padding(horizontal = 18.dp)) {
+                    ProfileStatsRow(profile = profile)
+                }
             }
-            item { ProfileTagCard(profile = profile) }
-            item { DogamPreviewCard(onOpenFriendDex = onOpenFriendDex) }
+            item {
+                Box(Modifier.padding(horizontal = 18.dp)) {
+                    MenuCard {
+                        Text("소개", fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            profile.intro.ifBlank { profile.bio },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                    }
+                }
+            }
+            item {
+                Column {
+                    ProfileMenuRow(
+                        icon = Icons.AutoMirrored.Filled.Article,
+                        label = "내 정보 수정",
+                        onClick = onOpenProfileEdit
+                    )
+                    ProfileMenuRow(
+                        icon = Icons.Filled.People,
+                        label = "친구 관리",
+                        onClick = onOpenFriendDex
+                    )
+                    ProfileMenuRow(
+                        icon = Icons.Filled.Close,
+                        label = "차단한 사용자",
+                        onClick = onOpenSettings
+                    )
+                }
+            }
         }
     }
 }
@@ -136,22 +174,19 @@ fun ProfileScreen(
 @Composable
 fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
     val profile = MockTripRepository.profile
-    var name by remember(userProfile.nickname) { mutableStateOf(userProfile.nickname ?: "") }
-    var bio by remember { mutableStateOf(profile.bio) }
-    var selectedRegions by remember { mutableStateOf(setOf("청송", "안동", "경주", "울릉")) }
-    var selectedPace by remember { mutableStateOf("천천히") }
+    var selectedRegions by remember { mutableStateOf(setOf("경주", "안동", "포항", "문경")) }
     var showSavedDialog by remember { mutableStateOf(false) }
-    val regionOptions = listOf("청송", "안동", "경주", "울릉", "포항", "문경")
-    val paceOptions = listOf("천천히", "사진 많이", "로컬 맛집", "짧은 코스")
+    val colors = MaterialTheme.colorScheme
+    val tints = MoyeoTheme.tints
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(colors.background)
             .testTag("screen-profile-edit")
     ) {
         CompactMenuHeader(
-            title = "내 정보 수정",
+            title = "프로필 수정",
             onBack = onBack,
             trailing = {
                 TextButton(
@@ -163,93 +198,120 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
             }
         )
 
+        // 화면기획 구조: 중앙 아바타(고정 배지) → 공개 프로필 그룹 → 비공개 정보 그룹.
+        // 항목마다 카드를 두면 무엇이 공개/비공개인지 묶음이 읽히지 않는다.
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-            contentPadding = menuContentPadding(bottom = 42.dp)
+            contentPadding = PaddingValues(bottom = 42.dp)
         ) {
             item {
-                MenuCard {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        UserAvatar(
-                            imageUrl = userProfile.profileImageUrl,
-                            nickname = userProfile.nickname,
-                            modifier = Modifier.size(62.dp),
-                            fallbackFontSize = 28.sp
-                        )
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text(
-                                text = userProfile.nickname ?: "내 프로필",
-                                style = MaterialTheme.typography.titleSmall,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = "대표 캐릭터와 소개는 여행 친구에게 먼저 보여요.",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-            item {
-                ProfileEditFieldCard(title = "닉네임") {
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = { name = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("profile-edit-name"),
-                        singleLine = true,
-                        enabled = false,
-                        supportingText = { Text("닉네임 변경 API가 아직 제공되지 않아요.") }
-                    )
-                }
-            }
-            item {
-                ProfileEditFieldCard(title = "한 줄 소개") {
-                    OutlinedTextField(
-                        value = bio,
-                        onValueChange = { bio = it },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("profile-edit-bio"),
-                        minLines = 2,
-                        maxLines = 4
-                    )
-                }
-            }
-            item {
-                ProfileEditFieldCard(title = "선호 지역") {
-                    ProfileEditChipGrid(
-                        items = regionOptions,
-                        selectedItems = selectedRegions,
-                        onToggle = { region ->
-                            selectedRegions = if (selectedRegions.contains(region)) {
-                                selectedRegions - region
-                            } else {
-                                selectedRegions + region
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box {
+                        AnimalAvatar(profileAvatarEmoji(profile.nickname), modifier = Modifier.size(96.dp))
+                        Surface(
+                            modifier = Modifier.align(Alignment.BottomEnd).size(26.dp),
+                            shape = CircleShape,
+                            color = colors.surfaceVariant,
+                            border = BorderStroke(1.dp, colors.outline)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    Icons.Filled.Lock,
+                                    contentDescription = "캐릭터 고정",
+                                    modifier = Modifier.size(13.dp),
+                                    tint = colors.onSurfaceVariant
+                                )
                             }
                         }
+                    }
+                    Text(
+                        userProfile.nickname ?: profile.nickname,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        "한 번 정한 친구는 바꿀 수 없어요",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onSurfaceVariant
                     )
                 }
             }
+            item { ProfileEditGroupHeader("공개 프로필") }
             item {
-                ProfileEditFieldCard(title = "여행 취향") {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        paceOptions.forEach { option ->
-                            SelectableProfilePill(
-                                text = option,
-                                selected = selectedPace == option,
-                                onClick = { selectedPace = option }
+                ProfileEditRow(label = "자기소개", value = "느긋한 여행 좋아해요", showsChevron = true)
+            }
+            item {
+                ProfileEditRow(label = "여행 스타일", value = "자연 · 사진", showsChevron = true)
+            }
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("관심 지역", fontWeight = FontWeight.Bold)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("경주", "안동", "포항", "문경").forEach { region ->
+                            val on = region in selectedRegions
+                            Surface(
+                                modifier = Modifier.clickable {
+                                    selectedRegions = if (on) {
+                                        selectedRegions - region
+                                    } else {
+                                        selectedRegions + region
+                                    }
+                                },
+                                shape = RoundedCornerShape(50),
+                                color = if (on) colors.primary else colors.surface,
+                                border = BorderStroke(1.dp, if (on) colors.primary else colors.outline)
+                            ) {
+                                Text(
+                                    region,
+                                    Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (on) colors.onPrimary else colors.onSurface
+                                )
+                            }
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = colors.surfaceVariant,
+                            border = BorderStroke(1.dp, colors.outline)
+                        ) {
+                            Text(
+                                "+ 추가",
+                                Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colors.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
                 }
+            }
+            item { ProfileEditGroupHeader("비공개 정보") }
+            item {
+                // 닉네임과 캐릭터는 선택 후 바꿀 수 없다 — 잠금 표시로 알린다
+                ProfileEditRow(
+                    label = "닉네임",
+                    value = userProfile.nickname ?: profile.nickname,
+                    locked = true
+                )
+            }
+            item { ProfileEditRow(label = "캐릭터", value = "고정됨", locked = true) }
+            item { ProfileEditRow(label = "생년월일", value = "1998.04.12", showsChevron = true) }
+            item { ProfileEditRow(label = "성별", value = "여성", showsChevron = true) }
+            item {
+                Text(
+                    "비공개 정보는 다른 여행자에게 보이지 않아요.",
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tints.softLine.let { colors.onSurfaceVariant }
+                )
             }
         }
     }
@@ -257,10 +319,7 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
     if (showSavedDialog) {
         AlertDialog(
             onDismissRequest = { showSavedDialog = false },
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = {
-                Text(text = "저장 완료", fontWeight = FontWeight.ExtraBold)
-            },
+            title = { Text(text = "저장했어요", fontWeight = FontWeight.ExtraBold) },
             text = {
                 Text(text = "프로필 변경사항이 저장됐어요.")
             },
@@ -270,6 +329,52 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
                 }
             }
         )
+    }
+}
+
+/** 프로필 수정의 그룹 제목. 공개/비공개 묶음을 구분한다. */
+@Composable
+private fun ProfileEditGroupHeader(title: String) {
+    Text(
+        title,
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.Bold
+    )
+}
+
+/** 라벨 좌측 · 값 우측의 한 줄 행. 카드로 감싸지 않는다 (화면기획). */
+@Composable
+private fun ProfileEditRow(label: String, value: String, showsChevron: Boolean = false, locked: Boolean = false) {
+    val colors = MaterialTheme.colorScheme
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+            Text(
+                value,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (locked) colors.onSurfaceVariant else colors.onSurface,
+                fontWeight = if (locked) FontWeight.Normal else FontWeight.Bold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Icon(
+                imageVector = if (locked) Icons.Filled.Check else Icons.Filled.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.padding(start = 6.dp).size(16.dp),
+                tint = colors.onSurfaceVariant
+            )
+        }
+        HorizontalDivider(color = colors.outlineVariant)
     }
 }
 
@@ -513,6 +618,46 @@ fun FriendDexScreen(onBack: () -> Unit) {
                 }
             }
             item {
+                // 화면기획 27의 안내 카드 — 한 줄 남기지 않은 친구를 알려준다
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("friend-dex-notice"),
+                    colors = CardDefaults.cardColors(containerColor = MoyeoTheme.tints.primaryTint),
+                    shape = RoundedCornerShape(12.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Text(
+                                text = "카드 뒷면이 비어 있는 친구 2명",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = ForestGreen,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "경주 단풍·야경에서 만난 친구들에게 한 줄 남겨볼까요?",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = ForestGreen,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                }
+            }
+            item {
                 if (filteredFriends.isEmpty()) {
                     DogamEmptyResult()
                 } else {
@@ -535,7 +680,7 @@ fun FriendDexScreen(onBack: () -> Unit) {
 private enum class DogamFriendFilter(val title: String, val summary: String) {
     All("전체 12", "최근 동행 순"),
     Repeated("2회 이상 4", "2회 이상 만난 친구"),
-    Recent("최근 1주 3", "최근 1주 동행");
+    Recent("최근 1개월 3", "최근 1개월 동행");
 
     fun includes(friend: DogamFriend): Boolean = when (this) {
         All -> true
@@ -664,7 +809,8 @@ fun SettingsScreen(
     onAuthenticationCleared: () -> Unit,
     onOpenNotificationDetail: () -> Unit = {},
     onOpenBlockedUsers: () -> Unit = {},
-    onOpenAccountDelete: () -> Unit = {}
+    onOpenAccountDelete: () -> Unit = {},
+    onOpenTerms: (String) -> Unit = {}
 ) {
     val coroutineScope = rememberCoroutineScope()
     var chatEnabled by remember { mutableStateOf(true) }
@@ -706,7 +852,7 @@ fun SettingsScreen(
                     SettingsToggleRow("마케팅 알림", "이벤트·새 코스 소개", marketingEnabled) {
                         marketingEnabled = it
                     }
-                    SettingsValueRow(title = "알림 세부 설정", value = "방해금지 · 모임별") {
+                    SettingsValueRow(title = "알림 세부 설정", value = "방해금지 22:30~07:00") {
                         onOpenNotificationDetail()
                     }
                 }
@@ -727,7 +873,7 @@ fun SettingsScreen(
                 SettingsSectionGroup("계정") {
                     SettingsValueRow(
                         title = "로그인 방식",
-                        value = connectedProviders.providerSummary().ifBlank { "확인하기" },
+                        value = connectedProviders.providerSummary().ifBlank { "관리" },
                         onClick = {
                             showProviderDialog = true
                             providerLoading = true
@@ -744,10 +890,10 @@ fun SettingsScreen(
                         onOpenBlockedUsers()
                     }
                     SettingsValueRow(action = SettingsMockAction.PrivacyPolicy) {
-                        selectedAction = it
+                        onOpenTerms("privacy")
                     }
                     SettingsValueRow(action = SettingsMockAction.Terms) {
-                        selectedAction = it
+                        onOpenTerms("service")
                     }
                 }
             }
@@ -1185,9 +1331,15 @@ private fun DogamFriendCard(friend: DogamFriend, modifier: Modifier = Modifier) 
         ) {
             Box {
                 MascotCircle(text = friend.avatar, size = 42)
-                if (friend.metCount > 1) {
+                // 내 카드는 "나" 배지, 여러 번 만난 친구는 횟수 배지 (화면기획 27)
+                val badge = when {
+                    friend.nickname == MockTripRepository.profile.nickname -> "나"
+                    friend.metCount > 1 -> "${friend.metCount}x"
+                    else -> null
+                }
+                if (badge != null) {
                     Text(
-                        text = "${friend.metCount}x",
+                        text = badge,
                         modifier = Modifier
                             .align(Alignment.TopEnd)
                             .clip(RoundedCornerShape(50))
@@ -1341,7 +1493,7 @@ private fun ProviderManagementDialog(
     var isEmailFormExpanded by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    val darkTheme = isSystemInDarkTheme()
+    val darkTheme = MoyeoTheme.isDark
     val inputBackground = if (darkTheme) Color(0xFF0D1411) else Color.White
     val softLine = if (darkTheme) Color(0xFF24332D) else Color(0xFFEEF0EE)
 
@@ -1531,7 +1683,7 @@ private fun ProviderConnectionCard(
     onClick: () -> Unit,
     content: @Composable ColumnScope.() -> Unit = {}
 ) {
-    val darkTheme = isSystemInDarkTheme()
+    val darkTheme = MoyeoTheme.isDark
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
@@ -1592,7 +1744,7 @@ private fun ProviderConnectionButton(
     onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val darkTheme = isSystemInDarkTheme()
+    val darkTheme = MoyeoTheme.isDark
     val containerColor = when (provider) {
         AuthProvider.KAKAO -> Color(0xFFFEE500)
         AuthProvider.GOOGLE -> if (darkTheme) Color(0xFF131314) else Color.White
@@ -1664,7 +1816,7 @@ private fun ProviderConnectionIcon(provider: AuthProvider) {
             )
         }
     } else {
-        val darkTheme = isSystemInDarkTheme()
+        val darkTheme = MoyeoTheme.isDark
         val containerColor = when (provider) {
             AuthProvider.KAKAO -> Color(0xFFFEE500)
             AuthProvider.GOOGLE -> if (darkTheme) Color(0xFF131314) else Color.White
@@ -1987,4 +2139,105 @@ private fun MascotCircle(text: String, size: Int) {
     ) {
         Text(text = text, fontSize = (size * 0.46f).sp)
     }
+}
+
+/**
+ * 프로필 커버 헤더.
+ *
+ * 화면기획은 옅은 커버 위에 아바타가 걸치고, 그 아래 이름과 매너 점수가 온다.
+ * 카드 안에 좌측 정렬로 넣으면 "내 프로필 카드"로 읽혀 공개 프로필 성격이 사라진다.
+ */
+@Composable
+private fun ProfileCoverHeader(profile: Profile, userProfile: UserDisplayProfile) {
+    val colors = MaterialTheme.colorScheme
+    val tints = MoyeoTheme.tints
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(Modifier.fillMaxWidth()) {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(132.dp)
+                    .background(tints.mapGreen)
+            )
+            Box(
+                Modifier
+                    .align(Alignment.BottomCenter)
+                    .offset(y = 34.dp)
+                    .size(74.dp)
+                    .clip(CircleShape)
+                    .background(tints.primaryTint),
+                contentAlignment = Alignment.Center
+            ) {
+                AnimalAvatar(profileAvatarEmoji(profile.animalBuddy), modifier = Modifier.size(58.dp))
+            }
+        }
+        Spacer(Modifier.height(42.dp))
+        Text(
+            userProfile.nickname ?: profile.name,
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.ExtraBold
+        )
+        Row(
+            modifier = Modifier.padding(top = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(
+                "매너 점수 4.7점",
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSurfaceVariant,
+                fontWeight = FontWeight.Bold
+            )
+            Icon(
+                Icons.Filled.StarOutline,
+                contentDescription = null,
+                modifier = Modifier.size(13.dp),
+                tint = colors.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** 프로필 메뉴 한 줄. 아이콘 + 라벨 + chevron (화면기획). */
+@Composable
+private fun ProfileMenuRow(icon: ImageVector, label: String, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp), tint = colors.onSurface)
+            Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = colors.onSurfaceVariant
+            )
+        }
+        HorizontalDivider(color = colors.outlineVariant)
+    }
+}
+
+/**
+ * 프로필 아바타에 쓸 이모지.
+ *
+ * `Profile.animalBuddy` 는 "초록 고양이 2035" 같은 표시용 이름이라 아바타 자리에 그대로
+ * 넣으면 원 안에 글자가 들어간다. 이름에 담긴 동물로 이모지를 고른다.
+ */
+internal fun profileAvatarEmoji(animalBuddy: String): String = when {
+    animalBuddy.contains("사슴") -> "🦌"
+    animalBuddy.contains("곰") -> "🐻"
+    animalBuddy.contains("토끼") -> "🐰"
+    animalBuddy.contains("거북") -> "🐢"
+    animalBuddy.contains("너구리") -> "🦝"
+    animalBuddy.contains("여우") -> "🦊"
+    animalBuddy.contains("고양이") -> "🐱"
+    animalBuddy.contains("두루미") || animalBuddy.contains("두루") -> "🕊"
+    else -> "🐻"
 }

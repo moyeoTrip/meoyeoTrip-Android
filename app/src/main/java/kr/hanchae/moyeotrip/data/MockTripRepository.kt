@@ -23,13 +23,20 @@ object MockTripRepository {
             hostAvatar = "🦌",
             participants = 2,
             capacity = 5,
-            deadlineLabel = "마감 D-1",
-            startLabel = "2026.06.06 (토)",
+            deadlineLabel = "마감 D-3",
+            startLabel = "2026.05.25 (토)",
             meetingPoint = "청송 시외버스터미널",
             rating = 4.8,
             tags = listOf("자연", "히든명소", "추천"),
-            stops = listOf("주왕산국립공원", "용연폭포", "주산지"),
-            recruitmentNote = "주왕산 숲길을 천천히 걷고 주산지 물그림자까지 둘러보는 당일 모임이에요."
+            // 경로 미리보기는 화면기획과 같은 4개 지점이다 (집합지 포함)
+            stops = listOf("주왕산국립공원", "용연폭포", "주산지", "달기약수탕"),
+            recruitmentNote = "주왕산 숲길을 천천히 걷고 주산지 물그림자까지 둘러보는 당일 모임이에요.",
+            publisher = CoursePublisher(
+                name = "숲속여행자",
+                avatar = "🐻",
+                publishedAfterTrip = "2026.05.25 여행 후 공개",
+                recruitmentCount = 3
+            )
         ),
         TripCourse(
             id = "andong-hahoe",
@@ -190,7 +197,8 @@ object MockTripRepository {
     private val mockChatThreads = listOf(
         ChatThread(
             id = "chat-gyeongju-fall",
-            title = "경주 단풍·야경",
+            title = "가을 경주 야경 같이 봐요",
+            courseLine = "경주 단풍·야경 1박 2일",
             partner = "우직한 곰 7821",
             avatar = "🐻",
             lastMessage = "우직한 곰: 내일 오후 2시 만나요",
@@ -207,14 +215,15 @@ object MockTripRepository {
         ),
         ChatThread(
             id = "chat-pohang-drive",
-            title = "포항·영덕 동해 드라이브",
+            title = "바다 보면서 드라이브해요",
+            courseLine = "포항·영덕 동해 드라이브",
             partner = "따스한 사슴 3492",
             avatar = "🦌",
             lastMessage = "잔잔한 거북이: 오늘 사진 올릴게요",
             time = "1:20",
             unreadCount = 0,
             countText = "6/6명",
-            statusText = "확정 ✓",
+            statusText = "확정 ✓ · 오늘 출발",
             stateLabel = "확정",
             messages = listOf(
                 ChatMessage("따스한 사슴 3492", "확정 인원 기준으로 식당 예약해둘게요.", "어제"),
@@ -223,7 +232,8 @@ object MockTripRepository {
         ),
         ChatThread(
             id = "chat-andong-hahoe",
-            title = "안동 하회마을 한옥체험",
+            title = "한옥에서 하룻밤 어때요",
+            courseLine = "안동 하회마을 한옥체험",
             partner = "초록 여우 5824",
             avatar = "🦊",
             lastMessage = "고요한 두루미: 내일 출발이에요!",
@@ -239,7 +249,8 @@ object MockTripRepository {
         ),
         ChatThread(
             id = "chat-mungyeong-fall",
-            title = "문경 새재 단풍 트레킹",
+            title = "천천히 걷는 단풍길",
+            courseLine = "문경 새재 단풍 트레킹",
             partner = "고요한 두루미 1130",
             avatar = "🪽",
             lastMessage = "시스템: 모집이 마감 임박합니다",
@@ -255,24 +266,36 @@ object MockTripRepository {
         ),
         ChatThread(
             id = "chat-cheongsong-juwangsan",
-            title = "주왕산 & 주산지 힐링 트레킹",
+            title = "30대끼리 느긋하게 힐링 여행가요~",
+            courseLine = "주왕산 & 주산지 힐링 트레킹",
             partner = "숲속여행자",
             avatar = "🌲",
             lastMessage = "숲속여행자: 주산지 물안개 시간에 맞춰 출발해요.",
             time = "09:32",
             unreadCount = 0,
             countText = "2/5명",
-            statusText = "마감 D-1",
+            statusText = "마감 D-3",
             stateLabel = "진행중",
+            tripId = "trip-cheongsong-juwangsan",
+            // 대화 내용은 화면기획 20과 동일하다 (입장 시스템 메시지 2개 + 경로 수정 카드)
             messages = listOf(
-                ChatMessage("숲속여행자", "안녕하세요! 좋은 하루 보내세요.", "09:30"),
-                ChatMessage("나", "안녕하세요! 잘 부탁드려요.", "09:31", mine = true),
-                ChatMessage("숲속여행자", "주산지 물안개 시간에 맞춰 출발해요.", "09:32")
+                ChatMessage("시스템", "모여트립이님이 모임에 참여했어요.", ""),
+                ChatMessage("시스템", "숲속여행자님이 모임을 개설했어요.", ""),
+                ChatMessage("숲속여행자", "안녕하세요! 좋은 하루 보내세요 😊", "09:30"),
+                ChatMessage("나", "안녕하세요! 잘 부탁드려요!", "09:31", mine = true),
+                ChatMessage("숲속여행자", "저도 함께하게 되어 반갑습니다~", "09:32"),
+                ChatMessage(
+                    "시스템",
+                    "호스트가 경로를 수정했어요\n3번째 방문지가 주산지 → 달기약수탕으로 바뀌었어요. " +
+                        "여행 확정(5/22) 전까지는 경로가 바뀔 수 있어요.",
+                    ""
+                )
             )
         ),
         ChatThread(
             id = "chat-ulleung-island",
-            title = "울릉도 2박 3일 섬 여행",
+            title = "섬에서 이틀 더 걷기",
+            courseLine = "울릉도 2박 3일 섬 여행",
             partner = "고요한 두루미 1130",
             avatar = "🌊",
             lastMessage = "잔잔한 거북이: 배편 시간 다시 확인했어요",
@@ -288,7 +311,8 @@ object MockTripRepository {
         ),
         ChatThread(
             id = "chat-andong-dosan",
-            title = "안동 도산서원 그늘 코스",
+            title = "그늘만 골라 걷는 서원 길",
+            courseLine = "안동 도산서원 그늘 코스",
             partner = "초록 여우 5824",
             avatar = "🌿",
             lastMessage = "초록 여우: 그늘 길 위주로 천천히 걸어요",
@@ -304,7 +328,8 @@ object MockTripRepository {
         ),
         ChatThread(
             id = "chat-yeongju-buseoksa",
-            title = "영주 부석사 눈꽃 산책",
+            title = "눈꽃 보러 부석사 갈까요",
+            courseLine = "영주 부석사 눈꽃 산책",
             partner = "느긋한 토끼 7821",
             avatar = "❄️",
             lastMessage = "느긋한 토끼: 눈길이라 이동 시간을 조금 더 잡을게요",
@@ -400,19 +425,20 @@ object MockTripRepository {
             id = "trip-cheongsong-juwangsan",
             courseId = "cheongsong-juwangsan",
             title = "주왕산 & 주산지 힐링 트레킹",
-            scheduleDate = "2026.06.06 (토)",
+            recruitmentName = "30대끼리 느긋하게 힐링 여행가요~",
+            scheduleDate = "2026.05.25 (토)",
             scheduleTime = "08:00 - 18:00",
             meetingPoint = "청송 시외버스터미널",
             joined = 2,
             capacity = 5,
             minParticipants = 3,
-            ddayLabel = "D-2",
+            ddayLabel = "D-3",
             statusLabel = "모집중",
             host = "숲속여행자",
             hostAvatar = "🌲",
             chatThreadId = "chat-cheongsong-juwangsan",
             courseSource = CourseSource.Custom,
-            recruitmentDeadline = "2026.06.03 (수) 23:59",
+            recruitmentDeadline = "2026.05.22 (금) 23:59",
             meetingLocation = MeetingLocation(
                 name = "청송 시외버스터미널",
                 detail = "정문 앞",
@@ -446,15 +472,17 @@ object MockTripRepository {
         TripRecruitment(
             id = "trip-gyeongju-night",
             courseId = "gyeongju-healing",
+            // 화면기획 18: 이 모집은 호스트가 직접 만든 코스다
+            courseSource = CourseSource.Custom,
             title = "경주 단풍·야경 1박 2일",
             scheduleDate = "2026.06.05 (금)",
             scheduleTime = "14:00 - 다음 날 12:00",
             meetingPoint = "경주역 2번 출구",
-            joined = 5,
-            capacity = 6,
+            joined = 4,
+            capacity = 8,
             minParticipants = 3,
-            ddayLabel = "D-1",
-            statusLabel = "마감임박",
+            ddayLabel = "D-3",
+            statusLabel = "모집중",
             host = "달빛 토끼 6142",
             hostAvatar = "🐰",
             chatThreadId = "chat-gyeongju-fall"
@@ -538,6 +566,24 @@ object MockTripRepository {
             host = "초록 여우 5824",
             hostAvatar = "🦊",
             chatThreadId = "chat-andong-dosan"
+        ),
+        // 19-1 승인 대기 카드용 모집 (화면기획: 안동 한옥 골목 야행)
+        TripRecruitment(
+            id = "trip-andong-hanok-night",
+            courseId = "andong-hahoe",
+            title = "안동 하회마을 하루 코스",
+            recruitmentName = "안동 한옥 골목 야행",
+            scheduleDate = "2026.06.07 (토)",
+            scheduleTime = "14:00 - 21:00",
+            meetingPoint = "안동역 1번 출구",
+            joined = 3,
+            capacity = 6,
+            minParticipants = 3,
+            ddayLabel = "D-6",
+            statusLabel = "모집중",
+            host = "고요한 두루미 1130",
+            hostAvatar = "🕊",
+            chatThreadId = "chat-andong-hahoe"
         )
     )
 
@@ -549,7 +595,7 @@ object MockTripRepository {
             region = "청송",
             imageEmoji = "🗺️",
             title = "주왕산 & 주산지 힐링 트레킹",
-            body = "주왕산 & 주산지 힐링 트레킹 경로가 한눈에 남아서 다음 사람에게도 추천하기 좋았어요.",
+            body = "정말 아름다운 코스였어요! 함께해주신 분들 감사해요 😊",
             routeSummary = "주왕산 · 용연폭포 · 주산지",
             visibility = FeedVisibility.Friends,
             likes = 128,
@@ -574,7 +620,7 @@ object MockTripRepository {
             avatar = "🪽",
             region = "경주",
             imageEmoji = "🌙",
-            title = "경주 역사 감성 여행은 월정교에서 동궁과 월지로 이어지는 밤 동선이 제일 좋았어요.",
+            title = "경주 역사 감성 여행",
             body = "경주 역사 감성 여행은 월정교에서 동궁과 월지로 이어지는 밤 동선이 제일 좋았어요.",
             routeSummary = "첨성대 · 월정교 · 동궁과 월지",
             visibility = FeedVisibility.Public,
@@ -636,10 +682,12 @@ object MockTripRepository {
     )
 
     private val initialProfile = Profile(
-        name = "다정한 곰 1001",
-        animalBuddy = "초록 고양이 2035",
+        name = "모여트립이",
+        nickname = "따스한 사슴 3492",
+        animalBuddy = "다정한 곰 1001",
         region = "경북을 천천히 모으는 중",
-        bio = "혼자 떠나도 같이 웃을 수 있는 작은 여행을 좋아해요.",
+        bio = "자연 속에서 힐링하는 걸 좋아해요!",
+        intro = "자연과 여행을 사랑합니다 🌿\n새로운 사람들과 함께하는 여행이 좋아요!",
         badges = listOf("경북 새싹", "야경 수집가", "로컬맛집 탐험"),
         joinedTrips = 12,
         hostedTrips = 3,
@@ -676,10 +724,25 @@ object MockTripRepository {
     fun findThread(id: String): ChatThread =
         chatThreads.firstOrNull { it.id == canonicalChatThreadId(id) } ?: chatThreads.first()
 
-    fun findTrip(id: String): TripRecruitment = trips.firstOrNull { it.id == id }
-        ?: trips.firstOrNull { it.id == canonicalTripId(id) }
-        ?: trips.firstOrNull { it.courseId == canonicalCourseId(id) }
-        ?: trips.first()
+    fun findTrip(id: String): TripRecruitment = when (id) {
+        // 캡처 전용 변형 — 화면기획 18-2/18-3은 같은 주왕산 코스를 잠금 상태만 바꿔 보여준다
+        "trip-cheongsong-juwangsan-linked" ->
+            findTrip("trip-cheongsong-juwangsan").copy(
+                id = id,
+                courseSource = CourseSource.Linked
+            )
+
+        "trip-cheongsong-juwangsan-locked" ->
+            findTrip("trip-cheongsong-juwangsan").copy(
+                id = id,
+                statusLabel = "출발확정"
+            )
+
+        else -> trips.firstOrNull { it.id == id }
+            ?: trips.firstOrNull { it.id == canonicalTripId(id) }
+            ?: trips.firstOrNull { it.courseId == canonicalCourseId(id) }
+            ?: trips.first()
+    }
 
     fun findTripForCourse(courseId: String): TripRecruitment =
         trips.firstOrNull { it.courseId == canonicalCourseId(courseId) } ?: trips.first()
@@ -718,6 +781,12 @@ object MockTripRepository {
         appliedTripIds.remove(canonicalTripId)
     }
 
+    fun ensureQaApplications() {
+        // 화면기획 19-1: 승인 대기 = 안동 한옥 골목 야행, 대기열 2번 = 포항·영덕 동해 드라이브
+        applyToTrip("trip-andong-hanok-night")
+        applyToTrip("trip-pohang-drive")
+    }
+
     fun beginRecruitmentDraft(courseId: String): RecruitmentDraft {
         val course = findCourse(courseId)
         val draftId = "draft-${course.id}"
@@ -725,6 +794,7 @@ object MockTripRepository {
             RecruitmentDraft(
                 id = draftId,
                 selectedCourseId = course.id,
+                recruitmentName = defaultRecruitmentName(course.id),
                 travelDate = "2026.05.25 (토)",
                 meetingLocation = MeetingLocation(
                     name = course.meetingPoint,
@@ -746,6 +816,12 @@ object MockTripRepository {
 
     fun updateRecruitmentDraft(draft: RecruitmentDraft) {
         require(draft.routeStops.size in 2..20) { "방문지는 2개 이상 20개 이하여야 해요." }
+        require(draft.recruitmentName.isNotBlank()) { "모집 이름을 입력해 주세요." }
+        require(draft.minimumAge in 20..100 && draft.maximumAge in 20..100) {
+            "연령 제한은 20세 이상 100세 이하로 설정해 주세요."
+        }
+        require(draft.minimumAge <= draft.maximumAge) { "최소 나이는 최대 나이보다 클 수 없어요." }
+        require(draft.estimatedCostPerPerson >= 0) { "예상 비용은 0원 이상이어야 해요." }
         recruitmentDrafts[draft.id] = draft
     }
 
@@ -916,6 +992,7 @@ object MockTripRepository {
 
     fun createRecruitment(
         courseId: String,
+        recruitmentName: String? = null,
         scheduleDate: String? = null,
         scheduleTime: String? = null,
         meetingPoint: String? = null,
@@ -938,10 +1015,13 @@ object MockTripRepository {
         }
         val safeMeetingPoint = meetingPoint?.trim()?.takeIf { it.isNotEmpty() } ?: course.meetingPoint
         val safeNote = note?.trim()?.takeIf { it.isNotEmpty() } ?: course.recruitmentNote
+        val safeRecruitmentName = recruitmentName?.trim()?.takeIf { it.isNotEmpty() }
+            ?: defaultRecruitmentName(course.id)
         val trip = TripRecruitment(
             id = tripId,
             courseId = course.id,
             title = course.title,
+            recruitmentName = safeRecruitmentName,
             scheduleDate = safeScheduleDate,
             scheduleTime = safeScheduleTime,
             meetingPoint = safeMeetingPoint,
@@ -956,7 +1036,7 @@ object MockTripRepository {
         )
         val chat = ChatThread(
             id = chatId,
-            title = course.title,
+            title = safeRecruitmentName,
             partner = profile.name,
             avatar = "🐻",
             lastMessage = "시스템: 모집이 만들어졌어요. 함께 갈 사람을 기다려요.",
@@ -983,6 +1063,7 @@ object MockTripRepository {
         val course = findCourse(draft.selectedCourseId)
         val trip = createRecruitment(
             courseId = course.id,
+            recruitmentName = draft.recruitmentName,
             scheduleDate = draft.travelDate,
             scheduleTime = if (draft.scheduleType == TripScheduleType.DayTrip) {
                 "${draft.startTime} - ${draft.endTime}"
@@ -998,6 +1079,10 @@ object MockTripRepository {
             scheduleType = draft.scheduleType,
             endDate = draft.endDate,
             recruitmentDeadline = draft.recruitmentDeadline,
+            estimatedCostPerPerson = draft.estimatedCostPerPerson,
+            minimumAge = draft.minimumAge,
+            maximumAge = draft.maximumAge,
+            genderCondition = draft.genderCondition,
             meetingLocation = draft.meetingLocation,
             routeStops = draft.routeStops
         )
@@ -1005,6 +1090,13 @@ object MockTripRepository {
         ensureNoticesSeeded(trip.id)
         recruitmentDrafts.remove(draftId)
         return enriched
+    }
+
+    private fun defaultRecruitmentName(courseId: String): String = when (courseId) {
+        "cheongsong-juwangsan" -> "30대끼리 느긋하게 힐링 여행가요~"
+        "andong-hahoe" -> "사진 좋아하는 분들과 하회마을 걸어요"
+        "gyeongju-healing" -> "조용히 걷고 싶은 분들의 경주 야경 여행"
+        else -> findCourse(courseId).title
     }
 
     fun chatThreadIdForTrip(tripId: String): String = findTrip(tripId).chatThreadId
@@ -1042,6 +1134,7 @@ object MockTripRepository {
     private fun updateTripChatThread(trip: TripRecruitment) {
         val thread = findThread(trip.chatThreadId)
         chatThreadOverrides[thread.id] = thread.copy(
+            title = trip.recruitmentName,
             countText = "${trip.joined}/${trip.capacity}명",
             statusText = trip.statusLabel,
             stateLabel = "진행중"
@@ -1062,13 +1155,24 @@ object MockTripRepository {
         )
     }
 
-    private fun TripCourse.defaultRouteStops(): List<RouteStop> = stops.mapIndexed { index, stop ->
-        RouteStop(
-            id = "$id-stop-${index + 1}",
-            time = listOf("09:00", "10:30", "14:00", "16:30", "18:00").getOrElse(index) { "18:30" },
-            name = stop,
-            memo = if (index == 0) "집합 장소" else "방문지 ${index + 1}"
-        )
+    private fun TripCourse.defaultRouteStops(): List<RouteStop> {
+        // 코스 직접 만들기(17-1)의 시작 상태는 화면기획과 같은 3개 방문지다:
+        // 집합 장소(터미널)부터 시작하고 메모는 실제 안내 문구를 쓴다.
+        if (id == "cheongsong-juwangsan") {
+            return listOf(
+                RouteStop("$id-stop-1", time = "09:00", name = "청송 시외버스터미널", memo = "집합 장소"),
+                RouteStop("$id-stop-2", time = "10:30", name = "주왕산 국립공원", memo = "대전사 ~ 제3폭포"),
+                RouteStop("$id-stop-3", time = "14:00", name = "주산지", memo = "왕버들 산책로")
+            )
+        }
+        return stops.mapIndexed { index, stop ->
+            RouteStop(
+                id = "$id-stop-${index + 1}",
+                time = listOf("09:00", "10:30", "14:00", "16:30", "18:00").getOrElse(index) { "18:30" },
+                name = stop,
+                memo = if (index == 0) "집합 장소" else "방문지 ${index + 1}"
+            )
+        }
     }
 
     private fun ensureNoticesSeeded(tripId: String) {

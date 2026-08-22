@@ -3,7 +3,6 @@ package kr.hanchae.moyeotrip.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -51,8 +50,10 @@ import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
+import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun MyScreen(
@@ -69,7 +70,8 @@ fun MyScreen(
 ) {
     var selectedTab by remember { mutableStateOf(MyTripTab.Ongoing) }
     val courses = MockTripRepository.courses
-    val ongoingTrips = MockTripRepository.trips.take(5)
+    // 화면기획 26의 "내 여행"은 4개다
+    val ongoingTrips = MockTripRepository.trips.take(4)
     val pastTrips = listOf(courses[2], courses[1], courses[4], courses[5], courses[3])
     val savedCourses = listOf(courses[4], courses[2], courses[3], courses[5], courses[6], courses[7])
 
@@ -272,7 +274,7 @@ private fun MyPageHeader(onOpenSettings: () -> Unit) {
 @Composable
 private fun MyProfileSummaryCard(userProfile: UserDisplayProfile, onClick: () -> Unit) {
     val profile = MockTripRepository.profile
-    val displayName = userProfile.nickname ?: "내 프로필"
+    val displayName = userProfile.nickname ?: profile.name
 
     Card(
         modifier = Modifier
@@ -292,12 +294,17 @@ private fun MyProfileSummaryCard(userProfile: UserDisplayProfile, onClick: () ->
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            UserAvatar(
-                imageUrl = userProfile.profileImageUrl,
-                nickname = userProfile.nickname,
-                modifier = Modifier.size(50.dp),
-                fallbackFontSize = 23.sp
-            )
+            if (userProfile.profileImageUrl != null) {
+                UserAvatar(
+                    imageUrl = userProfile.profileImageUrl,
+                    nickname = userProfile.nickname,
+                    modifier = Modifier.size(50.dp),
+                    fallbackFontSize = 23.sp
+                )
+            } else {
+                // 화면기획 26은 곰 캐릭터 아바타를 보여준다
+                AnimalAvatar(profileAvatarEmoji(profile.animalBuddy), modifier = Modifier.size(50.dp))
+            }
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(3.dp)
@@ -836,7 +843,7 @@ private enum class MyTripTab(val label: String) {
 }
 
 @Composable
-private fun myPageColor(): Color = if (isSystemInDarkTheme()) {
+private fun myPageColor(): Color = if (MoyeoTheme.isDark) {
     MaterialTheme.colorScheme.background
 } else {
     MaterialTheme.colorScheme.surface

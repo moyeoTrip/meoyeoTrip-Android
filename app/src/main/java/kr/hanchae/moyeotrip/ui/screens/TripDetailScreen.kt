@@ -4,7 +4,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,8 +30,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -63,12 +64,18 @@ import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.domain.ApplicationNotePolicy
 import kr.hanchae.moyeotrip.domain.recruitmentSummary
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
-fun TripDetailScreen(tripId: String, onBack: () -> Unit, onOpenChatRoom: (String) -> Unit) {
+fun TripDetailScreen(
+    tripId: String,
+    onBack: () -> Unit,
+    onOpenChatRoom: (String) -> Unit,
+    showApplicationSheetInitially: Boolean = false
+) {
     val trip = MockTripRepository.findTrip(tripId)
     val course = MockTripRepository.findCourseForTrip(trip)
-    var showApplySheet by rememberSaveable { mutableStateOf(false) }
+    var showApplySheet by rememberSaveable(tripId) { mutableStateOf(showApplicationSheetInitially) }
     var isFavorite by rememberSaveable(trip.id) { mutableStateOf(false) }
     var actionMessage by rememberSaveable(trip.id) { mutableStateOf<String?>(null) }
     val isApplied = MockTripRepository.isAppliedToTrip(trip.id)
@@ -147,7 +154,7 @@ fun TripDetailScreen(tripId: String, onBack: () -> Unit, onOpenChatRoom: (String
 
 @Composable
 private fun GroupDetailHero(course: TripCourse, trip: TripRecruitment, onBack: () -> Unit, onOpenChatRoom: () -> Unit) {
-    val isDark = isSystemInDarkTheme()
+    val isDark = MoyeoTheme.isDark
 
     Box(
         modifier = Modifier
@@ -201,12 +208,7 @@ private fun GroupDetailHero(course: TripCourse, trip: TripRecruitment, onBack: (
                 )
             }
         }
-        StatusChip(
-            text = trip.detailStatusText(),
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 20.dp, bottom = 48.dp)
-        )
+        // 화면기획 15 히어로에는 상태 배지가 없다 — 상태는 아래 본문에서 보여준다
     }
 }
 
@@ -230,13 +232,13 @@ private fun GroupDetailPanel(course: TripCourse, trip: TripRecruitment) {
         ) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    text = trip.title,
+                    text = trip.recruitmentName,
                     style = MaterialTheme.typography.headlineSmall,
                     color = colors.onSurface,
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    text = course.detailMetaText(),
+                    text = course.title,
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurfaceVariant
                 )
@@ -305,10 +307,62 @@ private fun GroupDetailPanel(course: TripCourse, trip: TripRecruitment) {
                         "${trip.meetingLocation.meetingTime} · ${trip.meetingLocation.name} " +
                             trip.meetingLocation.detail
                 )
-                DetailInfoRow(
-                    label = "좌표",
-                    value = "${trip.meetingLocation.latitude}, ${trip.meetingLocation.longitude} · 길 찾기"
-                )
+                // 좌표는 라벨 행이 아니라 구분선 아래 작은 보조 정보다 (웹·화면기획 15)
+                HorizontalDivider(color = colors.outline.copy(alpha = .5f))
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.Map,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                        tint = colors.onSurfaceVariant
+                    )
+                    Text(
+                        text = "${trip.meetingLocation.latitude}, ${trip.meetingLocation.longitude}",
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                    Text(
+                        text = "길 찾기",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.primary,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+
+            // 조건 4종은 한 카드 안에서 2x2 — 4줄로 세우면 카드만 길어진다 (웹 기준)
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colors.surfaceVariant)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    DetailInfoRow(
+                        "예상 비용",
+                        "1인 ${"%,d".format(trip.estimatedCostPerPerson)}원",
+                        Modifier.weight(1f)
+                    )
+                    DetailInfoRow(
+                        "모집 마감",
+                        trip.deadlineDisplayText(),
+                        Modifier.weight(1f)
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    DetailInfoRow("나이대", "${trip.minimumAge}~${trip.maximumAge}세", Modifier.weight(1f))
+                    DetailInfoRow(
+                        "성별",
+                        if (trip.genderCondition == "성별 무관") "제한 없음" else trip.genderCondition,
+                        Modifier.weight(1f)
+                    )
+                }
             }
 
             if (trip.courseSource == kr.hanchae.moyeotrip.data.CourseSource.Custom) {
@@ -348,21 +402,21 @@ private fun GroupDetailPanel(course: TripCourse, trip: TripRecruitment) {
 }
 
 @Composable
-private fun DetailInfoRow(label: String, value: String) {
+private fun DetailInfoRow(label: String, value: String, modifier: Modifier = Modifier) {
     val colors = MaterialTheme.colorScheme
 
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    // 2x2 배치에서는 라벨 위 / 값 아래로 읽어야 좁은 폭에서 값이 잘리지 않는다
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(3.dp)) {
         Text(
             text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = colors.onSurfaceVariant,
-            modifier = Modifier.size(width = 64.dp, height = 20.dp)
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant
         )
         Text(
             text = value,
             style = MaterialTheme.typography.labelLarge,
             color = colors.onSurface,
-            modifier = Modifier.weight(1f)
+            fontWeight = FontWeight.Bold
         )
     }
 }
@@ -534,12 +588,13 @@ private fun ApplicationSheet(
     var isSubmitted by rememberSaveable { mutableStateOf(false) }
     val isMessageValid = ApplicationNotePolicy.isValid(message)
     val colors = MaterialTheme.colorScheme
-    val isDark = isSystemInDarkTheme()
+    val isDark = MoyeoTheme.isDark
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
+            .testTag("application-sheet")
     ) {
         Image(
             painter = painterResource(id = course.tripHeroImageResId(isDark)),
@@ -628,10 +683,17 @@ private fun ApplicationSheet(
                             modifier = Modifier.fillMaxWidth(),
                             minLines = 4,
                             supportingText = {
-                                Text(
-                                    text = ApplicationNotePolicy.helperText(message),
-                                    color = if (isMessageValid) colors.onSurfaceVariant else colors.error
-                                )
+                                Row(modifier = Modifier.fillMaxWidth()) {
+                                    Text(
+                                        text = ApplicationNotePolicy.helperText(message),
+                                        modifier = Modifier.weight(1f),
+                                        color = if (isMessageValid) colors.onSurfaceVariant else colors.error
+                                    )
+                                    Text(
+                                        text = ApplicationNotePolicy.counterText(message),
+                                        color = colors.onSurfaceVariant
+                                    )
+                                }
                             },
                             isError = !isMessageValid
                         )
@@ -865,6 +927,18 @@ private fun TripCourse.detailMetaText(): String = when (id) {
     else -> listOf(region)
         .plus(tags.take(2))
         .joinToString(" · ")
+}
+
+/** 화면기획 15의 마감 표기: "D-3 · 5/22(금)". 전체 일시는 데이터로만 둔다. */
+private fun TripRecruitment.deadlineDisplayText(): String {
+    val date = Regex("""\d{4}\.(\d{2})\.(\d{2}) \(([^)]+)\)""").find(recruitmentDeadline)
+    val dday = ddayLabel.removePrefix("마감 ")
+    return if (date != null) {
+        val (month, day, weekday) = date.destructured
+        "$dday · ${month.toInt()}/${day.toInt()}($weekday)"
+    } else {
+        recruitmentDeadline.ifBlank { dday }
+    }
 }
 
 private fun TripRecruitment.detailStatusText(): String = when {

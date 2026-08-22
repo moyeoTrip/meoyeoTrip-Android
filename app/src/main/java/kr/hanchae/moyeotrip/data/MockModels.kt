@@ -21,7 +21,15 @@ data class TripCourse(
     val rating: Double,
     val tags: List<String>,
     val stops: List<String>,
-    val recruitmentNote: String
+    val recruitmentNote: String,
+    val publisher: CoursePublisher? = null
+)
+
+data class CoursePublisher(
+    val name: String,
+    val avatar: String,
+    val publishedAfterTrip: String,
+    val recruitmentCount: Int
 )
 
 enum class CourseSource(val label: String) {
@@ -48,6 +56,7 @@ data class TripRecruitment(
     val id: String,
     val courseId: String,
     val title: String,
+    val recruitmentName: String = title,
     val scheduleDate: String,
     val scheduleTime: String,
     val meetingPoint: String,
@@ -63,6 +72,11 @@ data class TripRecruitment(
     val scheduleType: TripScheduleType = TripScheduleType.DayTrip,
     val endDate: String? = null,
     val recruitmentDeadline: String = "",
+    val estimatedCostPerPerson: Int = 45_000,
+    // 나이대 기본값은 4개 플랫폼 공통으로 25~35세다
+    val minimumAge: Int = 25,
+    val maximumAge: Int = 35,
+    val genderCondition: String = "성별 무관",
     val meetingLocation: MeetingLocation = MeetingLocation(
         name = meetingPoint,
         detail = "정문 앞",
@@ -106,6 +120,11 @@ data class RecruitmentDraft(
     val endTime: String = "18:00",
     val endDate: String? = null,
     val recruitmentDeadline: String = "2026.05.22 (목) 23:59",
+    val recruitmentName: String,
+    val estimatedCostPerPerson: Int = 45_000,
+    val minimumAge: Int = 25,
+    val maximumAge: Int = 35,
+    val genderCondition: String = "성별 무관",
     val meetingLocation: MeetingLocation,
     val routeStops: List<RouteStop>,
     val capacity: Int,
@@ -127,6 +146,8 @@ data class ChatThread(
     val messages: List<ChatMessage>,
     val isReadOnly: Boolean = false,
     val tripId: String? = null,
+    /** 행 부제로 보여줄 여행 이름 (화면기획 19: 모집 이름 아래 여행 제목) */
+    val courseLine: String = "",
     val closureReason: String? = null,
     val archiveNotice: String? = null,
     val archiveStatus: String? = null
@@ -171,9 +192,13 @@ data class FeedPost(
 
 data class Profile(
     val name: String,
+    // 비공개 닉네임(가입 때 고른 동물 캐릭터 이름). 공개 표시명(name)과 다르다 — 화면기획 28.
+    val nickname: String = "",
     val animalBuddy: String,
     val region: String,
     val bio: String,
+    // 공개 프로필(화면기획 25)의 소개 카드 본문. 마이 요약(26)의 한 줄 bio와 다르다.
+    val intro: String = "",
     val badges: List<String>,
     val joinedTrips: Int,
     val hostedTrips: Int,

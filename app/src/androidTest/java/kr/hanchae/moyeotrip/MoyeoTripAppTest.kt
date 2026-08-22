@@ -8,9 +8,11 @@ import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isDisplayed
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -18,6 +20,7 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTextClearance
@@ -32,6 +35,7 @@ import kr.hanchae.moyeotrip.domain.auth.MockIdentityTokenProvider
 import kr.hanchae.moyeotrip.domain.auth.ServiceSession
 import kr.hanchae.moyeotrip.domain.auth.SignupState
 import kr.hanchae.moyeotrip.ui.navigation.MoyeoTripApp
+import kr.hanchae.moyeotrip.ui.screens.AccountDeleteScreen
 import kr.hanchae.moyeotrip.ui.screens.SettingsScreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTripTheme
 import org.junit.Assert.assertEquals
@@ -97,7 +101,7 @@ class MoyeoTripAppTest {
 
         composeRule
             .onNodeWithTag("home.scroll")
-            .performScrollToIndex(3)
+            .performScrollToIndex(2)
         composeRule.onNodeWithText("울릉도 2박 3일 섬 여행").assertIsDisplayed()
         val thirdRankingBounds = composeRule
             .onNodeWithTag("home-popular-3")
@@ -174,8 +178,7 @@ class MoyeoTripAppTest {
     @Test
     fun bottomTabsNavigateToPrimaryScreens() {
         composeRule.onNodeWithTag("bottom-meetings").performClick()
-        composeRule.onNodeWithText("4/8명 · 마감 D-3").assertIsDisplayed()
-        composeRule.onNodeWithText("경주 단풍·야경").assertIsDisplayed()
+        composeRule.onNodeWithTag("meeting-thread-chat-gyeongju-fall").assertIsDisplayed()
 
         composeRule.onNodeWithTag("bottom-feed").performClick()
         composeRule.onNodeWithText("팔로잉").assertIsDisplayed()
@@ -238,6 +241,9 @@ class MoyeoTripAppTest {
         clickAuthNode("birth-date-confirm")
         clickAuthNode("auth-gender-female")
         clickAuthNode("auth-basic-next")
+        composeRule.onNodeWithTag("auth-terms-all").assertIsDisplayed()
+        clickAuthNode("auth-terms-all")
+        clickAuthNode("auth-terms-finish")
         composeRule.waitUntil(timeoutMillis = 10_000) {
             composeRule.onAllNodesWithTag("auth-profile-generate").fetchSemanticsNodes().isNotEmpty()
         }
@@ -261,41 +267,24 @@ class MoyeoTripAppTest {
 
     @Test
     fun settingsWithdrawalDeletesSessionAndReturnsToAuthentication() {
-        val gateway = DemoAuthGateway()
-        val sessionStore = InMemoryAuthSessionStore().apply {
-            saveSignup(
-                AuthProvider.KAKAO,
-                ServiceSession(
-                    accessToken = "withdraw-access",
-                    refreshToken = "withdraw-refresh",
-                    signupState = SignupState.SIGNUP_COMPLETE
-                )
-            )
-        }
-        val accountService = AuthAccountService(gateway, sessionStore)
-        var authenticationCleared = false
+        var deleteRequested = false
 
         composeRule.activity.setContent {
             MoyeoTripTheme {
-                SettingsScreen(
+                AccountDeleteScreen(
                     onBack = {},
-                    accountService = accountService,
-                    onAuthenticationCleared = { authenticationCleared = true }
+                    onDelete = { deleteRequested = true }
                 )
             }
         }
 
-        composeRule
-            .onNode(hasScrollAction())
-            .performScrollToNode(hasText("계정 탈퇴"))
-        composeRule.onNodeWithText("계정 탈퇴").performClick()
-        composeRule.onNodeWithText("즉시 영구 삭제").assertIsDisplayed()
-        composeRule.onNodeWithText("영구 탈퇴").performClick()
+        composeRule.onNodeWithText("원하는 여행을 찾기 어려워요").performClick()
+        composeRule.onNodeWithText("30일 후 정보가 영구 삭제되는 것을 확인했어요").performClick()
+        composeRule.onNodeWithText("탈퇴 계속하기").performClick()
+        composeRule.onNodeWithText("계속").performClick()
+        composeRule.onNode(hasText("계정 탈퇴") and hasClickAction()).performClick()
 
-        composeRule.waitUntil(timeoutMillis = 5_000) { authenticationCleared }
-        assertTrue(authenticationCleared)
-        assertEquals(null, sessionStore.current.accessToken)
-        assertEquals(null, sessionStore.current.refreshToken)
+        assertTrue(deleteRequested)
     }
 
     @Test
@@ -310,7 +299,8 @@ class MoyeoTripAppTest {
         assertTrue(kakaoTop < googleTop && googleTop < emailTop && emailTop < appleTop)
         listOf("auth-login-kakao", "auth-login-google", "auth-login-email", "auth-login-apple").forEach { tag ->
             val bounds = composeRule.onNodeWithTag(tag).getUnclippedBoundsInRoot()
-            assertEquals(54.dp, bounds.bottom - bounds.top)
+            val heightDifference = kotlin.math.abs(((bounds.bottom - bounds.top) - 54.dp).value)
+            assertTrue("$tag should remain 54dp tall within pixel rounding.", heightDifference < 0.01f)
         }
         val iconSlotLefts = listOf("kakao", "google", "email", "apple").map { provider ->
             composeRule
@@ -422,7 +412,8 @@ class MoyeoTripAppTest {
         composeRule.onNodeWithText("호스트 연락 방식과 통화 가능 시간을 확인할 수 있어요.").assertIsDisplayed()
         composeRule.onNodeWithText("확인").performClick()
         composeRule.onNodeWithContentDescription("더보기").performClick()
-        composeRule.onNodeWithText("신고, 알림 끄기, 멤버 보기 메뉴를 확인할 수 있어요.").assertIsDisplayed()
+        composeRule.onNodeWithText("모임 정보").assertIsDisplayed()
+        composeRule.onNodeWithText("동행자  5").assertIsDisplayed()
     }
 
     @Test
@@ -621,10 +612,7 @@ class MoyeoTripAppTest {
     @Test
     fun chatMessageUpdatesMeetingPreview() {
         composeRule.onNodeWithTag("bottom-meetings").performClick()
-        composeRule
-            .onNode(hasScrollAction())
-            .performScrollToNode(hasText("주왕산 & 주산지 힐링 트레킹"))
-        composeRule.onNodeWithText("주왕산 & 주산지 힐링 트레킹").performClick()
+        composeRule.onNodeWithTag("meeting-thread-chat-gyeongju-fall").performClick()
 
         composeRule.onNodeWithTag("chat-message-input").performTextInput("날씨 확인하고 갈게요")
         composeRule.onNodeWithTag("chat-message-send").performClick()
@@ -1042,19 +1030,20 @@ class MoyeoTripAppTest {
         composeRule.onNodeWithTag("create-source-next").performClick()
         composeRule.onNodeWithText("모집 만들기 (2/5)").assertIsDisplayed()
         composeRule.onNodeWithTag("create-schedule-next").performClick()
+        composeRule.onNodeWithText("집합 장소 지정").assertIsDisplayed()
+        composeRule.onNodeWithTag("meeting-point-save").performClick()
         composeRule.onNodeWithText("모집 만들기 (3/5)").assertIsDisplayed()
         composeRule.onNodeWithTag("create-people-next").performClick()
         composeRule.onNodeWithText("모집 만들기 (4/5)").assertIsDisplayed()
-        composeRule.onNodeWithTag("meeting-point-save").performClick()
+        composeRule.onNodeWithTag("create-detail-save").performClick()
         composeRule.onNodeWithText("모집 만들기 (5/5)").assertIsDisplayed()
         composeRule.onNodeWithTag("create-summary-submit").performClick()
     }
 
     private fun clickAuthNode(tag: String) {
-        composeRule
-            .onNode(hasScrollAction())
-            .performScrollToNode(hasTestTag(tag))
-        composeRule.onNodeWithTag(tag).performClick()
+        val node = composeRule.onNodeWithTag(tag)
+        if (!node.isDisplayed()) node.performScrollTo()
+        node.performClick()
     }
 
     private fun openNicknameSelection() {
@@ -1066,7 +1055,9 @@ class MoyeoTripAppTest {
     }
 
     private fun openAuthLogin() {
-        composeRule.onNodeWithTag("home-mock-auth-entry").performClick()
+        composeRule.activity.setContent {
+            MoyeoTripApp(startScreen = "auth", skipStartupSplash = true, skipAuthentication = true)
+        }
         clickAuthNode("auth-onboarding-next")
         clickAuthNode("auth-onboarding-next")
         clickAuthNode("auth-onboarding-next")

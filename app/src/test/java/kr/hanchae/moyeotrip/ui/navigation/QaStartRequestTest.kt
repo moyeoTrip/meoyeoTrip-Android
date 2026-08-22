@@ -71,13 +71,64 @@ class QaStartRequestTest {
             QaStartRequest.parse("createSummary").toRoute()
         )
         assertEquals(AppRoutes.courseRoute("trip-cheongsong-juwangsan"), QaStartRequest.parse("courseEdit").toRoute())
-        assertEquals(AppRoutes.courseRoute("trip-andong-dosan"), QaStartRequest.parse("courseEditLinked").toRoute())
-        assertEquals(AppRoutes.courseRoute("trip-andong-hahoe"), QaStartRequest.parse("courseEditLocked").toRoute())
+        assertEquals(
+            AppRoutes.courseRoute("trip-cheongsong-juwangsan-linked"),
+            QaStartRequest.parse("courseEditLinked").toRoute()
+        )
+        assertEquals(
+            AppRoutes.courseRoute("trip-cheongsong-juwangsan-locked"),
+            QaStartRequest.parse("courseEditLocked").toRoute()
+        )
         assertEquals(
             AppRoutes.noticeHistory("trip-cheongsong-juwangsan"),
             QaStartRequest.parse("noticeHistory").toRoute()
         )
         assertEquals(AppRoutes.MEETINGS_APPLIED, QaStartRequest.parse("chatListApplied").toRoute())
+    }
+
+    @Test
+    fun opensChangeLogSixAndSevenCaptureStatesDirectly() {
+        val draftId = "draft-cheongsong-juwangsan"
+        assertEquals(AppRoutes.placeSearch(draftId), QaStartRequest.parse("place-search").toRoute())
+        assertEquals(
+            AppRoutes.placeDetail(draftId, "2299341"),
+            QaStartRequest.parse("place-detail").toRoute()
+        )
+        assertEquals(AppRoutes.createDetail(draftId), QaStartRequest.parse("create-detail").toRoute())
+        assertEquals(AppRoutes.createPeople(draftId), QaStartRequest.parse("create-people").toRoute())
+        assertEquals(AppRoutes.createSummary(draftId), QaStartRequest.parse("create-summary-linked").toRoute())
+        assertEquals(
+            kr.hanchae.moyeotrip.data.CourseSource.Linked,
+            kr.hanchae.moyeotrip.data.MockTripRepository.findRecruitmentDraft(draftId).courseSource
+        )
+        assertEquals(AppRoutes.createSummary(draftId), QaStartRequest.parse("create-summary-custom").toRoute())
+        assertEquals(
+            kr.hanchae.moyeotrip.data.CourseSource.Custom,
+            kr.hanchae.moyeotrip.data.MockTripRepository.findRecruitmentDraft(draftId).courseSource
+        )
+        assertEquals(AppRoutes.termsDetail("service", "signup"), QaStartRequest.parse("terms-detail").toRoute())
+        assertEquals(AppRoutes.termsDetail("privacy", "signup"), QaStartRequest.parse("terms-privacy").toRoute())
+        assertEquals(AppRoutes.termsDetail("location", "signup"), QaStartRequest.parse("terms-location").toRoute())
+        assertEquals(AppRoutes.termsDetail("marketing", "signup"), QaStartRequest.parse("terms-marketing").toRoute())
+        assertEquals(AppRoutes.termsDetail("service", "settings"), QaStartRequest.parse("terms-settings").toRoute())
+        assertEquals(AppRoutes.mockAuth("email"), QaStartRequest.parse("email-auth").toRoute())
+        assertEquals(
+            AppRoutes.qaApply("trip-cheongsong-juwangsan"),
+            QaStartRequest.parse("apply").toRoute()
+        )
+        assertEquals(AppRoutes.QA_LEAVE, QaStartRequest.parse("leave").toRoute())
+    }
+
+    @Test
+    fun opensOnboardingAndAuthSubstepsDirectly() {
+        assertEquals(AppRoutes.mockAuth("onb-1"), QaStartRequest.parse("onb-1").toRoute())
+        assertEquals(AppRoutes.mockAuth("onb-2"), QaStartRequest.parse("onb-2").toRoute())
+        assertEquals(AppRoutes.mockAuth("onb-3"), QaStartRequest.parse("onb-3").toRoute())
+        assertEquals(AppRoutes.mockAuth("login"), QaStartRequest.parse("login").toRoute())
+        assertEquals(AppRoutes.mockAuth("nickname"), QaStartRequest.parse("nickname").toRoute())
+        assertEquals(AppRoutes.mockAuth("profile-basic"), QaStartRequest.parse("profile-basic").toRoute())
+        assertEquals(AppRoutes.mockAuth("profile-image"), QaStartRequest.parse("profile-image").toRoute())
+        assertEquals(AppRoutes.mockAuth("terms"), QaStartRequest.parse("terms").toRoute())
     }
 
     @Test
@@ -119,5 +170,27 @@ class QaStartRequestTest {
         assertEquals(AppRoutes.SYSTEM_MAINTENANCE, QaStartRequest.parse("maintenance").toRoute())
         assertEquals(AppRoutes.SYSTEM_ERROR, QaStartRequest.parse("error500").toRoute())
         assertEquals(AppRoutes.feedComments("feed-3"), QaStartRequest.parse("feedComments:feed-3").toRoute())
+    }
+
+    @Test
+    fun everyNumberedDesignManifestIdHasAnAndroidCaptureRoute() {
+        val manifestIds = listOf(
+            "ds-overview", "splash", "onb-1", "onb-2", "onb-3", "login", "prof-1", "prof-3", "prof-2",
+            "email-auth", "terms", "terms-detail", "terms-privacy", "terms-location", "terms-marketing",
+            "terms-settings",
+            "home", "explore", "explore-map", "search", "notif", "course", "detail", "apply", "create-review",
+            "host-manage", "custom-course", "place-search", "place-detail", "create-schedule", "create-meet",
+            "create-people", "create-detail", "create-summary", "create-summary-linked", "course-edit-custom",
+            "course-edit-linked", "course-edit-locked", "chat-list", "chat-list-applied", "chat", "chat-menu",
+            "chat-attach", "notice-history", "trip-confirmed", "trip-day", "msgs", "feed", "feed-detail",
+            "feed-comments", "feed-write", "public-profile", "my", "dex", "trip-message", "friends", "course-publish",
+            "profile-edit", "settings", "blocked", "notif-detail", "account-delete", "states", "leave", "report",
+            "system-maintenance", "system-error", "offline", "offline-cached", "offline-chat"
+        )
+
+        assertEquals(70, manifestIds.size)
+        manifestIds.forEach { id ->
+            assertTrue("Missing Android QA route for $id", QaStartRequest.parse(id).toRoute() != null)
+        }
     }
 }

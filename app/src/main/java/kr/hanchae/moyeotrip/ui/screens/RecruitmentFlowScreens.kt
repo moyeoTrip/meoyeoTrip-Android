@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,10 +27,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Group
@@ -37,15 +41,23 @@ import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PanTool
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -58,6 +70,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -66,6 +79,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -74,8 +88,10 @@ import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.RecruitmentDraft
 import kr.hanchae.moyeotrip.data.RecruitmentNotice
 import kr.hanchae.moyeotrip.data.RouteStop
+import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.data.TripScheduleType
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun RecruitmentCourseSourceScreen(
@@ -150,8 +166,11 @@ fun RecruitmentCourseSourceScreen(
                 val selected = course.id == draft.selectedCourseId
                 CompactCourseChoice(
                     title = course.title,
-                    subtitle = "${course.region} · ${course.duration} · 방문지 ${course.stops.size}",
+                    subtitle = "${course.region} · ${course.duration} ${course.distance} · 방문지 ${course.stops.size}",
+                    // 화면기획은 코스 출처(여행자 코스/모여트립 추천)를 함께 보여준다
+                    sourceLabel = if (course.publisher != null) "여행자 코스" else "모여트립 추천",
                     selected = selected,
+                    course = course,
                     onClick = {
                         draft = draft.copy(
                             selectedCourseId = course.id,
@@ -199,7 +218,12 @@ fun RecruitmentCourseSourceScreen(
 }
 
 @Composable
-fun CustomCourseScreen(draftId: String, onBack: () -> Unit, onContinue: (String) -> Unit) {
+fun CustomCourseScreen(
+    draftId: String,
+    onBack: () -> Unit,
+    onOpenPlaceSearch: (String) -> Unit,
+    onContinue: (String) -> Unit
+) {
     var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
 
     RecruitmentScaffold(
@@ -207,7 +231,9 @@ fun CustomCourseScreen(draftId: String, onBack: () -> Unit, onContinue: (String)
         onBack = onBack,
         bottom = {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp)) { Text("취소") }
+                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp), shape = RoundedCornerShape(12.dp)) {
+                    Text("취소")
+                }
                 Button(
                     onClick = {
                         MockTripRepository.updateRecruitmentDraft(draft)
@@ -224,7 +250,16 @@ fun CustomCourseScreen(draftId: String, onBack: () -> Unit, onContinue: (String)
         }
     ) {
         item { RouteMapPreview(stopCount = draft.routeStops.size, modifier = Modifier.height(160.dp)) }
-        item { SearchLikeField("방문지 검색 (TourAPI · 경북 22개 시·군)") }
+        item {
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenPlaceSearch(draft.id) }
+                    .testTag("custom-course-place-search")
+            ) {
+                SearchLikeField("방문지 검색 (TourAPI · 경북 22개 시·군)")
+            }
+        }
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Day 1", fontWeight = FontWeight.ExtraBold)
@@ -278,7 +313,7 @@ fun CustomCourseScreen(draftId: String, onBack: () -> Unit, onContinue: (String)
                 onClick = {},
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(8.dp)
-            ) { Text("+ 다음 날 추가 (1박 이상일 때)") }
+            ) { Text("+ 다음 날 추가 (1박 이상일 때)") } // 글자에 '+'가 있으니 아이콘은 두지 않는다
         }
         item {
             InfoBanner(
@@ -298,7 +333,9 @@ fun CreateScheduleScreen(draftId: String, onBack: () -> Unit, onContinue: (Strin
         onBack = onBack,
         bottom = {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp)) { Text("이전") }
+                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp), shape = RoundedCornerShape(12.dp)) {
+                    Text("이전")
+                }
                 Button(
                     onClick = {
                         MockTripRepository.updateRecruitmentDraft(draft)
@@ -378,11 +415,12 @@ fun CreateScheduleScreen(draftId: String, onBack: () -> Unit, onContinue: (Strin
             )
         }
         item {
+            // 화면기획 17-2는 장소가 첫 줄, 시간·상세·좌표가 둘째 줄이다
             LabeledValue(
                 label = "집합 장소 · 집합 시간 *",
-                value =
-                    "${draft.meetingLocation.meetingTime} ${draft.meetingLocation.name} " +
-                        draft.meetingLocation.detail,
+                value = "${draft.meetingLocation.name} 앞",
+                detail = "${draft.meetingLocation.meetingTime} ${draft.meetingLocation.detail} · " +
+                    "%.4f, %.4f".format(draft.meetingLocation.latitude, draft.meetingLocation.longitude),
                 icon = Icons.Filled.Place,
                 tag = "create-schedule-meeting"
             )
@@ -390,16 +428,58 @@ fun CreateScheduleScreen(draftId: String, onBack: () -> Unit, onContinue: (Strin
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CreatePeopleScreen(draftId: String, onBack: () -> Unit, onContinue: (String) -> Unit) {
     var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
+    var showAgeSheet by rememberSaveable { mutableStateOf(false) }
+
+    if (showAgeSheet) {
+        ModalBottomSheet(onDismissRequest = { showAgeSheet = false }) {
+            Column(
+                Modifier.padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text("나이대 제한", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    ParticipantCounter(
+                        label = "최소 나이",
+                        value = draft.minimumAge,
+                        suffix = "세",
+                        modifier = Modifier.weight(1f),
+                        decreaseEnabled = draft.minimumAge > 20,
+                        increaseEnabled = draft.minimumAge < draft.maximumAge,
+                        onDecrease = { draft = draft.copy(minimumAge = draft.minimumAge - 1) },
+                        onIncrease = { draft = draft.copy(minimumAge = draft.minimumAge + 1) }
+                    )
+                    ParticipantCounter(
+                        label = "최대 나이",
+                        value = draft.maximumAge,
+                        suffix = "세",
+                        modifier = Modifier.weight(1f),
+                        decreaseEnabled = draft.maximumAge > draft.minimumAge,
+                        increaseEnabled = draft.maximumAge < 100,
+                        onDecrease = { draft = draft.copy(maximumAge = draft.maximumAge - 1) },
+                        onIncrease = { draft = draft.copy(maximumAge = draft.maximumAge + 1) }
+                    )
+                }
+                Button(
+                    onClick = { showAgeSheet = false },
+                    modifier = Modifier.fillMaxWidth().height(48.dp).testTag("create-people-age-done"),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("완료") }
+            }
+        }
+    }
 
     RecruitmentScaffold(
         title = "모집 만들기 (3/5)",
         onBack = onBack,
         bottom = {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp)) { Text("이전") }
+                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp), shape = RoundedCornerShape(12.dp)) {
+                    Text("이전")
+                }
                 Button(
                     onClick = {
                         MockTripRepository.updateRecruitmentDraft(draft)
@@ -412,26 +492,103 @@ fun CreatePeopleScreen(draftId: String, onBack: () -> Unit, onContinue: (String)
         }
     ) {
         item { RecruitmentStepIndicator(activeStep = 2) }
-        item { SectionIntro("인원 정하기", "최소 출발 인원과 최대 모집 인원을 정해주세요.") }
         item {
-            ParticipantCounter(
-                label = "최소 출발 인원",
-                value = draft.minParticipants,
-                decreaseEnabled = draft.minParticipants > 2,
-                increaseEnabled = draft.minParticipants < draft.capacity,
-                onDecrease = { draft = draft.copy(minParticipants = draft.minParticipants - 1) },
-                onIncrease = { draft = draft.copy(minParticipants = draft.minParticipants + 1) }
+            SectionIntro(
+                "몇 명이 모이면 좋을까요?",
+                "최소 인원은 3명부터예요. 낯선 사람과 단둘이 되는 일은 생기지 않아요."
             )
         }
         item {
-            ParticipantCounter(
-                label = "최대 모집 인원",
-                value = draft.capacity,
-                decreaseEnabled = draft.capacity > maxOf(3, draft.minParticipants),
-                increaseEnabled = draft.capacity < 12,
-                onDecrease = { draft = draft.copy(capacity = draft.capacity - 1) },
-                onIncrease = { draft = draft.copy(capacity = draft.capacity + 1) }
-            )
+            // 최소 / 최대는 좌우로 나란히 (화면기획 기준)
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                ParticipantCounter(
+                    label = "최소 인원",
+                    value = draft.minParticipants,
+                    hint = "3명 미만은 선택할 수 없어요",
+                    modifier = Modifier.weight(1f),
+                    decreaseEnabled = draft.minParticipants > 3,
+                    increaseEnabled = draft.minParticipants < draft.capacity - 1,
+                    onDecrease = { draft = draft.copy(minParticipants = draft.minParticipants - 1) },
+                    onIncrease = { draft = draft.copy(minParticipants = draft.minParticipants + 1) }
+                )
+                ParticipantCounter(
+                    label = "최대 인원",
+                    value = draft.capacity,
+                    hint = "최대 20명까지",
+                    modifier = Modifier.weight(1f),
+                    decreaseEnabled = draft.capacity > draft.minParticipants + 1,
+                    increaseEnabled = draft.capacity < 20,
+                    onDecrease = { draft = draft.copy(capacity = draft.capacity - 1) },
+                    onIncrease = { draft = draft.copy(capacity = draft.capacity + 1) }
+                )
+            }
+        }
+        item {
+            // 모집 카드 미리보기 — 인원 설정이 신청자에게 어떻게 보이는지 같은 컴포넌트로 확인한다
+            RecruitmentCardPreview(minimum = draft.minParticipants, capacity = draft.capacity)
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("성별 제한", fontWeight = FontWeight.ExtraBold)
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // 모집 카드에는 "성별 무관"으로 적히는 값이라 두 표기를 같은 선택으로 읽는다
+                    val noRestriction = draft.genderCondition in setOf("제한 없음", "성별 무관")
+                    listOf("제한 없음", "여성만", "남성만").forEach { condition ->
+                        val on = if (condition == "제한 없음") noRestriction else draft.genderCondition == condition
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable { draft = draft.copy(genderCondition = condition) }
+                                .testTag("create-people-gender-${condition.hashCode()}"),
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (on) MoyeoTheme.tints.primaryTint else MaterialTheme.colorScheme.surface,
+                            border = BorderStroke(
+                                1.dp,
+                                if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+                            )
+                        ) {
+                            Text(
+                                condition,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                                color = if (on) {
+                                    MoyeoTheme.tints.onPrimaryTint
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+                if (draft.genderCondition !in setOf("제한 없음", "성별 무관")) {
+                    Text(
+                        "수락되는 인원은 같은 성별로 한정돼요.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // 화면기획·웹·iOS는 한 줄로 범위를 보여주고 눌러서 조정한다.
+                // 스테퍼 두 개를 나란히 두면 같은 화면인데 안드로이드만 입력 칸이 두 배로 보인다.
+                LabeledValue(
+                    label = "나이대 제한",
+                    value = "${draft.minimumAge} ~ ${draft.maximumAge}세",
+                    icon = Icons.Filled.People,
+                    tag = "create-people-age-range",
+                    onClick = { showAgeSheet = true }
+                )
+                Text(
+                    "최소·최대 모두 20~100세 사이에서 정할 수 있어요. " +
+                        "조건에 맞지 않는 사용자에게는 신청 버튼이 비활성으로 보여요.",
+                    modifier = Modifier.testTag("create-people-age-caption"),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
         item {
             InfoBanner(
@@ -442,42 +599,110 @@ fun CreatePeopleScreen(draftId: String, onBack: () -> Unit, onContinue: (String)
     }
 }
 
+/**
+ * 모집 카드 미리보기.
+ *
+ * 인원 숫자만 보여주면 신청자 화면에서 어떻게 읽히는지 알 수 없어서,
+ * 모집 카드와 같은 프로그레스 컴포넌트로 함께 보여준다.
+ */
+@Composable
+private fun RecruitmentCardPreview(minimum: Int, capacity: Int) {
+    val tints = MoyeoTheme.tints
+    val mood = when {
+        capacity <= 4 -> "말 트기 좋은 작은 그룹이에요" to false
+        capacity <= 8 -> "단체 사진 예쁘게 나오는 최적 인원이에요" to false
+        else -> "9명 이상은 친목이 쉽지 않을 수 있어요" to true
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("create-people-card-preview"),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, tints.softLine)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    "모집 카드에는 이렇게 보여요",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    "$minimum / ${capacity}명 · 최소 충족",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            LinearProgressIndicator(
+                progress = { minimum / capacity.coerceAtLeast(1).toFloat() },
+                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+            Text(
+                mood.first,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = if (mood.second) tints.onWarningTint else tints.onPrimaryTint
+            )
+        }
+    }
+}
+
 @Composable
 private fun ParticipantCounter(
     label: String,
     value: Int,
+    suffix: String = "명",
+    hint: String? = null,
+    modifier: Modifier = Modifier,
     decreaseEnabled: Boolean,
     increaseEnabled: Boolean,
     onDecrease: () -> Unit,
     onIncrease: () -> Unit
 ) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+    // 라벨은 위, 스테퍼는 아래. 좁은 폭에 둘씩 나란히 놓아도 값이 잘리지 않는다.
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text(label, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
+        Surface(
+            modifier = Modifier.fillMaxWidth().height(48.dp),
+            shape = RoundedCornerShape(12.dp),
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
-            Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
-            OutlinedButton(
-                onClick = onDecrease,
-                enabled = decreaseEnabled,
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.size(40.dp),
-                shape = CircleShape
-            ) { Text("−", fontSize = 20.sp) }
-            Text("${value}명", fontWeight = FontWeight.ExtraBold, modifier = Modifier.width(42.dp))
-            OutlinedButton(
-                onClick = onIncrease,
-                enabled = increaseEnabled,
-                contentPadding = PaddingValues(0.dp),
-                modifier = Modifier.size(40.dp),
-                shape = CircleShape
-            ) { Text("+", fontSize = 20.sp) }
+            Row(
+                modifier = Modifier.padding(horizontal = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onDecrease,
+                    enabled = decreaseEnabled,
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.size(32.dp),
+                    shape = CircleShape
+                ) { Text("−", fontSize = 16.sp) }
+                Text(
+                    "$value$suffix",
+                    modifier = Modifier.weight(1f),
+                    fontWeight = FontWeight.ExtraBold,
+                    textAlign = TextAlign.Center
+                )
+                Button(
+                    onClick = onIncrease,
+                    enabled = increaseEnabled,
+                    contentPadding = PaddingValues(0.dp),
+                    modifier = Modifier.size(32.dp),
+                    shape = CircleShape
+                ) { Text("+", fontSize = 16.sp) }
+            }
+        }
+        if (hint != null) {
+            Text(
+                hint,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }
@@ -488,50 +713,78 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
     var query by rememberSaveable { mutableStateOf(draft.meetingLocation.name) }
     var detail by rememberSaveable { mutableStateOf("터미널 정문 앞") }
 
+    // 집합 장소는 일정 단계(2/5)에서 열리는 화면이라 다른 플랫폼처럼 단계 뷰를 함께 그린다
     RecruitmentScaffold(
-        title = "모집 만들기 (4/5)",
+        title = "모집 만들기 (2/5)",
         onBack = onBack,
         bottom = {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp)) { Text("이전") }
+                OutlinedButton(
+                    onClick = onBack,
+                    modifier = Modifier.height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("이전") }
                 Button(
                     onClick = {
-                        draft =
-                            draft.copy(
-                                meetingLocation =
-                                    draft.meetingLocation.copy(
-                                        name = query.ifBlank { "청송 시외버스터미널" },
-                                        detail = detail
-                                    )
+                        draft = draft.copy(
+                            meetingLocation = draft.meetingLocation.copy(
+                                name = query.ifBlank { "청송 시외버스터미널" },
+                                detail = detail
                             )
+                        )
                         MockTripRepository.updateRecruitmentDraft(draft)
                         onSave(draft.id)
                     },
                     modifier = Modifier.weight(1f).height(48.dp).testTag("meeting-point-save"),
                     shape = RoundedCornerShape(8.dp)
-                ) { Text("다음") }
+                ) { Text("이 위치로 지정") }
             }
         }
     ) {
-        item { RecruitmentStepIndicator(activeStep = 3) }
+        item { RecruitmentStepIndicator(activeStep = 1) }
         item { SectionIntro("집합 장소 정하기", "검색하거나 지도의 핀을 움직여 정확한 위치를 알려주세요.") }
         item {
             Box {
-                RouteMapPreview(stopCount = 1, modifier = Modifier.fillMaxWidth().height(244.dp))
+                RouteMapPreview(stopCount = 1, modifier = Modifier.fillMaxWidth().height(300.dp))
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     placeholder = { Text("장소 검색 (TourAPI)") },
                     singleLine = true,
-                    modifier =
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(12.dp)
-                            .background(MaterialTheme.colorScheme.surface)
-                            .testTag("meeting-point-search"),
+                    modifier = Modifier.fillMaxWidth().padding(12.dp).background(MaterialTheme.colorScheme.surface)
+                        .testTag("meeting-point-search"),
                     shape = RoundedCornerShape(10.dp)
                 )
+                // 화면기획 17-3의 중앙 핀과 조정 안내 말풍선
+                Surface(
+                    modifier = Modifier.align(Alignment.Center).size(40.dp),
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    border = BorderStroke(3.dp, MaterialTheme.colorScheme.surface)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Filled.Place,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onPrimary
+                        )
+                    }
+                }
+                Surface(
+                    modifier = Modifier.align(Alignment.BottomStart).padding(14.dp),
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                ) {
+                    Text(
+                        text = "핀을 끌어 위치를 조정하세요",
+                        modifier = Modifier.padding(horizontal = 11.dp, vertical = 7.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
             }
         }
         item {
@@ -540,13 +793,12 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 listOf("터미널 정문 앞", "2번 출구", "주차장 입구").forEach { option ->
-                    OutlinedButton(
-                        onClick = { detail = option },
-                        shape = RoundedCornerShape(20.dp)
-                    ) {
+                    OutlinedButton(onClick = { detail = option }, shape = RoundedCornerShape(20.dp)) {
                         Text(
                             option,
-                            color = if (detail == option) {
+                            color = if (detail ==
+                                option
+                            ) {
                                 MaterialTheme.colorScheme.primary
                             } else {
                                 MaterialTheme.colorScheme.onSurface
@@ -569,6 +821,196 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
     }
 }
 
+// / 17-5 신청 승인 방식 선택 카드
+@Composable
+private fun ApprovalModeCard(
+    title: String,
+    detail: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit
+) {
+    val tints = MoyeoTheme.tints
+    Surface(
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick)
+            .testTag("create-detail-approval-$title"),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            if (selected) 2.dp else 1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+        )
+    ) {
+        Row(
+            Modifier.padding(14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Surface(Modifier.size(42.dp), shape = RoundedCornerShape(8.dp), color = tints.primaryTint) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(icon, null, tint = MaterialTheme.colorScheme.primary)
+                }
+            }
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    detail,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Icon(
+                if (selected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+                null,
+                tint = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> Unit) {
+    var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
+    var recruitmentName by rememberSaveable { mutableStateOf(draft.recruitmentName) }
+    var introduction by rememberSaveable { mutableStateOf(draft.note) }
+    var costText by rememberSaveable { mutableStateOf(draft.estimatedCostPerPerson.toString()) }
+    var approvalMode by rememberSaveable { mutableStateOf("auto") }
+
+    RecruitmentScaffold(
+        title = "모집 만들기 (4/5)",
+        onBack = onBack,
+        bottom = {
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp), shape = RoundedCornerShape(12.dp)) {
+                    Text("이전")
+                }
+                Button(
+                    onClick = {
+                        draft =
+                            draft.copy(
+                                recruitmentName = recruitmentName.trim(),
+                                note = introduction.trim(),
+                                estimatedCostPerPerson = costText.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                            )
+                        MockTripRepository.updateRecruitmentDraft(draft)
+                        onSave(draft.id)
+                    },
+                    modifier = Modifier.weight(1f).height(48.dp).testTag("create-detail-save"),
+                    shape = RoundedCornerShape(8.dp)
+                ) { Text("다음") }
+            }
+        }
+    ) {
+        item { RecruitmentStepIndicator(activeStep = 3) }
+        item { SectionIntro("어떤 여행인지 알려주세요", "코스와 별개로 이 모집의 이름과 조건을 정해주세요.") }
+        item {
+            LabeledValue(
+                label = "코스",
+                value = MockTripRepository.findCourse(draft.selectedCourseId).title,
+                icon = Icons.Filled.Lock,
+                tag = "create-detail-course"
+            )
+        }
+        item {
+            Text(
+                "Step 1에서 고른 코스 이름이며 여기서는 바꿀 수 없어요.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        item {
+            // 라벨은 인풋 위 (화면기획·웹과 같은 구조 — 플로팅 라벨은 값이 비면 플레이스홀더처럼 보인다)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "모집 이름 (채팅방 이름) *",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                OutlinedTextField(
+                    value = recruitmentName,
+                    onValueChange = { recruitmentName = it.take(40) },
+                    leadingIcon = { Icon(Icons.Filled.Group, null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("create-detail-recruitment-name")
+                )
+                Text(
+                    "코스 이름과 별개로, 어떤 사람들과 어떻게 가고 싶은지를 담아요. 채팅방 이름으로도 쓰여요.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        item {
+            Text("소개글", fontWeight = FontWeight.Bold)
+            OutlinedTextField(
+                value = introduction,
+                onValueChange = { introduction = it.take(500) },
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp).testTag("create-detail-introduction"),
+                placeholder = { Text("어떤 분위기의 여행인지 알려주세요.") },
+                minLines = 3,
+                supportingText = { Text("${introduction.length}/500") }
+            )
+        }
+        item {
+            // 라벨은 인풋 위, 금액 아이콘과 참고 문구를 함께 (화면기획·웹·iOS와 같은 형태).
+            // Material 플로팅 라벨만 쓰면 다른 플랫폼의 라벨-박스 구조와 달라 보인다.
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(
+                    "예상 1인당 비용",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                OutlinedTextField(
+                    value = costText,
+                    onValueChange = { costText = it.filter(Char::isDigit).take(7) },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Filled.Payments,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    },
+                    suffix = { Text("원") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("create-detail-cost")
+                )
+                Text(
+                    "TourAPI 기준 이 코스는 보통 4~5만원 내외예요. 참고용으로만 보여줘요.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        item {
+            // 화면기획·웹·iOS에 있는 신청 승인 방식이 안드로이드에만 없었다
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("신청 승인 방식 *", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.ExtraBold)
+                ApprovalModeCard(
+                    title = "자동 승인",
+                    detail = "조건에 맞으면 바로 합류해요. 모임이 빨리 채워져요.",
+                    icon = Icons.Filled.Bolt,
+                    selected = approvalMode == "auto",
+                    onClick = { approvalMode = "auto" }
+                )
+                ApprovalModeCard(
+                    title = "수동 승인",
+                    detail = "한마디와 매너 점수를 보고 호스트가 직접 수락해요.",
+                    icon = Icons.Filled.PanTool,
+                    selected = approvalMode == "manual",
+                    onClick = { approvalMode = "manual" }
+                )
+            }
+        }
+        item { InfoBanner(Icons.Filled.Notifications, "마감 전까지 세부 조건을 바꿀 수 있고 변경 내용은 신청자에게 알려드려요.") }
+    }
+}
+
 @Composable
 fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRecruitment) -> Unit) {
     val draft = remember(draftId) { MockTripRepository.findRecruitmentDraft(draftId) }
@@ -579,7 +1021,9 @@ fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRec
         onBack = onBack,
         bottom = {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp)) { Text("이전") }
+                OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp), shape = RoundedCornerShape(12.dp)) {
+                    Text("이전")
+                }
                 Button(
                     onClick = { onCreated(MockTripRepository.createRecruitmentFromDraft(draft.id)) },
                     modifier = Modifier.weight(1f).height(48.dp).testTag("create-summary-submit"),
@@ -598,8 +1042,13 @@ fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRec
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        draft.recruitmentName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(course.title, fontWeight = FontWeight.ExtraBold, modifier = Modifier.weight(1f))
+                        Text(course.title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                         SourceBadge(draft.courseSource)
                     }
                     SummaryRow(Icons.Filled.CalendarMonth, "일정", scheduleSummary(draft))
@@ -613,12 +1062,20 @@ fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRec
                         "좌표",
                         "${draft.meetingLocation.latitude}, ${draft.meetingLocation.longitude}"
                     )
+                    // 화면기획 17-6은 인원과 조건을 두 줄로 나눈다
                     SummaryRow(
                         Icons.Filled.Group,
                         "인원",
-                        "최소 ${draft.minParticipants}명 · 최대 ${draft.capacity}명 · 성별 제한 없음"
+                        "최소 ${draft.minParticipants}명 · 최대 ${draft.capacity}명"
                     )
-                    SummaryRow(Icons.Filled.Schedule, "마감", draft.recruitmentDeadline)
+                    SummaryRow(
+                        Icons.Filled.Person,
+                        "조건",
+                        "${draft.minimumAge}~${draft.maximumAge}세 · " +
+                            if (draft.genderCondition == "성별 무관") "성별 제한 없음" else draft.genderCondition
+                    )
+                    SummaryRow(Icons.Filled.Star, "비용", "1인 ${"%,d".format(draft.estimatedCostPerPerson)}원 (예상)")
+                    SummaryRow(Icons.Filled.Schedule, "마감", summaryDeadlineText(draft.recruitmentDeadline))
                 }
             }
         }
@@ -642,6 +1099,14 @@ fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRec
             )
         }
     }
+}
+
+/** 화면기획 17-6의 마감 표기: "5/22(금) 23:59 · D-3" */
+private fun summaryDeadlineText(deadline: String): String {
+    val match = Regex("""\d{4}\.(\d{2})\.(\d{2}) \(([^)]+)\) (\d{2}:\d{2})""").find(deadline)
+        ?: return deadline
+    val (month, day, weekday, time) = match.destructured
+    return "${month.toInt()}/${day.toInt()}($weekday) $time · D-3"
 }
 
 @Composable
@@ -673,22 +1138,52 @@ fun CourseRouteScreen(
         bottom = {
             if (confirmed) {
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = {
-                        onOpenNotices(trip.id)
-                    }, modifier = Modifier.weight(1f).height(48.dp)) { Text("공지로 알리기") }
-                    Button(onClick = {
-                    }, enabled = false, modifier = Modifier.weight(.7f).height(48.dp)) { Text("경로 수정") }
-                }
-            } else {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(onClick = onBack, modifier = Modifier.height(48.dp)) { Text("취소") }
+                    OutlinedButton(
+                        onClick = {
+                            onOpenNotices(trip.id)
+                        },
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("공지로 알리기") }
                     Button(
                         onClick = {
-                            if (routeEditable) MockTripRepository.updateCustomRoute(trip.id, stops)
+                        },
+                        enabled = false,
+                        modifier = Modifier.weight(.7f).height(48.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("경로 수정") }
+                }
+            } else if (routeEditable) {
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = onBack,
+                        modifier = Modifier.height(48.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text("취소")
+                    }
+                    Button(
+                        onClick = {
+                            MockTripRepository.updateCustomRoute(trip.id, stops)
                             onBack()
                         },
-                        modifier = Modifier.weight(1f).height(48.dp).testTag("course-route-save")
-                    ) { Text(if (routeEditable) "저장하고 멤버에게 알리기" else "확인") }
+                        modifier = Modifier.weight(1f).height(48.dp).testTag("course-route-save"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("저장하고 멤버에게 알리기") }
+                }
+            } else {
+                // 등록 코스는 경로를 못 바꾸지만 코스 교체와 집합 정보 수정은 열려 있다 (화면기획)
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedButton(
+                        onClick = onBack,
+                        modifier = Modifier.height(48.dp).testTag("course-route-change-course"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("코스 바꾸기") }
+                    Button(
+                        onClick = { onOpenMeetingPoint(trip.id) },
+                        modifier = Modifier.weight(1f).height(48.dp).testTag("course-route-edit-meeting"),
+                        shape = RoundedCornerShape(12.dp)
+                    ) { Text("집합 정보 수정") }
                 }
             }
         }
@@ -708,7 +1203,8 @@ fun CourseRouteScreen(
         }
         item {
             InfoBanner(
-                icon = if (confirmed) Icons.Filled.Lock else Icons.Filled.EditNote,
+                // 경로를 못 바꾸는 상태는 모두 자물쇠로 (화면기획)
+                icon = if (routeEditable) Icons.Filled.EditNote else Icons.Filled.Lock,
                 text = when {
                     confirmed -> "여행이 확정돼 경로가 잠겼어요. 변경이 필요하면 채팅방 공지로 알려주세요."
                     routeEditable -> "마감 전까지 경로를 바꿀 수 있어요. 저장하면 채팅방에 변경 내역이 공지로 남아요."
@@ -722,11 +1218,22 @@ fun CourseRouteScreen(
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Day 1", fontWeight = FontWeight.ExtraBold)
                 if (!routeEditable) {
-                    Text(
-                        "수정 불가",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Lock,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "수정 불가",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -737,7 +1244,8 @@ fun CourseRouteScreen(
         }
         if (routeEditable) {
             item {
-                OutlinedButton(onClick = {}, modifier = Modifier.fillMaxWidth().height(46.dp)) {
+                OutlinedButton(onClick = {
+                }, modifier = Modifier.fillMaxWidth().height(46.dp), shape = RoundedCornerShape(12.dp)) {
                     Icon(Icons.Filled.Add, contentDescription = null)
                     Text("방문지 추가", Modifier.padding(start = 6.dp))
                 }
@@ -764,15 +1272,61 @@ fun CourseRouteScreen(
 @Composable
 fun NoticeHistoryScreen(tripId: String, onBack: () -> Unit) {
     var notices by remember(tripId) { mutableStateOf(MockTripRepository.noticesForTrip(tripId)) }
-    RecruitmentScaffold(title = "공지 내역", onBack = onBack) {
-        item { SectionIntro("채팅방 공지", "상단 고정은 최대 3개까지 선택할 수 있어요.") }
-        items(notices, key = { it.id }) { notice ->
-            NoticeCard(notice) {
-                MockTripRepository.toggleNoticePinned(notice.id)
-                notices = MockTripRepository.noticesForTrip(tripId).toList()
+    val trip = remember(tripId) { MockTripRepository.findTrip(tripId) }
+    val pinned = notices.filter { it.isPinned }
+    val past = notices.filterNot { it.isPinned }
+    val toggle: (RecruitmentNotice) -> Unit = { notice ->
+        MockTripRepository.toggleNoticePinned(notice.id)
+        notices = MockTripRepository.noticesForTrip(tripId).toList()
+    }
+
+    // 화면기획은 코스 이름·공지 개수 → "상단 고정 중" / "지난 공지" → 하단 CTA 순서다
+    RecruitmentScaffold(
+        title = "공지 이력",
+        onBack = onBack,
+        bottom = {
+            Button(
+                onClick = {},
+                modifier = Modifier.fillMaxWidth().height(48.dp).testTag("notice-history-create"),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Filled.Add, null)
+                Text("새 공지 작성 (호스트)", Modifier.padding(start = 6.dp))
             }
         }
+    ) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(trip.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    "공지 ${notices.size}개 · 고정 ${pinned.size} / 최대 3",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        item { NoticeSectionTitle("상단 고정 중") }
+        items(pinned, key = { it.id }) { notice -> NoticeCard(notice) { toggle(notice) } }
+        item { NoticeSectionTitle("지난 공지") }
+        items(past, key = { it.id }) { notice -> NoticeCard(notice) { toggle(notice) } }
+        item {
+            Text(
+                "공지는 호스트만 올릴 수 있고, 고정은 최대 3개까지예요. 고정을 해제해도 이력에는 그대로 남아요.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
+}
+
+@Composable
+private fun NoticeSectionTitle(title: String) {
+    Text(
+        text = title,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        fontWeight = FontWeight.ExtraBold
+    )
 }
 
 @Composable
@@ -978,39 +1532,74 @@ private fun CourseSourceChoice(
 }
 
 @Composable
-private fun CompactCourseChoice(title: String, subtitle: String, selected: Boolean, onClick: () -> Unit) {
+private fun CompactCourseChoice(
+    title: String,
+    subtitle: String,
+    selected: Boolean,
+    course: TripCourse? = null,
+    sourceLabel: String? = null,
+    onClick: () -> Unit
+) {
     Surface(
         Modifier.fillMaxWidth().clickable(onClick = onClick),
-        RoundedCornerShape(10.dp),
-        if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        RoundedCornerShape(12.dp),
+        if (selected) MoyeoTheme.tints.primaryTint else MaterialTheme.colorScheme.surface,
+        border = BorderStroke(
+            1.dp,
+            if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
+        )
     ) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Map, null, tint = MaterialTheme.colorScheme.primary)
+        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (course != null) {
+                CourseScenicPanel(
+                    course = course,
+                    modifier = Modifier.size(54.dp),
+                    cornerRadius = 9.dp
+                )
+            } else {
+                Icon(Icons.Filled.Map, null, tint = MaterialTheme.colorScheme.primary)
+            }
             Column(Modifier.padding(start = 10.dp).weight(1f)) {
-                Text(title, fontWeight = FontWeight.Bold)
+                Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     subtitle,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+                if (sourceLabel != null) {
+                    Text(
+                        text = sourceLabel,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
-            if (selected) Icon(Icons.Filled.Check, null, tint = MaterialTheme.colorScheme.primary)
+            Icon(
+                if (selected) Icons.Filled.CheckCircle else Icons.Outlined.Circle,
+                contentDescription = null,
+                tint = if (selected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.outline
+                }
+            )
         }
     }
 }
 
 @Composable
 private fun InfoBanner(icon: ImageVector, text: String, warning: Boolean = false, neutral: Boolean = false) {
+    val tints = MoyeoTheme.tints
     val container = when {
-        warning -> Color(0xFFFFF2D5)
+        warning -> tints.warningTint
         neutral -> MaterialTheme.colorScheme.surfaceVariant
-        else -> Color(0xFFEEF7F1)
+        else -> tints.primaryTint
     }
     val content = when {
-        warning -> Color(0xFF745318)
+        warning -> tints.onWarningTint
         neutral -> MaterialTheme.colorScheme.onSurfaceVariant
-        else -> Color(0xFF264332)
+        else -> tints.onPrimaryTint
     }
     Surface(
         Modifier.fillMaxWidth(),
@@ -1033,7 +1622,8 @@ private fun InfoBanner(icon: ImageVector, text: String, warning: Boolean = false
 
 @Composable
 private fun RouteMapPreview(stopCount: Int, modifier: Modifier = Modifier) {
-    Canvas(modifier.fillMaxWidth().background(Color(0xFFE5EEDB), RoundedCornerShape(12.dp)).padding(20.dp)) {
+    val tints = MoyeoTheme.tints
+    Canvas(modifier.fillMaxWidth().background(tints.mapGreen, RoundedCornerShape(12.dp)).padding(20.dp)) {
         val count = stopCount.coerceAtLeast(1)
         val points = (0 until count).map { i ->
             Offset(
@@ -1048,7 +1638,7 @@ private fun RouteMapPreview(stopCount: Int, modifier: Modifier = Modifier) {
         drawPath(path, Color(0xFF4E9B6B), style = Stroke(width = 8f, cap = StrokeCap.Round))
         points.forEachIndexed { index, point ->
             drawCircle(Color(0xFF4E9B6B), 15.dp.toPx(), point)
-            drawCircle(Color.White, 3.dp.toPx(), point)
+            drawCircle(Color(0xFFF4F8F5), 3.dp.toPx(), point)
         }
     }
 }
@@ -1140,6 +1730,7 @@ private fun LabeledValue(
     value: String,
     icon: ImageVector,
     modifier: Modifier = Modifier,
+    detail: String? = null,
     onClick: (() -> Unit)? = null,
     tag: String? = null
 ) {
@@ -1167,15 +1758,28 @@ private fun LabeledValue(
             MaterialTheme.colorScheme.surfaceVariant,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
-            Row(Modifier.height(52.dp).padding(horizontal = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                Modifier.heightIn(min = 52.dp).padding(horizontal = 14.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(
-                    value,
-                    Modifier.padding(start = 10.dp).weight(1f),
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Column(Modifier.padding(start = 10.dp).weight(1f)) {
+                    Text(
+                        value,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    if (detail != null) {
+                        Text(
+                            detail,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
                 if (onClick !=
                     null
                 ) {
@@ -1202,14 +1806,34 @@ private fun LabeledValue(
 }
 
 @Composable private fun SourceBadge(source: CourseSource) {
-    Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.inverseOnSurface) {
-        Text(
-            source.label,
-            Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.inverseSurface,
-            fontWeight = FontWeight.Bold
+    val tints = MoyeoTheme.tints
+    val linked = source == CourseSource.Linked
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (linked) MaterialTheme.colorScheme.surfaceVariant else tints.primaryTint,
+        border = BorderStroke(
+            1.dp,
+            if (linked) tints.softLine else MaterialTheme.colorScheme.primary.copy(alpha = .5f)
         )
+    ) {
+        Row(
+            Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = if (linked) Icons.Filled.Lock else Icons.Filled.EditNote,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = if (linked) MaterialTheme.colorScheme.onSurfaceVariant else tints.onPrimaryTint
+            )
+            Text(
+                source.label,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (linked) MaterialTheme.colorScheme.onSurfaceVariant else tints.onPrimaryTint,
+                fontWeight = FontWeight.Bold
+            )
+        }
     }
 }
 
@@ -1236,25 +1860,65 @@ private fun NoticeCard(notice: RecruitmentNotice, onTogglePin: () -> Unit) {
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(notice.title, Modifier.weight(1f), fontWeight = FontWeight.ExtraBold)
+                Icon(
+                    Icons.Filled.Description,
+                    null,
+                    Modifier.size(14.dp),
+                    tint = if (notice.isPinned) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
                 Text(
-                    if (notice.isPinned) "고정됨" else "고정",
-                    Modifier.clickable(onClick = onTogglePin).padding(6.dp),
+                    notice.title,
+                    Modifier.weight(1f).padding(start = 6.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (notice.isPinned) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    fontWeight = FontWeight.ExtraBold
+                )
+                // 고정 여부는 배지로, 켜고 끄기는 아래 링크로 (화면기획과 같은 표기)
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (notice.isPinned) {
+                        MoyeoTheme.tints.primaryTint
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    }
+                ) {
+                    Text(
+                        if (notice.isPinned) "📌 고정" else "고정 해제됨",
+                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (notice.isPinned) {
+                            MoyeoTheme.tints.onPrimaryTint
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+            Text(notice.body, style = MaterialTheme.typography.bodyMedium)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "${notice.author} · ${notice.createdAt}",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    if (notice.isPinned) "수정" else "다시 고정",
+                    Modifier.clickable(onClick = onTogglePin).padding(4.dp),
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.ExtraBold
                 )
             }
-            Text(
-                notice.body,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Text(
-                "${notice.author} · ${notice.createdAt}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }

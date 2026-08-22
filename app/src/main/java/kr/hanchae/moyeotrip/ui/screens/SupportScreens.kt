@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -26,13 +28,21 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Celebration
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.GroupAdd
-import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.Groups
+import androidx.compose.material.icons.filled.Map
+import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -41,9 +51,11 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -54,9 +66,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.FeedPost
@@ -64,7 +79,9 @@ import kr.hanchae.moyeotrip.data.FeedVisibility
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
+import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun NotificationCenterScreen(
@@ -75,96 +92,210 @@ fun NotificationCenterScreen(
     onOpenTripConfirmed: () -> Unit = {},
     onOpenTripMessage: () -> Unit = {}
 ) {
+    // 항목 구성은 화면기획 13 알림과 동일하다 (오늘 5 · 어제 2, 안읽음 4)
     val notifications = listOf(
         NotificationItem(
-            "여행이 확정됐어요 🎉",
-            "주왕산 & 주산지 힐링 트레킹에 5명이 모였어요",
-            "방금",
+            "주왕산 & 주산지 여행이 확정됐어요 🎉",
+            "",
+            "방금 전",
             "confirmed",
-            "trip-cheongsong-juwangsan"
+            "trip-cheongsong-juwangsan",
+            unread = true
         ),
         NotificationItem(
-            "출발 확정까지 1명 남았어요",
-            "주왕산 & 주산지 힐링 트레킹",
-            "방금",
+            "경주 단풍·야경 모임이 만들어졌어요 ✨",
+            "",
+            "10분 전",
             "trip",
-            "trip-cheongsong-juwangsan"
+            "trip-gyeongju-night",
+            unread = true
         ),
         NotificationItem(
-            "새 댓글이 달렸어요",
-            "경주 단풍·야경 기록에 반응이 왔어요",
-            "12분 전",
+            "우직한 곰 7821님이 메시지를 보냈어요",
+            "",
+            "1시간 전",
             "feed",
-            "feed-3"
+            "feed-1",
+            unread = true
         ),
         NotificationItem(
-            "날씨 추천이 바뀌었어요",
-            "맑음 예보에 맞춰 경주 첨성대 코스를 추천해요",
-            "오늘",
-            "course",
-            "gyeongju-healing"
-        ),
-        NotificationItem(
-            "하회마을 모임이 확정됐어요",
-            "모임 채팅방에서 준비물을 확인해보세요",
-            "어제",
-            "trip",
-            "trip-andong-hahoe"
-        ),
-        NotificationItem(
-            "여행의 한 줄을 남겨주세요",
-            "함께 걸은 친구의 도감 카드가 기다리고 있어요",
-            "3일 전",
+            "여행 잘 마치셨죠? 함께 걸은 친구에게 한 줄 남겨볼까요",
+            "",
+            "2시간 전",
             "message",
+            "trip-gyeongju-night",
+            unread = true
+        ),
+        NotificationItem(
+            "마감 D-1 · 현재 4/8명이에요",
+            "",
+            "3시간 전",
+            "trip",
             "trip-gyeongju-night"
+        ),
+        NotificationItem(
+            "엉뚱한 토끼 1457님이 친구 요청을 보냈어요",
+            "",
+            "어제 오후 4시",
+            "friend-request",
+            "friend-rabbit",
+            group = "어제"
+        ),
+        NotificationItem(
+            "3명이 내 피드에 좋아요를 눌렀어요",
+            "",
+            "어제 오전 11시",
+            "likes",
+            "feed-1",
+            group = "어제"
         )
     )
 
-    SupportScaffold(title = "알림", onBack = onBack) {
-        items(notifications) { item ->
-            SupportCard(
-                modifier = Modifier
-                    .clickable {
-                        when (item.type) {
-                            "feed" -> onOpenPost(item.targetId)
-                            "course" -> onOpenCourse(item.targetId)
-                            "confirmed" -> onOpenTripConfirmed()
-                            "message" -> onOpenTripMessage()
-                            else -> onOpenTrip(item.targetId)
+    var showsUnreadOnly by rememberSaveable { mutableStateOf(false) }
+    var readAll by rememberSaveable { mutableStateOf(false) }
+    val unreadCount = notifications.count { it.unread && !readAll }
+    val visible = if (showsUnreadOnly) notifications.filter { it.unread && !readAll } else notifications
+    val grouped = visible.groupBy { it.group }
+    val groupOrder = visible.map { it.group }.distinct()
+
+    // 알림은 항목마다 카드를 두지 않고 테이블처럼 한 줄씩 수직으로 쌓는다 (화면기획 기준).
+    // 카드가 겹치면 목록을 훑을 때 어디까지 읽었는지 잡히지 않는다.
+    SupportScaffold(
+        title = "알림",
+        onBack = onBack,
+        itemSpacing = 0.dp,
+        trailingTitle = "모두 읽음",
+        onTrailingClick = { readAll = true }
+    ) {
+        // 화면기획·웹과 같은 전체 / 안읽음 필터
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                NotificationFilterChip("전체", !showsUnreadOnly) { showsUnreadOnly = false }
+                NotificationFilterChip("안읽음 $unreadCount", showsUnreadOnly) { showsUnreadOnly = true }
+            }
+        }
+        groupOrder.forEach { group ->
+            item(key = "group-$group") {
+                Text(
+                    text = group,
+                    modifier = Modifier.fillMaxWidth().padding(top = 12.dp, bottom = 2.dp)
+                        .testTag("notification-group-$group"),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            items(grouped[group].orEmpty()) { item ->
+                Column(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                when (item.type) {
+                                    "feed", "likes" -> onOpenPost(item.targetId)
+                                    "course" -> onOpenCourse(item.targetId)
+                                    "confirmed" -> onOpenTripConfirmed()
+                                    "message" -> onOpenTripMessage()
+                                    "friend-request" -> Unit
+                                    else -> onOpenTrip(item.targetId)
+                                }
+                            }
+                            .testTag("notification-${item.type}-${item.targetId}")
+                            .padding(vertical = 14.dp),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        IconBubble {
+                            // 알림 종류마다 아이콘이 다르다 (화면기획·iOS와 같은 규칙)
+                            Icon(
+                                imageVector = when (item.type) {
+                                    "confirmed" -> Icons.Filled.Celebration
+                                    "feed" -> Icons.Filled.ChatBubbleOutline
+                                    "course" -> Icons.Filled.WbSunny
+                                    "message" -> Icons.Filled.Description
+                                    "friend-request" -> Icons.Filled.PersonAdd
+                                    "likes" -> Icons.Filled.FavoriteBorder
+                                    else -> Icons.Filled.Groups
+                                },
+                                contentDescription = null,
+                                tint = ForestGreen,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(
+                                text = item.title,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = item.time,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            // 친구 요청은 목록 안에서 바로 처리한다 (화면기획)
+                            if (item.type == "friend-request") {
+                                Row(
+                                    modifier = Modifier.padding(top = 5.dp),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedButton(
+                                        onClick = {},
+                                        modifier = Modifier.height(32.dp)
+                                            .testTag("notification-friend-decline"),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp)
+                                    ) { Text("거절", style = MaterialTheme.typography.labelMedium) }
+                                    Button(
+                                        onClick = {},
+                                        modifier = Modifier.height(32.dp)
+                                            .testTag("notification-friend-accept"),
+                                        shape = RoundedCornerShape(8.dp),
+                                        contentPadding = PaddingValues(horizontal = 14.dp)
+                                    ) { Text("수락", style = MaterialTheme.typography.labelMedium) }
+                                }
+                            }
+                        }
+                        if (item.type != "friend-request") {
+                            Icon(
+                                imageVector = Icons.Filled.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
                         }
                     }
-                    .testTag("notification-${item.type}-${item.targetId}")
-            ) {
-                Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    IconBubble {
-                        Icon(
-                            imageVector = Icons.Filled.NotificationsNone,
-                            contentDescription = null,
-                            tint = ForestGreen,
-                            modifier = Modifier.size(20.dp)
-                        )
-                    }
-                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(
-                            text = item.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                        Text(
-                            text = item.body,
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            text = item.time,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
+        }
+    }
+}
+
+// / 알림 목록 상단의 전체 / 안읽음 필터 칩
+@Composable
+private fun NotificationFilterChip(title: String, selected: Boolean, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier.height(32.dp).clip(RoundedCornerShape(50)).clickable(onClick = onClick)
+            .testTag("notification-filter-$title"),
+        shape = RoundedCornerShape(50),
+        color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surface,
+        border = if (selected) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 13.dp)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selected) {
+                    MaterialTheme.colorScheme.onPrimary
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                fontWeight = FontWeight.Bold
+            )
         }
     }
 }
@@ -291,7 +422,8 @@ fun CreateRecruitmentScreen(
                             },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("create-recruitment-open-manage")
+                                .testTag("create-recruitment-open-manage"),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("모집 관리")
                         }
@@ -300,7 +432,8 @@ fun CreateRecruitmentScreen(
                                 val tripId = createdTripId ?: MockTripRepository.tripIdForCourse(course.id)
                                 onOpenChat(MockTripRepository.chatThreadIdForTrip(tripId))
                             },
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
                         ) {
                             Text("채팅방 미리보기")
                         }
@@ -321,7 +454,8 @@ fun CreateRecruitmentScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp)
-                        .testTag("create-recruitment-submit")
+                        .testTag("create-recruitment-submit"),
+                    shape = RoundedCornerShape(12.dp)
                 ) {
                     Icon(imageVector = Icons.Filled.GroupAdd, contentDescription = null)
                     Text(
@@ -344,20 +478,60 @@ fun HostManageScreen(
 ) {
     val trip = MockTripRepository.findTrip(tripId)
     var pendingApplicants by remember {
+        // 승인 대기 2명은 화면기획 18과 같은 인물·한마디다
         mutableStateOf(
             listOf(
-                HostApplicant("applicant-deer", "따스한 사슴 3492", "🦌", "사진 찍는 속도에 맞춰 천천히 걷고 싶어요."),
-                HostApplicant("applicant-turtle", "잔잔한 거북이 9032", "🐢", "초행이라 모이는 장소와 준비물을 미리 확인하고 싶어요.")
+                HostApplicant(
+                    id = "applicant-bear",
+                    name = "우직한 곰 7821",
+                    avatar = "🐻",
+                    note = "단풍 보러 가요. 사진 좋아해서 풍경 잘 담아드릴 수 있어요!",
+                    meta = "31세 · 남성 · 매너 4.9 · 여행 8회"
+                ),
+                HostApplicant(
+                    id = "applicant-raccoon",
+                    name = "호기심 많은 너구리 9027",
+                    avatar = "🦝",
+                    note = "당일치기로 조용히 걷고 싶어요.",
+                    meta = "26세 · 여성 · 매너 4.7"
+                )
             )
         )
     }
     var approvedApplicants by remember {
-        mutableStateOf(listOf(HostApplicant("approved-bear", "우직한 곰 7821", "🐻", "기존 참여자")))
+        mutableStateOf(
+            listOf(
+                HostApplicant("approved-turtle", "잔잔한 거북이 9032", "🐢", "기존 참여자"),
+                HostApplicant("approved-rabbit", "엉뚱한 토끼 1457", "🐰", "기존 참여자"),
+                HostApplicant("approved-crane", "고요한 두루미 1130", "🪽", "기존 참여자")
+            )
+        )
     }
     var rejectedApplicants by remember { mutableStateOf(emptyList<HostApplicant>()) }
+    var expandedApplicantId by remember { mutableStateOf("applicant-bear") }
     var isRecruitmentClosed by remember(tripId) { mutableStateOf(trip.statusLabel == "모집취소") }
 
-    SupportScaffold(title = "모집 관리", onBack = onBack) {
+    SupportScaffold(
+        title = "모집 관리",
+        onBack = onBack,
+        bottomBar = {
+            Button(
+                onClick = { onOpenChat(MockTripRepository.chatThreadIdForTrip(trip.id)) },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(52.dp)
+                    .testTag("host-manage-open-chat"),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(
+                    Icons.Filled.ChatBubbleOutline,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp)
+                )
+                Text("채팅방 들어가기", modifier = Modifier.padding(start = 7.dp), fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    ) {
         item {
             HostManageSummaryCard(
                 trip = trip,
@@ -370,8 +544,7 @@ fun HostManageScreen(
             Surface(
                 modifier = Modifier.fillMaxWidth().clickable { onOpenRoute(trip.id) }.testTag("host-manage-route"),
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                color = MoyeoTheme.tints.primaryTint
             ) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Filled.Route, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
@@ -380,25 +553,36 @@ fun HostManageScreen(
                             "여행 경로 · 방문지 ${trip.routeStops.size.takeIf {
                                 it > 0
                             } ?: MockTripRepository.findCourseForTrip(trip).stops.size}곳",
+                            color = MoyeoTheme.tints.onPrimaryTint,
                             fontWeight = FontWeight.ExtraBold
                         )
                         Text(
                             if (trip.courseSource ==
                                 kr.hanchae.moyeotrip.data.CourseSource.Custom
                             ) {
-                                "여행 확정 전까지 수정 가능 · 저장 시 멤버 알림"
+                                "확정 전(${trip.ddayLabel})까지 수정할 수 있어요 · 호스트 직접 코스"
                             } else {
                                 "등록된 코스 · 방문지와 순서 수정 불가"
                             },
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            color = MoyeoTheme.tints.onPrimaryTint.copy(alpha = .8f)
                         )
                     }
+                    Icon(
+                        Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
                 }
             }
         }
         item {
-            HostManageSectionTitle(title = "승인 대기", count = pendingApplicants.size)
+            HostManageSectionTitle(
+                title = "승인 대기",
+                count = pendingApplicants.size,
+                trailingNote = "48시간 후 자동 거절"
+            )
         }
         if (pendingApplicants.isEmpty()) {
             item {
@@ -412,40 +596,68 @@ fun HostManageScreen(
             }
         } else {
             items(pendingApplicants, key = { it.id }) { applicant ->
-                HostApplicantCard(
-                    applicant = applicant,
-                    primaryLabel = "승인",
-                    secondaryLabel = "거절",
-                    onPrimary = {
-                        pendingApplicants = pendingApplicants.filterNot { it.id == applicant.id }
-                        approvedApplicants = approvedApplicants + applicant
-                        MockTripRepository.approveHostApplicant(
-                            tripId = trip.id,
-                            applicantName = applicant.name
-                        )
-                    },
-                    onSecondary = {
-                        pendingApplicants = pendingApplicants.filterNot { it.id == applicant.id }
-                        rejectedApplicants = rejectedApplicants + applicant
-                        MockTripRepository.rejectHostApplicant(
-                            tripId = trip.id,
-                            applicantName = applicant.name
-                        )
+                // 화면기획 18은 첫 신청자만 펼쳐 보여주고 나머지는 접어둔다
+                if (applicant.id == expandedApplicantId) {
+                    HostApplicantCard(
+                        applicant = applicant,
+                        primaryLabel = "승인",
+                        secondaryLabel = "거절",
+                        onPrimary = {
+                            pendingApplicants = pendingApplicants.filterNot { it.id == applicant.id }
+                            approvedApplicants = approvedApplicants + applicant
+                            MockTripRepository.approveHostApplicant(
+                                tripId = trip.id,
+                                applicantName = applicant.name
+                            )
+                        },
+                        onSecondary = {
+                            pendingApplicants = pendingApplicants.filterNot { it.id == applicant.id }
+                            rejectedApplicants = rejectedApplicants + applicant
+                            MockTripRepository.rejectHostApplicant(
+                                tripId = trip.id,
+                                applicantName = applicant.name
+                            )
+                        }
+                    )
+                } else {
+                    SupportCard(
+                        modifier = Modifier
+                            .clickable { expandedApplicantId = applicant.id }
+                            .testTag("host-applicant-${applicant.id}")
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(Modifier.weight(1f)) { HostApplicantHeader(applicant = applicant) }
+                            Icon(
+                                Icons.Filled.ChevronRight,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-                )
+                }
             }
         }
         item {
-            HostManageSectionTitle(title = "승인된 동행자", count = approvedApplicants.size)
+            HostManageSectionTitle(title = "승인된 동행자", count = approvedApplicants.size + 1)
         }
-        items(approvedApplicants, key = { it.id }) { applicant ->
+        item {
+            // 화면기획 18: 승인된 동행자는 아바타 무리 + "본인 외 N명" 한 줄이다
             SupportCard {
-                HostApplicantHeader(applicant = applicant)
-                Text(
-                    text = "집결지와 쉬는 시간을 채팅방에서 함께 확인해요.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
+                        (listOf("🦌") + approvedApplicants.map { it.avatar }).forEach { emoji ->
+                            AnimalAvatar(emoji, modifier = Modifier.size(34.dp))
+                        }
+                    }
+                    Spacer(Modifier.weight(1f))
+                    Text(
+                        text = "본인 외 ${approvedApplicants.size}명",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
         if (rejectedApplicants.isNotEmpty()) {
@@ -465,44 +677,31 @@ fun HostManageScreen(
             }
         }
         item {
-            SupportCard {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // 모집 취소는 목록 끝의 보조 동작으로 남긴다 (기획 18의 주 동작은 채팅방 CTA)
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                Text(
+                    text = if (isRecruitmentClosed) "모집 취소됨" else "모집 진행중",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (isRecruitmentClosed) {
+                        MaterialTheme.colorScheme.error
+                    } else {
+                        MaterialTheme.colorScheme.primary
+                    },
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.testTag("host-manage-close-state")
+                )
+                TextButton(
+                    onClick = {
+                        isRecruitmentClosed = !isRecruitmentClosed
+                        MockTripRepository.setRecruitmentClosed(trip.id, isRecruitmentClosed)
+                    },
+                    modifier = Modifier.testTag("host-manage-toggle-close")
+                ) {
                     Text(
-                        text = if (isRecruitmentClosed) "모집 취소됨" else "모집 진행중",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (isRecruitmentClosed) {
-                            MaterialTheme.colorScheme.secondary
-                        } else {
-                            MaterialTheme.colorScheme.primary
-                        },
-                        fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.testTag("host-manage-close-state")
+                        if (isRecruitmentClosed) "모집 다시 열기" else "모집 취소",
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.Bold
                     )
-                    Button(
-                        onClick = { onOpenChat(MockTripRepository.chatThreadIdForTrip(trip.id)) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("host-manage-open-chat")
-                    ) {
-                        Text("모임 채팅으로 이동")
-                    }
-                    Button(
-                        onClick = {
-                            isRecruitmentClosed = !isRecruitmentClosed
-                            MockTripRepository.setRecruitmentClosed(trip.id, isRecruitmentClosed)
-                        },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(48.dp)
-                            .testTag("host-manage-toggle-close"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.secondary,
-                            contentColor = MaterialTheme.colorScheme.onSecondary
-                        )
-                    ) {
-                        Text(if (isRecruitmentClosed) "모집 다시 열기" else "모집 취소")
-                    }
                 }
             }
         }
@@ -516,50 +715,63 @@ private fun HostManageSummaryCard(
     pendingCount: Int,
     isRecruitmentClosed: Boolean
 ) {
-    SupportCard {
+    // 화면기획 18의 머리글은 제목과 인원, D-day 배지만 둔다
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(
             text = trip.title,
-            style = MaterialTheme.typography.titleMedium,
+            style = MaterialTheme.typography.titleLarge,
             color = MaterialTheme.colorScheme.onSurface,
             fontWeight = FontWeight.ExtraBold
         )
-        SupportField(label = "일정", value = "${trip.scheduleDate} ${trip.scheduleTime}")
-        SupportField(label = "모이는 곳", value = trip.meetingPoint)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            SupportChip(text = "$approvedCount/${trip.capacity}명")
-            SupportChip(text = "대기 $pendingCount")
-            SupportChip(text = if (isRecruitmentClosed) "모집 취소됨" else trip.statusLabel)
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                text = "$approvedCount / ${trip.capacity}명",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold
+            )
+            Surface(shape = RoundedCornerShape(50), color = MoyeoTheme.tints.accentTint) {
+                Text(
+                    text = trip.ddayLabel,
+                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MoyeoTheme.tints.onAccentTint,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+            if (isRecruitmentClosed) {
+                SupportChip(text = "모집 취소됨")
+            }
+            if (pendingCount > 0) {
+                Spacer(Modifier.weight(1f))
+                Text(
+                    text = "대기 $pendingCount",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
-        Text(
-            text = if (isRecruitmentClosed) {
-                "모집이 취소되어 새 신청을 받지 않아요. 채팅방에서는 기존 안내를 확인할 수 있어요."
-            } else {
-                "최소 ${trip.minParticipants}명 이상이면 출발 확정 상태로 전환돼요."
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
     }
 }
 
 @Composable
-private fun HostManageSectionTitle(title: String, count: Int) {
+private fun HostManageSectionTitle(title: String, count: Int, trailingNote: String? = null) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(
-            text = title,
+            text = "$title ($count)",
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onBackground,
             fontWeight = FontWeight.ExtraBold
         )
         Text(
-            text = "${count}명",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.ExtraBold
+            // 화면기획은 대기 목록 옆에 자동 거절 정책을 함께 알려준다
+            text = trailingNote ?: "${count}명",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }
@@ -574,33 +786,43 @@ private fun HostApplicantCard(
 ) {
     SupportCard(modifier = Modifier.testTag("host-applicant-${applicant.id}")) {
         HostApplicantHeader(applicant = applicant)
-        Text(
-            text = applicant.note,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant
+        ) {
+            Text(
+                text = "\u201C${applicant.note}\u201D",
+                modifier = Modifier.padding(12.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Button(
+            OutlinedButton(
                 onClick = onSecondary,
                 modifier = Modifier
                     .weight(1f)
-                    .height(44.dp)
+                    .height(46.dp)
                     .testTag("host-applicant-${applicant.id}-reject"),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.secondary
+                shape = RoundedCornerShape(10.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface
                 )
             ) {
-                Text(secondaryLabel)
+                Text(secondaryLabel, fontWeight = FontWeight.Bold)
             }
             Button(
                 onClick = onPrimary,
                 modifier = Modifier
                     .weight(1f)
-                    .height(44.dp)
-                    .testTag("host-applicant-${applicant.id}-approve")
+                    .height(46.dp)
+                    .testTag("host-applicant-${applicant.id}-approve"),
+                shape = RoundedCornerShape(10.dp)
             ) {
-                Text(primaryLabel)
+                Text(primaryLabel, fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -626,7 +848,7 @@ private fun HostApplicantHeader(applicant: HostApplicant) {
                 fontWeight = FontWeight.ExtraBold
             )
             Text(
-                text = "매너 4.8 · 최근 동행 2회",
+                text = applicant.meta,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -634,11 +856,18 @@ private fun HostApplicantHeader(applicant: HostApplicant) {
     }
 }
 
-private data class HostApplicant(val id: String, val name: String, val avatar: String, val note: String)
+private data class HostApplicant(
+    val id: String,
+    val name: String,
+    val avatar: String,
+    val note: String,
+    val meta: String = "매너 4.8 · 최근 동행 2회"
+)
 
 @Composable
-fun FeedWriteScreen(onBack: () -> Unit, onPostCreated: (String) -> Unit) {
-    var currentStep by rememberSaveable { mutableStateOf(1) }
+fun FeedWriteScreen(onBack: () -> Unit, onPostCreated: (String) -> Unit, initialStep: Int = 1) {
+    // 24-1~24-5 단계별 캡처를 위해 시작 단계를 지정할 수 있다
+    var currentStep by rememberSaveable { mutableStateOf(initialStep.coerceIn(1, 5)) }
     var title by rememberSaveable { mutableStateOf("첫 반패키지 단풍 여행") }
     var story by rememberSaveable {
         mutableStateOf("처음 반패키지 여행이었는데 동행분들이 너무 좋으셨어요.\n첨성대 야경이 진짜 인생샷...")
@@ -646,7 +875,8 @@ fun FeedWriteScreen(onBack: () -> Unit, onPostCreated: (String) -> Unit) {
     var submitted by rememberSaveable { mutableStateOf(false) }
     var createdPostId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedVisibility by rememberSaveable { mutableStateOf(FeedVisibility.Friends) }
-    var selectedCourseId by rememberSaveable { mutableStateOf("cheongsong-juwangsan") }
+    // 화면기획 24-1은 경주 감성 코스가 선택된 상태에서 시작한다 (두 번째 후보가 주왕산)
+    var selectedCourseId by rememberSaveable { mutableStateOf("gyeongju-healing") }
     val colorScheme = MaterialTheme.colorScheme
     val course = remember(selectedCourseId) { MockTripRepository.findCourse(selectedCourseId) }
     val post = MockTripRepository.findFeedPost("feed-3")
@@ -695,20 +925,27 @@ fun FeedWriteScreen(onBack: () -> Unit, onPostCreated: (String) -> Unit) {
                 1 -> {
                     item {
                         FeedWriteCourseSelector(
-                            courses = MockTripRepository.courses,
+                            // 화면기획 24-1과 같은 순서: 경주 감성 코스 → 주왕산
+                            courses = listOf("gyeongju-healing", "cheongsong-juwangsan")
+                                .map(MockTripRepository::findCourse) +
+                                MockTripRepository.courses.filterNot {
+                                    it.id in setOf("gyeongju-healing", "cheongsong-juwangsan")
+                                },
                             selectedCourseId = selectedCourseId,
                             onCourseSelected = { selectedCourseId = it }
                         )
                     }
                     item { FeedWriteRouteCard(course = course) }
-                    item { FeedWriteMemberMeta(course = course, visibility = selectedVisibility) }
+                    item { FeedWriteMembersCard() }
                 }
 
                 2 -> {
                     item { FeedWritePhotoGrid(post = post) }
+                    item { FeedWriteRouteCard(course = course) }
                 }
 
                 3 -> {
+                    // 화면기획은 3단계에서 메모와 사진을 함께 보여준다
                     item {
                         FeedWriteMemoCard(
                             title = title,
@@ -717,6 +954,7 @@ fun FeedWriteScreen(onBack: () -> Unit, onPostCreated: (String) -> Unit) {
                             onStoryChange = { story = it }
                         )
                     }
+                    item { FeedWritePhotoGrid(post = post) }
                 }
 
                 4 -> {
@@ -730,15 +968,17 @@ fun FeedWriteScreen(onBack: () -> Unit, onPostCreated: (String) -> Unit) {
                 }
 
                 else -> {
+                    // 화면기획 24-5: 제목·본문 카드 → 사진 그리드 → 경로 → 메타 순서
                     item {
                         FeedWritePreviewCard(
-                            course = course,
                             title = title,
                             story = story,
-                            visibility = selectedVisibility,
                             submitted = submitted
                         )
                     }
+                    item { FeedWritePhotoGrid(post = post) }
+                    item { FeedWriteRouteCard(course = course) }
+                    item { FeedWriteMemberMeta(course = course, visibility = selectedVisibility) }
                 }
             }
         }
@@ -1019,7 +1259,27 @@ private fun FeedWriteCourseSelector(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        CourseSummaryCard(course = course, compact = true)
+                        // 화면기획 24-1: 코스 이미지는 글 위에 전폭으로 놓인다
+                        CourseScenicPanel(
+                            course = course,
+                            modifier = Modifier.fillMaxWidth().height(76.dp),
+                            cornerRadius = 12.dp
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                text = course.title,
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                text = "${course.region} · ${course.duration}",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                         Text(
                             text = if (selected) "선택됨" else "이 코스로 기록",
                             modifier = Modifier
@@ -1144,10 +1404,18 @@ private fun FeedWriteRouteCard(course: TripCourse) {
                     .height(112.dp),
                 cornerRadius = 14.dp
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
-                course.stops.take(3).forEach { tag ->
-                    FeedWriteTinyPill(text = tag)
-                }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Place,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = "${course.region} · ${course.stops.size} stops · 11/8 ~ 11/9",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -1227,20 +1495,109 @@ private fun FeedWriteMemberMeta(course: TripCourse, visibility: FeedVisibility) 
         border = BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.20f))
     ) {
         Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            FeedWriteMetaRow(label = "코스", value = course.title)
-            FeedWriteMetaRow(label = "멤버", value = "따스한 사슴, 달빛 토끼, 나")
+            FeedWriteMetaRow(label = "코스", value = course.title, icon = Icons.Filled.Map)
+            FeedWriteMetaRow(
+                label = "지역",
+                value = "${course.region} · ${course.duration} · 42.6km",
+                icon = Icons.Filled.Place
+            )
             FeedWriteMetaRow(label = "공개", value = "${visibility.label} · 경로지도 포함")
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("🦌", "🐻", "🐢").forEach { emoji -> AnimalAvatar(emoji, modifier = Modifier.size(24.dp)) }
+                Text(
+                    text = "함께한 멤버 3명",
+                    modifier = Modifier.padding(start = 4.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(7.dp)) {
+                (listOf(visibility.label, "경로지도", course.region) + course.tags.take(2)).forEach { tag ->
+                    FeedWriteTinyPill(text = tag)
+                }
+            }
+        }
+    }
+}
+
+/** 화면기획 24-1의 "함께 간 멤버 (4)" 카드 — 아바타 칩 4개, 첫 칩이 나. */
+@Composable
+private fun FeedWriteMembersCard() {
+    val colorScheme = MaterialTheme.colorScheme
+    val members = listOf(
+        Triple("🦌", "따스한 사슴 3492 (나)", true),
+        Triple("🐻", "우직한 곰 7821", false),
+        Triple("🐢", "잔잔한 거북이 9032", false),
+        Triple("🪽", "고요한 두루미 1130", false)
+    )
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        color = colorScheme.surface,
+        border = BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.20f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(
+                text = "함께 간 멤버 (${members.size})",
+                style = MaterialTheme.typography.labelMedium,
+                color = colorScheme.onSurface,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                members.take(2).forEach { (emoji, name, isMe) -> FeedWriteMemberChip(emoji, name, isMe) }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                members.drop(2).forEach { (emoji, name, isMe) -> FeedWriteMemberChip(emoji, name, isMe) }
+            }
         }
     }
 }
 
 @Composable
-private fun FeedWriteMetaRow(label: String, value: String) {
+private fun FeedWriteMemberChip(emoji: String, name: String, isMe: Boolean) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = if (isMe) MoyeoTheme.tints.primaryTint else colorScheme.surfaceVariant,
+        border = BorderStroke(
+            1.dp,
+            if (isMe) colorScheme.primary.copy(alpha = .4f) else colorScheme.outline.copy(alpha = .5f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 5.dp, top = 4.dp, end = 11.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            AnimalAvatar(emoji, modifier = Modifier.size(22.dp))
+            Text(
+                text = name,
+                style = MaterialTheme.typography.labelSmall,
+                color = if (isMe) colorScheme.primary else colorScheme.onSurface,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+    }
+}
+
+@Composable
+private fun FeedWriteMetaRow(label: String, value: String, icon: ImageVector? = null) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(10.dp)
     ) {
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                modifier = Modifier.size(15.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        } else {
+            Spacer(modifier = Modifier.size(15.dp))
+        }
         Text(
             text = label,
             style = MaterialTheme.typography.labelSmall,
@@ -1260,13 +1617,7 @@ private fun FeedWriteMetaRow(label: String, value: String) {
 }
 
 @Composable
-private fun FeedWritePreviewCard(
-    course: TripCourse,
-    title: String,
-    story: String,
-    visibility: FeedVisibility,
-    submitted: Boolean
-) {
+private fun FeedWritePreviewCard(title: String, story: String, submitted: Boolean) {
     val colorScheme = MaterialTheme.colorScheme
 
     Surface(
@@ -1275,10 +1626,9 @@ private fun FeedWritePreviewCard(
         color = colorScheme.surface,
         border = BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.28f))
     ) {
-        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            CourseSummaryCard(course = course, compact = true)
+        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             Text(
-                text = title.ifBlank { course.title },
+                text = title,
                 style = MaterialTheme.typography.titleSmall,
                 color = colorScheme.onSurface,
                 fontWeight = FontWeight.ExtraBold
@@ -1288,11 +1638,13 @@ private fun FeedWritePreviewCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = colorScheme.onSurface
             )
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(listOf(visibility.label, "경로지도", course.region) + course.tags.take(1)) { tag ->
-                    FeedWriteTinyPill(text = tag)
-                }
-            }
+            Text(
+                text = "${story.length} / 500",
+                modifier = Modifier.fillMaxWidth(),
+                textAlign = TextAlign.End,
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.onSurfaceVariant
+            )
             if (submitted) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
@@ -1335,7 +1687,7 @@ private fun FeedWriteTinyPill(text: String) {
 
 private fun FeedVisibility.helperText(): String = when (this) {
     FeedVisibility.Public -> "발견 탭에서도 보이고, 경북 여행자 누구나 볼 수 있어요."
-    FeedVisibility.Friends -> "팔로잉 탭과 친구 도감 친구들에게 보여줘요."
+    FeedVisibility.Friends -> "서로 친구인 사람에게만 보여요. 기본값이에요."
     FeedVisibility.Private -> "나만 볼 수 있는 기록으로 저장돼요."
 }
 
@@ -1394,70 +1746,229 @@ private fun FeedWriteBottomActions(currentStep: Int, submitted: Boolean, onPrevi
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun SearchScreen(onBack: () -> Unit, onOpenCourse: (String) -> Unit) {
-    var query by remember { mutableStateOf("") }
-    val trimmedQuery = query.trim()
+fun SearchScreen(onBack: () -> Unit, onOpenCourse: (String) -> Unit, initialQuery: String = "") {
+    var query by rememberSaveable { mutableStateOf(initialQuery) }
+    var submittedQuery by rememberSaveable { mutableStateOf("") }
+    var recentSearches by rememberSaveable {
+        mutableStateOf(listOf("경주", "단풍", "황리단길", "안동 한옥", "주왕산"))
+    }
+    val trimmedQuery = submittedQuery.trim()
     val courses = remember(trimmedQuery) {
         MockTripRepository.courses.filter { course ->
-            trimmedQuery.isBlank() ||
-                course.title.contains(trimmedQuery, ignoreCase = true) ||
+            course.title.contains(trimmedQuery, ignoreCase = true) ||
                 course.region.contains(trimmedQuery, ignoreCase = true) ||
                 course.tags.any { it.contains(trimmedQuery, ignoreCase = true) }
         }
     }
 
-    SupportScaffold(title = "검색", onBack = onBack) {
-        item {
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(horizontal = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.size(40.dp)) {
+                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+            }
             OutlinedTextField(
                 value = query,
-                onValueChange = { query = it },
+                onValueChange = {
+                    query = it
+                    submittedQuery = it
+                },
                 modifier = Modifier
-                    .fillMaxWidth()
+                    .weight(1f)
+                    .height(48.dp)
                     .testTag("search-query-field"),
                 leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
-                label = { Text("지역, 테마, 코스 검색") },
+                placeholder = { Text("지역, 테마, 코스 검색") },
                 singleLine = true
             )
+            Text(
+                text = "취소",
+                modifier = Modifier
+                    .clickable {
+                        query = ""
+                        submittedQuery = ""
+                    }
+                    .padding(horizontal = 4.dp, vertical = 12.dp),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.SemiBold
+            )
         }
-        item {
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(listOf("청송", "안동", "경주", "포항", "문경", "영주")) { keyword ->
-                    SupportChip(text = keyword, onClick = { query = keyword })
-                }
-            }
-        }
-        if (courses.isEmpty()) {
-            item {
-                SupportCard(modifier = Modifier.testTag("search-empty-state")) {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding()
+                .testTag("support-list"),
+            contentPadding = PaddingValues(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 32.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            if (submittedQuery.isBlank()) {
+                item {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Text(
-                            text = "검색 결과가 없어요",
-                            style = MaterialTheme.typography.titleSmall,
+                            text = "최근 검색어",
+                            style = MaterialTheme.typography.labelLarge,
                             color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.ExtraBold
                         )
                         Text(
-                            text = "지역 이름이나 자연, 야경, 고택 같은 테마로 다시 찾아보세요.",
-                            style = MaterialTheme.typography.bodyMedium,
+                            text = "전체 삭제",
+                            modifier = Modifier.clickable { recentSearches = emptyList() },
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(listOf("경주", "청송", "야경")) { keyword ->
-                                SupportChip(
-                                    text = keyword,
-                                    modifier = Modifier.testTag("search-recovery-$keyword"),
-                                    onClick = { query = keyword }
-                                )
+                    }
+                }
+                item {
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(7.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        recentSearches.forEach { keyword ->
+                            Surface(
+                                shape = RoundedCornerShape(50),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                color = MaterialTheme.colorScheme.background
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(start = 11.dp, end = 8.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = keyword,
+                                        modifier = Modifier
+                                            .clickable {
+                                                query = keyword
+                                                submittedQuery = keyword
+                                            }
+                                            .padding(vertical = 8.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                    IconButton(
+                                        onClick = { recentSearches = recentSearches - keyword },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Filled.Close,
+                                            contentDescription = "$keyword 삭제",
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-        } else {
-            items(courses, key = { it.id }) { course ->
-                SupportCard(modifier = Modifier.clickable { onOpenCourse(course.id) }) {
-                    CourseSummaryCard(course = course, compact = true)
+                item {
+                    Text(
+                        text = "인기 검색어",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+                items(
+                    listOf(
+                        Triple(1, "주왕산", true),
+                        Triple(2, "안동 한옥마을", true),
+                        Triple(3, "경주 야경", false),
+                        Triple(4, "포항 호미곶", true),
+                        Triple(5, "문경 새재", false)
+                    )
+                ) { (rank, keyword, isRising) ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp)
+                            .clickable {
+                                query = keyword
+                                submittedQuery = keyword
+                            },
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        Text(
+                            text = rank.toString(),
+                            modifier = Modifier.width(18.dp),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (rank <= 3) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Text(
+                            text = keyword,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = if (isRising) "▲" else "−",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isRising) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+                        )
+                    }
+                }
+            } else if (courses.isEmpty()) {
+                item {
+                    SupportCard(modifier = Modifier.testTag("search-empty-state")) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "검색 결과가 없어요",
+                                style = MaterialTheme.typography.titleSmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "지역 이름이나 자연, 야경, 고택 같은 테마로 다시 찾아보세요.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                items(listOf("경주", "청송", "야경")) { keyword ->
+                                    SupportChip(
+                                        text = keyword,
+                                        modifier = Modifier.testTag("search-recovery-$keyword"),
+                                        onClick = {
+                                            query = keyword
+                                            submittedQuery = keyword
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                items(courses, key = { it.id }) { course ->
+                    SupportCard(modifier = Modifier.clickable { onOpenCourse(course.id) }) {
+                        CourseSummaryCard(course = course, compact = true)
+                    }
                 }
             }
         }
@@ -1468,6 +1979,11 @@ fun SearchScreen(onBack: () -> Unit, onOpenCourse: (String) -> Unit) {
 private fun SupportScaffold(
     title: String,
     onBack: () -> Unit,
+    itemSpacing: Dp = 16.dp,
+    // / 헤더 오른쪽 텍스트 버튼 (예: 알림의 "모두 읽음")
+    trailingTitle: String? = null,
+    onTrailingClick: (() -> Unit)? = null,
+    bottomBar: (@Composable () -> Unit)? = null,
     content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit
 ) {
     Column(
@@ -1492,17 +2008,41 @@ private fun SupportScaffold(
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.ExtraBold
             )
-            Spacer(modifier = Modifier.size(40.dp))
+            if (trailingTitle != null && onTrailingClick != null) {
+                TextButton(onClick = onTrailingClick, modifier = Modifier.testTag("support-list-trailing")) {
+                    Text(
+                        text = trailingTitle,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+            } else {
+                Spacer(modifier = Modifier.size(40.dp))
+            }
         }
         LazyColumn(
             modifier = Modifier
-                .fillMaxSize()
-                .navigationBarsPadding()
+                .weight(1f)
+                .fillMaxWidth()
+                .then(if (bottomBar == null) Modifier.navigationBarsPadding() else Modifier)
                 .testTag("support-list"),
             contentPadding = PaddingValues(start = 20.dp, top = 18.dp, end = 20.dp, bottom = 32.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(itemSpacing),
             content = content
         )
+        if (bottomBar != null) {
+            Surface(color = MaterialTheme.colorScheme.background, shadowElevation = 8.dp) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 20.dp, vertical = 12.dp)
+                ) {
+                    bottomBar()
+                }
+            }
+        }
     }
 }
 
@@ -1618,5 +2158,8 @@ private data class NotificationItem(
     val body: String,
     val time: String,
     val type: String,
-    val targetId: String
+    val targetId: String,
+    // / 화면기획처럼 오늘/어제로 묶어서 보여준다
+    val group: String = "오늘",
+    val unread: Boolean = false
 )

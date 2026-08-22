@@ -25,13 +25,15 @@ object AppRoutes {
     const val CREATE_SCHEDULE = "create_schedule/{draftId}"
     const val CREATE_PEOPLE = "create_people/{draftId}"
     const val CREATE_MEET_POINT = "create_meet_point/{draftId}"
+    const val CREATE_DETAIL = "create_detail/{draftId}"
     const val CREATE_SUMMARY = "create_summary/{draftId}"
     const val COURSE_ROUTE = "course_route/{tripId}"
     const val NOTICE_HISTORY = "notice_history/{tripId}"
     const val HOST_MANAGE = "host_manage/{tripId}"
-    const val FEED_WRITE = "feed_write"
+    const val FEED_WRITE = "feed_write?step={step}"
     const val SEARCH = "search"
     const val MOCK_AUTH = "mock_auth"
+    const val MOCK_AUTH_STEP = "mock_auth/{startStep}"
     const val TRIP_CONFIRMED = "trip_confirmed"
     const val CHAT_MENU = "chat_menu/{threadId}"
     const val CHAT_ATTACH = "chat_attach"
@@ -46,6 +48,16 @@ object AppRoutes {
     const val SYSTEM_MAINTENANCE = "system_maintenance"
     const val SYSTEM_ERROR = "system_error"
     const val FEED_COMMENTS = "feed_comments/{postId}"
+    const val PLACE_SEARCH = "place_search/{draftId}"
+    const val PLACE_DETAIL = "place_detail/{draftId}/{contentId}"
+    const val TERMS_DETAIL = "terms_detail/{document}/{source}"
+    const val QA_SPLASH = "qa_splash"
+    const val QA_DESIGN_SYSTEM = "qa_design_system"
+    const val QA_STATES = "qa_states"
+    const val QA_LEAVE = "qa_leave"
+    const val QA_APPLY = "qa_apply/{tripId}"
+
+    fun feedWrite(step: Int = 1) = "feed_write?step=$step"
 
     fun courseDetail(courseId: String) = "course/$courseId"
 
@@ -61,6 +73,16 @@ object AppRoutes {
 
     fun feedComments(postId: String) = "feed_comments/$postId"
 
+    fun placeSearch(draftId: String) = "place_search/$draftId"
+
+    fun placeDetail(draftId: String, contentId: String) = "place_detail/$draftId/$contentId"
+
+    fun termsDetail(document: String, source: String) = "terms_detail/$document/$source"
+
+    fun qaApply(tripId: String) = "qa_apply/$tripId"
+
+    fun mockAuth(startStep: String) = "mock_auth/$startStep"
+
     fun createRecruitment(courseId: String) = "create_recruitment/$courseId"
 
     fun customCourse(draftId: String) = "custom_course/$draftId"
@@ -70,6 +92,8 @@ object AppRoutes {
     fun createPeople(draftId: String) = "create_people/$draftId"
 
     fun createMeetPoint(draftId: String) = "create_meet_point/$draftId"
+
+    fun createDetail(draftId: String) = "create_detail/$draftId"
 
     fun createSummary(draftId: String) = "create_summary/$draftId"
 

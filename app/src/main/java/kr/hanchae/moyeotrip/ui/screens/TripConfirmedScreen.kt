@@ -174,7 +174,9 @@ fun TripConfirmedScreen(onBack: () -> Unit, onOpenChat: () -> Unit) {
                     top = 10.dp,
                     end = 20.dp,
                     bottom = 24.dp
-                ).height(54.dp)
+                ).height(54.dp),
+                // 다른 플랫폼의 CTA는 꼭지점만 둥근 사각형이다. Material 기본 알약형은 혼자 튄다.
+                shape = RoundedCornerShape(12.dp)
             ) {
                 Text("채팅방으로 가기")
             }
@@ -204,7 +206,7 @@ private fun ConfirmedTripCard() {
             }
             ConfirmedInfoRow(Icons.Filled.CalendarMonth, "5/25(토) 당일치기 · 08:00 - 18:00")
             ConfirmedInfoRow(Icons.Filled.LocationOn, "07:50 청송 시외버스터미널 정문 앞")
-            ConfirmedInfoRow(Icons.Filled.Groups, "5명 · 최소 3명 충족")
+            ConfirmedInfoRow(Icons.Filled.Groups, "3명 · 최소 3명 충족")
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
                 listOf("🐻", "🦌", "🐰", "🐢").forEachIndexed { index, emoji ->
                     Surface(

@@ -1,0 +1,241 @@
+package kr.hanchae.moyeotrip.data.tourism
+
+import java.io.InputStream
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class TourismContentSummary(
+    val contentId: String,
+    val contentTypeId: Int,
+    val title: String,
+    val address1: String?,
+    val address2: String?,
+    val firstImageUrl: String?,
+    val firstThumbnailUrl: String?,
+    val longitude: Double?,
+    val latitude: Double?
+)
+
+data class TourismContentDetail(
+    val summary: TourismContentSummary,
+    val zipcode: String?,
+    val telephone: String?,
+    val telephoneName: String?,
+    val homepage: String?,
+    val bookTour: String?,
+    val overview: String?,
+    val contentImageUrls: List<String>,
+    val menuImageUrls: List<String>,
+    val menuNames: List<String>
+)
+
+data class TourismContentPage(
+    val items: List<TourismContentSummary>,
+    val page: Int,
+    val size: Int,
+    val totalElements: Long,
+    val totalPages: Int
+)
+
+interface TourismContentRepository {
+    suspend fun contents(contentTypeId: Int?, page: Int = 0, size: Int = 100): TourismContentPage
+
+    suspend fun content(contentId: String): TourismContentDetail
+}
+
+class TourismContentApiException(val statusCode: Int, message: String) : Exception(message)
+
+class HttpTourismContentRepository(
+    baseUrl: String,
+    private val accessToken: () -> String?,
+    private val connectionFactory: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }
+) : TourismContentRepository {
+    private val rootUrl = baseUrl.trimEnd('/')
+
+    override suspend fun contents(contentTypeId: Int?, page: Int, size: Int): TourismContentPage {
+        val parameters = buildList {
+            contentTypeId?.let { add("contentTypeId=${encode(it.toString())}") }
+            add("page=${page.coerceAtLeast(0)}")
+            add("size=${size.coerceIn(1, 100)}")
+        }.joinToString("&")
+        val json = request("/api/v1/tourism-contents?$parameters")
+        return TourismContentPage(
+            items = json.getJSONArray("items").objects(JSONObject::toSummary),
+            page = json.optInt("page", page),
+            size = json.optInt("size", size),
+            totalElements = json.optLong("totalElements"),
+            totalPages = json.optInt("totalPages")
+        )
+    }
+
+    override suspend fun content(contentId: String): TourismContentDetail {
+        val json = request("/api/v1/tourism-contents/${encode(contentId)}")
+        return TourismContentDetail(
+            summary = json.toSummary(),
+            zipcode = json.stringOrNull("zipcode"),
+            telephone = json.stringOrNull("telephone"),
+            telephoneName = json.stringOrNull("telephoneName"),
+            homepage = json.stringOrNull("homepage"),
+            bookTour = json.stringOrNull("bookTour"),
+            overview = json.stringOrNull("overview"),
+            contentImageUrls = json.optJSONArray("contentImages").imageUrls(),
+            menuImageUrls = json.optJSONArray("menuImages").imageUrls(),
+            menuNames = json.optJSONArray("additionalDetails").menuNames()
+        )
+    }
+
+    private suspend fun request(path: String): JSONObject = withContext(Dispatchers.IO) {
+        val connection = connectionFactory(URL("$rootUrl$path"))
+        try {
+            connection.requestMethod = "GET"
+            connection.connectTimeout = 8_000
+            connection.readTimeout = 20_000
+            connection.setRequestProperty("Accept", "application/json")
+            accessToken()?.takeIf(String::isNotBlank)?.let {
+                connection.setRequestProperty("Authorization", "Bearer $it")
+            }
+            val status = connection.responseCode
+            val text = connection.responseStream(status)?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (status !in 200..299) {
+                val message = runCatching { JSONObject(text).optString("errorMessage") }.getOrNull()
+                throw TourismContentApiException(status, message?.takeIf(String::isNotBlank) ?: "여행지 요청 실패 ($status)")
+            }
+            JSONObject(text)
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
+}
+
+class FallbackTourismContentRepository(
+    private val primary: TourismContentRepository,
+    private val fallback: TourismContentRepository
+) : TourismContentRepository {
+    override suspend fun contents(contentTypeId: Int?, page: Int, size: Int): TourismContentPage =
+        runCatching { primary.contents(contentTypeId, page, size) }
+            .getOrElse { fallback.contents(contentTypeId, page, size) }
+
+    override suspend fun content(contentId: String): TourismContentDetail = runCatching { primary.content(contentId) }
+        .getOrElse { fallback.content(contentId) }
+}
+
+object SampleTourismContentRepository : TourismContentRepository {
+    private val details = listOf(
+        sample("2864117", 12, "주왕산국립공원", "경상북도 청송군 부동면 공원길 226", 36.3931, 129.1728),
+        sample("2871004", 12, "주산지", "경상북도 청송군 부동면 주산지길 259", 36.3494, 129.1436),
+        sample(
+            "2299341",
+            39,
+            "달기약수터 백숙거리",
+            "경상북도 청송군 청송읍 약수길 5",
+            36.427812,
+            129.048915,
+            zipcode = "37411",
+            telephone = "054-873-7777",
+            telephoneName = "달기약수터 관리사무소",
+            homepage = "https://www.cheongsong.go.kr/tour",
+            overview = "탄산이 섞인 달기약수로 끓여내는 백숙이 유명한 거리예요. 산행 뒤 늦은 점심 자리로 많이 찾아요.",
+            menuNames = listOf("닭백숙 정식", "오리 백숙", "한방 삼계탕", "더덕구이")
+        ),
+        sample("2740882", 32, "청송 솔기온천 한옥스테이", "경상북도 청송군 청송읍 금월로 273", 36.4361, 129.0573),
+        sample("2510773", 12, "청송 객주문학관", "경상북도 청송군 진보면 청송로 6359", 36.4739, 129.0093)
+    )
+
+    override suspend fun contents(contentTypeId: Int?, page: Int, size: Int): TourismContentPage {
+        val filtered = details.map(TourismContentDetail::summary).filter {
+            contentTypeId == null || it.contentTypeId == contentTypeId
+        }
+        return TourismContentPage(
+            filtered,
+            page = 0,
+            size = filtered.size,
+            totalElements = filtered.size.toLong(),
+            totalPages = 1
+        )
+    }
+
+    override suspend fun content(contentId: String): TourismContentDetail =
+        details.firstOrNull { it.summary.contentId == contentId } ?: details[2]
+
+    private fun sample(
+        contentId: String,
+        contentTypeId: Int,
+        title: String,
+        address: String,
+        latitude: Double,
+        longitude: Double,
+        zipcode: String? = null,
+        telephone: String? = null,
+        telephoneName: String? = null,
+        homepage: String? = null,
+        overview: String? = null,
+        menuNames: List<String> = emptyList()
+    ) = TourismContentDetail(
+        summary = TourismContentSummary(
+            contentId,
+            contentTypeId,
+            title,
+            address,
+            null,
+            null,
+            null,
+            longitude,
+            latitude
+        ),
+        zipcode = zipcode,
+        telephone = telephone,
+        telephoneName = telephoneName,
+        homepage = homepage,
+        bookTour = null,
+        overview = overview,
+        contentImageUrls = emptyList(),
+        menuImageUrls = emptyList(),
+        menuNames = menuNames
+    )
+}
+
+private fun JSONObject.toSummary() = TourismContentSummary(
+    contentId = getLong("contentId").toString(),
+    contentTypeId = getInt("contentTypeId"),
+    title = getString("title"),
+    address1 = stringOrNull("address1"),
+    address2 = stringOrNull("address2"),
+    firstImageUrl = stringOrNull("firstImageUrl"),
+    firstThumbnailUrl = stringOrNull("firstThumbnailUrl"),
+    longitude = doubleOrNull("longitude"),
+    latitude = doubleOrNull("latitude")
+)
+
+private fun JSONObject.stringOrNull(key: String): String? =
+    if (!has(key) || isNull(key)) null else optString(key).takeIf(String::isNotBlank)
+
+private fun JSONObject.doubleOrNull(key: String): Double? =
+    if (!has(key) || isNull(key)) null else optDouble(key).takeUnless(Double::isNaN)
+
+private fun JSONArray?.imageUrls(): List<String> = this.objectsOrEmpty { value ->
+    sequenceOf("originimgurl", "smallimageurl", "imageUrl", "url")
+        .mapNotNull(value::stringOrNull)
+        .firstOrNull()
+}.filterNotNull().distinct()
+
+private fun JSONArray?.menuNames(): List<String> = this.objectsOrEmpty { value ->
+    sequenceOf("menu", "menuName", "subname", "infoname", "text")
+        .mapNotNull(value::stringOrNull)
+        .firstOrNull()
+}.filterNotNull().distinct()
+
+private fun <T> JSONArray.objects(transform: (JSONObject) -> T): List<T> =
+    List(length()) { index -> transform(getJSONObject(index)) }
+
+private fun <T> JSONArray?.objectsOrEmpty(transform: (JSONObject) -> T): List<T?> =
+    if (this == null) emptyList() else List(length()) { index -> optJSONObject(index)?.let(transform) }
+
+private fun HttpURLConnection.responseStream(statusCode: Int): InputStream? =
+    if (statusCode in 200..299) inputStream else errorStream

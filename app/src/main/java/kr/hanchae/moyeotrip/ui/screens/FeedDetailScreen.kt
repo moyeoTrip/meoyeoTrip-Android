@@ -1,7 +1,9 @@
 package kr.hanchae.moyeotrip.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,13 +25,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.People
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -45,10 +47,10 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.FeedPost
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun FeedDetailScreen(postId: String, onBack: () -> Unit, onOpenAllComments: () -> Unit = {}) {
@@ -107,18 +109,11 @@ fun FeedDetailScreen(postId: String, onBack: () -> Unit, onOpenAllComments: () -
                     )
                 }
                 item {
-                    FeedDetailMetrics(post = post, modifier = Modifier.padding(top = 18.dp))
-                }
-                item {
-                    TextButton(
-                        onClick = onOpenAllComments,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp)
-                            .testTag("feed-comments-open")
-                    ) {
-                        Text("댓글 ${post.comments}개 모두 보기")
-                    }
+                    FeedDetailMetrics(
+                        post = post,
+                        modifier = Modifier.padding(top = 18.dp),
+                        onOpenAllComments = onOpenAllComments
+                    )
                 }
                 if (submittedComments.isNotEmpty()) {
                     items(submittedComments.size) { index ->
@@ -224,6 +219,37 @@ private fun FeedDetailAuthorRow(post: FeedPost) {
                 color = colorScheme.onSurfaceVariant
             )
         }
+        // 공개범위 필은 작성자 행 오른쪽에 둔다 (화면기획 23)
+        FeedVisibilityPill(post)
+    }
+}
+
+@Composable
+private fun FeedVisibilityPill(post: FeedPost) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MoyeoTheme.tints.softLine)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Filled.People,
+                contentDescription = null,
+                modifier = Modifier.size(12.dp),
+                tint = colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = post.visibility.label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -248,37 +274,6 @@ private fun FeedDetailTitleBlock(post: FeedPost) {
             style = MaterialTheme.typography.labelMedium,
             color = colorScheme.onSurfaceVariant
         )
-        FeedDetailTagRow(tags = post.detailTags(), modifier = Modifier.padding(top = 4.dp))
-        Text(
-            text = "공개 범위 · ${post.visibility.label}",
-            style = MaterialTheme.typography.labelSmall,
-            color = colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun FeedDetailTagRow(tags: List<String>, modifier: Modifier = Modifier) {
-    val colorScheme = MaterialTheme.colorScheme
-
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(9.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        tags.take(3).forEach { tag ->
-            Text(
-                text = tag,
-                fontSize = 13.sp,
-                lineHeight = 16.sp,
-                fontWeight = FontWeight.Black,
-                color = colorScheme.primary,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(colorScheme.primaryContainer)
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            )
-        }
     }
 }
 
@@ -369,7 +364,7 @@ private fun FeedStatTile(label: String, value: String, modifier: Modifier = Modi
 }
 
 @Composable
-private fun FeedDetailMetrics(post: FeedPost, modifier: Modifier = Modifier) {
+private fun FeedDetailMetrics(post: FeedPost, modifier: Modifier = Modifier, onOpenAllComments: () -> Unit = {}) {
     val colorScheme = MaterialTheme.colorScheme
 
     Column(modifier = modifier.fillMaxWidth()) {
@@ -383,9 +378,13 @@ private fun FeedDetailMetrics(post: FeedPost, modifier: Modifier = Modifier) {
                 color = colorScheme.onSurfaceVariant
             )
             Text(
-                text = "댓글 ${post.comments}",
+                text = "댓글 ${post.comments}개 모두 보기 →",
+                modifier = Modifier
+                    .clickable(onClick = onOpenAllComments)
+                    .testTag("feed-comments-open"),
                 style = MaterialTheme.typography.bodyMedium,
-                color = colorScheme.onSurfaceVariant
+                color = colorScheme.primary,
+                fontWeight = FontWeight.Bold
             )
         }
         HorizontalDivider(
@@ -507,36 +506,21 @@ private fun FeedPost.detailTimeLabel(): String = when {
 }
 
 private fun FeedPost.detailSubtitle(): String = when (id) {
-    "feed-1" -> "청송 · 방금 다녀온 숲길 기록"
-    "feed-2" -> "#한옥산책 #가을여행"
-    "feed-3" -> "#경주 #야경 #월정교"
-    "feed-4" -> "#포항 #바다 #드라이브"
-    "feed-5" -> "#문경 #단풍 #숲길"
-    "feed-7" -> "#울릉 #섬여행 #해안산책"
+    // 부제는 "장소 · #해시태그" 한 줄이다 (4개 플랫폼 공통, docs/alignment/MOCKDATA-CANON.md).
+    // 별도의 태그 칩 줄은 두지 않는다 — 같은 내용을 두 줄로 반복하게 된다.
+    "feed-1" -> "청송 · #주왕산 #주산지 #숲길"
+
+    "feed-2" -> "안동 · #한옥산책 #가을여행"
+
+    "feed-3" -> "경주 · #야경 #월정교"
+
+    "feed-4" -> "포항 · #바다 #드라이브"
+
+    "feed-5" -> "문경 · #단풍 #숲길"
+
+    "feed-7" -> "울릉 · #섬여행 #해안산책"
+
     else -> region
-}
-
-private fun FeedPost.detailTags(): List<String> = when (id) {
-    "feed-1" -> listOf("경로지도", "주왕산", "청송")
-
-    "feed-2" -> listOf("하회마을", "경로지도", "안동")
-
-    "feed-3" -> listOf("경주", "야경", "월정교")
-
-    "feed-4" -> listOf("포항", "바다", "드라이브")
-
-    "feed-5" -> listOf("문경", "단풍", "숲길")
-
-    "feed-7" -> listOf("울릉", "섬여행", "해안산책")
-
-    else -> buildList {
-        add(region)
-        routeStops().take(2).forEach { stop ->
-            if (stop !in this) {
-                add(stop)
-            }
-        }
-    }
 }
 
 private fun FeedPost.detailStats(): List<Pair<String, String>> {

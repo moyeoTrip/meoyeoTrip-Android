@@ -4,7 +4,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -26,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -55,6 +55,7 @@ import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.ui.theme.Coral
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun ExploreScreen(
@@ -228,7 +229,7 @@ private fun ExploreSearchSurface(onClick: () -> Unit) {
         shape = RoundedCornerShape(11.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        shadowElevation = if (isSystemInDarkTheme()) 0.dp else 2.dp,
+        shadowElevation = if (MoyeoTheme.isDark) 0.dp else 2.dp,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("explore-search-entry")
@@ -286,7 +287,7 @@ private fun ExploreCourseRow(course: TripCourse, liked: Boolean, onClick: () -> 
         shape = RoundedCornerShape(8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isSystemInDarkTheme()) 0.dp else 1.dp)
+        elevation = CardDefaults.cardElevation(defaultElevation = if (MoyeoTheme.isDark) 0.dp else 1.dp)
     ) {
         Row(
             modifier = Modifier
@@ -354,11 +355,12 @@ private fun ExploreCourseRow(course: TripCourse, liked: Boolean, onClick: () -> 
 }
 
 @Composable
-private fun CoursePreview(course: TripCourse, modifier: Modifier = Modifier) {
+private fun CoursePreview(course: TripCourse, modifier: Modifier = Modifier, showsBadge: Boolean = true) {
     Box(
         modifier = modifier
     ) {
         CourseScenicPanel(course = course, modifier = Modifier.fillMaxSize(), cornerRadius = 8.dp)
+        if (!showsBadge) return@Box
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomStart)
@@ -418,6 +420,26 @@ private fun ExploreMapView(
                 .align(Alignment.CenterEnd)
                 .padding(end = 78.dp, bottom = 56.dp)
         )
+        // 화면기획 11의 내 위치 버튼 — 카드 위 우측
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 18.dp, bottom = 176.dp)
+                .size(44.dp)
+                .testTag("explore-map-my-location"),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Filled.MyLocation,
+                    contentDescription = "내 위치",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
         SelectedMapCourse(
             course = selectedCourse,
             liked = selectedCourse.id in likedCourseIds,
@@ -432,7 +454,7 @@ private fun ExploreMapView(
 
 @Composable
 private fun MapBackground() {
-    val darkTheme = isSystemInDarkTheme()
+    val darkTheme = MoyeoTheme.isDark
     val mapBase = if (darkTheme) Color(0xFF101B16) else Color(0xFFE6F1E5)
     val hill = if (darkTheme) Color(0xFF182C22) else Color(0xFFD8E8D5)
     val water = if (darkTheme) Color(0xFF17303B) else Color(0xFFC9E0E5)
@@ -467,7 +489,7 @@ private fun MapCluster(text: String, modifier: Modifier = Modifier) {
         modifier = modifier.size(32.dp),
         shape = CircleShape,
         color = MaterialTheme.colorScheme.primary,
-        shadowElevation = if (isSystemInDarkTheme()) 0.dp else 4.dp
+        shadowElevation = if (MoyeoTheme.isDark) 0.dp else 4.dp
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(
@@ -512,7 +534,7 @@ private fun SelectedMapCourse(
             .clickable(onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (isSystemInDarkTheme()) 0.dp else 6.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (MoyeoTheme.isDark) 0.dp else 6.dp),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Row(
@@ -529,9 +551,11 @@ private fun SelectedMapCourse(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                // 화면기획 11의 지도 카드 썸네일에는 상태 배지가 없다
                 CoursePreview(
                     course = course,
-                    modifier = Modifier.size(width = 84.dp, height = 76.dp)
+                    modifier = Modifier.size(width = 84.dp, height = 76.dp),
+                    showsBadge = false
                 )
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
@@ -576,7 +600,7 @@ private fun SelectedMapCourse(
 }
 
 @Composable
-private fun explorePageColor(): Color = if (isSystemInDarkTheme()) {
+private fun explorePageColor(): Color = if (MoyeoTheme.isDark) {
     MaterialTheme.colorScheme.background
 } else {
     MaterialTheme.colorScheme.surface

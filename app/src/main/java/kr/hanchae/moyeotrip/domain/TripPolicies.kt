@@ -256,10 +256,10 @@ object ApplicationNotePolicy {
 
     fun isValid(input: String): Boolean = sanitize(input).length in MIN_LENGTH..MAX_LENGTH
 
-    fun helperText(input: String): String {
-        val length = sanitize(input).length
-        return "$length/${MAX_LENGTH}자 · 최소 ${MIN_LENGTH}자"
-    }
+    // 화면기획·웹·iOS와 같은 문장 + 오른쪽 글자 수 카운터
+    fun helperText(input: String): String = "${MIN_LENGTH}자 이상 ${MAX_LENGTH}자 이하로 남겨요."
+
+    fun counterText(input: String): String = "${sanitize(input).length}/$MAX_LENGTH"
 }
 
 object SplashAssetPolicy {

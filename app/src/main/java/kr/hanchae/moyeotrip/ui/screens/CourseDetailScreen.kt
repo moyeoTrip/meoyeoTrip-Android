@@ -4,11 +4,9 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -32,8 +30,6 @@ import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,9 +58,10 @@ import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.components.InfoPill
 import kr.hanchae.moyeotrip.ui.components.SectionHeader
-import kr.hanchae.moyeotrip.ui.components.TagRow
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun CourseDetailScreen(
@@ -117,13 +114,6 @@ fun CourseDetailScreen(
                 SectionHeader(title = "코스 미리보기")
                 Spacer(modifier = Modifier.height(10.dp))
                 CourseRouteMapPreview(course.stops)
-            }
-            item {
-                SectionHeader(title = "코스 태그")
-                Spacer(modifier = Modifier.height(10.dp))
-                DetailPanel {
-                    TagRow(tags = course.tags)
-                }
             }
         }
 
@@ -243,70 +233,106 @@ private fun CourseActionBanner(message: String) {
 @Composable
 private fun CourseDetailHero(course: TripCourse) {
     val colors = MaterialTheme.colorScheme
-    val isDark = isSystemInDarkTheme()
+    val isDark = MoyeoTheme.isDark
 
-    Card(
-        colors = CardDefaults.cardColors(containerColor = colors.surface),
-        shape = RoundedCornerShape(8.dp),
-        border = BorderStroke(1.dp, colors.outline),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(218.dp)
+                .clip(RoundedCornerShape(16.dp))
+        ) {
+            Image(
+                painter = painterResource(id = course.heroImageResId(isDark)),
+                contentDescription = "${course.title} 대표 이미지",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(218.dp),
+                contentScale = ContentScale.Crop
+            )
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(218.dp)
-            ) {
-                Image(
-                    painter = painterResource(id = course.heroImageResId(isDark)),
-                    contentDescription = "${course.title} 대표 이미지",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(218.dp),
-                    contentScale = ContentScale.Crop
-                )
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(96.dp)
-                        .align(Alignment.BottomCenter)
-                        .background(
-                            Brush.verticalGradient(
-                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.48f))
-                            )
+                    .height(96.dp)
+                    .align(Alignment.BottomCenter)
+                    .background(
+                        Brush.verticalGradient(
+                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.48f))
                         )
-                )
-                InfoPill(
-                    text = course.courseStatusLabel(),
-                    modifier = Modifier
-                        .align(Alignment.TopStart)
-                        .padding(14.dp),
-                    container = colors.secondaryContainer,
-                    content = colors.secondary
+                    )
+            )
+            // 화면기획 14 히어로에는 상태 배지가 없다
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(
+                text = course.title,
+                style = MaterialTheme.typography.titleLarge,
+                color = colors.onSurface,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                course.tags.take(3).forEach { tag ->
+                    InfoPill(text = tag, container = colors.primaryContainer, content = colors.primary)
+                }
+            }
+            course.publisher?.let { publisher ->
+                CoursePublisherBlock(
+                    avatar = publisher.avatar,
+                    name = publisher.name,
+                    meta = "${publisher.publishedAfterTrip} · 이 코스로 떠난 모임 ${publisher.recruitmentCount}"
                 )
             }
+            Text(
+                text = course.oneLine,
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.onSurfaceVariant
+            )
+            CourseMetricGrid(course = course)
+        }
+    }
+}
+
+@Composable
+private fun CoursePublisherBlock(avatar: String, name: String, meta: String) {
+    val colors = MaterialTheme.colorScheme
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(8.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            AnimalAvatar(
+                emoji = avatar,
+                modifier = Modifier.size(32.dp),
+                container = colors.primaryContainer
+            )
             Column(
-                modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 18.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = course.title,
-                    style = MaterialTheme.typography.titleLarge,
+                    text = "$name 님이 다녀온 코스",
+                    style = MaterialTheme.typography.labelLarge,
                     color = colors.onSurface,
                     fontWeight = FontWeight.ExtraBold
                 )
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    course.tags.take(3).forEach { tag ->
-                        InfoPill(text = tag, container = colors.primaryContainer, content = colors.primary)
-                    }
-                }
                 Text(
-                    text = course.oneLine,
-                    style = MaterialTheme.typography.bodyMedium,
+                    text = meta,
+                    style = MaterialTheme.typography.labelSmall,
                     color = colors.onSurfaceVariant
                 )
-                CourseMetricGrid(course = course)
             }
+            InfoPill(
+                text = "여행자 코스",
+                container = colors.primaryContainer,
+                content = colors.primary
+            )
         }
     }
 }
@@ -378,24 +404,8 @@ private fun CourseMetric(info: CourseMetricInfo, modifier: Modifier = Modifier) 
 private data class CourseMetricInfo(val icon: ImageVector, val label: String, val value: String)
 
 @Composable
-private fun DetailPanel(content: @Composable ColumnScope.() -> Unit) {
-    val colors = MaterialTheme.colorScheme
-
-    Card(
-        colors = CardDefaults.cardColors(containerColor = colors.surface),
-        border = BorderStroke(1.dp, colors.outline)
-    ) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(0.dp),
-            content = content
-        )
-    }
-}
-
-@Composable
 private fun CourseRouteMapPreview(stops: List<String>) {
-    val isDark = isSystemInDarkTheme()
+    val isDark = MoyeoTheme.isDark
     val mapBackground = if (isDark) Color(0xFF16251F) else Color(0xFFDCECE4)
     val roadColor = if (isDark) Color(0xFF31423A) else Color.White.copy(alpha = 0.50f)
     val ridgeColor = if (isDark) Color(0xFF23362E) else Color(0xFFBED8C4)

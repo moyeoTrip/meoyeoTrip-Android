@@ -1,3 +1,5 @@
+@file:Suppress("DEPRECATION")
+
 package kr.hanchae.moyeotrip.data.auth
 
 import android.content.Context
@@ -105,7 +107,7 @@ data class AuthDependencies(
                 kakaoNativeAppKey = BuildConfig.KAKAO_NATIVE_APP_KEY,
                 kakaoCustomTokenExchanger = KakaoCustomTokenClient(BuildConfig.AUTH_API_BASE_URL),
                 fcmTokenProvider = {
-                    runCatching { currentMessagingToken().awaitResult() }
+                    runCatching { FirebaseMessaging.getInstance().token.awaitResult() }
                         .onSuccess { MoyeoPushTokenStore.save(context, it) }
                         .getOrNull()
                         ?: MoyeoPushTokenStore.read(context)
@@ -138,9 +140,6 @@ private class MissingFirebaseConfigurationIdentityTokenProvider : IdentityTokenP
         "Android용 google-services.json이 필요해요. Firebase Console에서 내려받아 app 폴더에 추가해 주세요."
     )
 }
-
-@Suppress("DEPRECATION")
-private fun currentMessagingToken() = FirebaseMessaging.getInstance().token
 
 private suspend fun <T> com.google.android.gms.tasks.Task<T>.awaitResult(): T =
     kotlinx.coroutines.suspendCancellableCoroutine { continuation ->

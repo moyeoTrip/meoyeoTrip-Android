@@ -6,7 +6,6 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +59,7 @@ import kr.hanchae.moyeotrip.data.FeedPost
 import kr.hanchae.moyeotrip.data.FeedVisibility
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun FeedScreen(onOpenPost: (String) -> Unit, onWritePost: () -> Unit) {
@@ -190,17 +190,12 @@ private fun FeedTimelinePost(post: FeedPost, onOpenPost: () -> Unit, onWritePost
             maxLines = 2,
             overflow = TextOverflow.Ellipsis
         )
-        FeedTagRow(
-            tags = post.timelineTags(),
-            testTagPrefix = "feed-post-${post.id}",
-            modifier = Modifier.padding(top = 10.dp)
-        )
         FeedMediaGrid(
             post = post,
             compactRoute = false,
             modifier = Modifier
                 .padding(top = 12.dp)
-                .height(150.dp)
+                .height(166.dp)
         )
         FeedActionRow(
             post = post,
@@ -253,35 +248,6 @@ private fun FeedPostAuthorRow(post: FeedPost) {
             tint = colorScheme.onSurfaceVariant,
             modifier = Modifier.size(24.dp)
         )
-    }
-}
-
-@Composable
-private fun FeedTagRow(tags: List<String>, modifier: Modifier = Modifier, testTagPrefix: String? = null) {
-    val colorScheme = MaterialTheme.colorScheme
-    val rowTag = testTagPrefix?.let { "$it-tags" } ?: "feed-tags"
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .testTag(rowTag),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        tags.take(3).forEachIndexed { index, tag ->
-            Text(
-                text = tag,
-                fontSize = 11.sp,
-                lineHeight = 15.sp,
-                fontWeight = FontWeight.Black,
-                color = colorScheme.primary,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(colorScheme.primaryContainer)
-                    .testTag(testTagPrefix?.let { "$it-tag-$index" } ?: "feed-tag-$index")
-                    .padding(horizontal = 9.dp, vertical = 5.dp)
-            )
-        }
     }
 }
 
@@ -474,7 +440,7 @@ internal fun FeedRouteMapPanel(
     cornerRadius: Dp = 0.dp,
     compact: Boolean = false
 ) {
-    val dark = isSystemInDarkTheme()
+    val dark = MoyeoTheme.isDark
     val mapBase = if (dark) Color(0xFF14231A) else Color(0xFFEAF3E6)
     val landLine = if (dark) Color(0xFF2C3C34) else Color(0xFFD7E1D8)
     val routeColor = Color(0xFF2D8F5A)
@@ -562,7 +528,7 @@ internal fun FeedRouteMapPanel(
 internal fun FeedPost.routeStops(): List<String> = routeSummary.split(" · ").filter { it.isNotBlank() }
 
 @Composable
-private fun feedTimelineColor(): Color = if (isSystemInDarkTheme()) {
+private fun feedTimelineColor(): Color = if (MoyeoTheme.isDark) {
     MaterialTheme.colorScheme.background
 } else {
     MaterialTheme.colorScheme.surface
@@ -584,41 +550,30 @@ private enum class FeedTimelineTab(val label: String, val key: String) {
 }
 
 private fun FeedPost.timelineSubtitle(): String = when (id) {
-    "feed-1" -> "청송 · 방금 다녀온 숲길 기록"
-    "feed-2" -> "#한옥산책 #가을여행"
-    "feed-3" -> "#경주 #야경 #월정교"
-    "feed-4" -> "#포항 #바다 #드라이브"
-    "feed-5" -> "#문경 #단풍 #숲길"
-    "feed-7" -> "#울릉 #섬여행 #해안산책"
+    // 부제는 "장소 · #해시태그" 한 줄이다 (4개 플랫폼 공통, docs/alignment/MOCKDATA-CANON.md).
+    // 별도의 태그 칩 줄은 두지 않는다 — 같은 내용을 두 줄로 반복하게 된다.
+    "feed-1" -> "청송 · #주왕산 #주산지 #숲길"
+
+    "feed-2" -> "안동 · #한옥산책 #가을여행"
+
+    "feed-3" -> "경주 · #야경 #월정교"
+
+    "feed-4" -> "포항 · #바다 #드라이브"
+
+    "feed-5" -> "문경 · #단풍 #숲길"
+
+    "feed-7" -> "울릉 · #섬여행 #해안산책"
+
     else -> region
-}
-
-private fun FeedPost.timelineTags(): List<String> = when (id) {
-    "feed-1" -> listOf("경로지도", "주왕산", "청송")
-
-    "feed-2" -> listOf("하회마을", "경로지도", "안동")
-
-    "feed-3" -> listOf("경주", "야경", "월정교")
-
-    "feed-4" -> listOf("포항", "바다", "드라이브")
-
-    "feed-5" -> listOf("문경", "단풍", "숲길")
-
-    "feed-7" -> listOf("울릉", "섬여행", "해안산책")
-
-    else -> buildList {
-        add(region)
-        routeStops().take(2).forEach { stop ->
-            if (stop !in this) {
-                add(stop)
-            }
-        }
-    }
 }
 
 private fun FeedPost.timeLabel(): String = when {
     id.startsWith("session-feed-") -> "방금"
     id == "feed-1" -> "2시간 전"
     id == "feed-2" -> "5시간 전"
+    id == "feed-3" -> "어제"
+    id == "feed-4" -> "2일 전"
+    id == "feed-5" -> "3일 전"
+    id == "feed-7" -> "2주 전"
     else -> "어제"
 }

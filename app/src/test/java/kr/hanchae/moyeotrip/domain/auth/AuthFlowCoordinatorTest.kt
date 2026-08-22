@@ -259,6 +259,30 @@ class AuthFlowCoordinatorTest {
     }
 
     @Test
+    fun successfulBackendLoginMarksFcmTokenRegistered() = runBlocking {
+        val registered = mutableListOf<String>()
+        val gateway = FakeAuthGateway(
+            loginResult = LoginResult(
+                accessToken = null,
+                refreshToken = null,
+                isNewUser = true,
+                signupState = SignupState.USER_INFO_REQUIRED,
+                providerType = AuthProvider.GOOGLE
+            )
+        )
+        val coordinator = AuthFlowCoordinator(
+            identityTokenProvider = RecordingIdentityTokenProvider(),
+            authGateway = gateway,
+            sessionStore = InMemoryAuthSessionStore(),
+            onFcmTokenRegistered = registered::add
+        )
+
+        coordinator.login(AuthProvider.GOOGLE)
+
+        assertEquals(listOf("fcm-token"), registered)
+    }
+
+    @Test
     fun emailCreateAccountObtainsFirebaseTokenBeforeBackendLogin() = runBlocking {
         val provider = RecordingIdentityTokenProvider()
         val gateway = FakeAuthGateway(

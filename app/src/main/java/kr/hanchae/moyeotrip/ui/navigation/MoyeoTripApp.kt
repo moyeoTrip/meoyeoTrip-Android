@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -69,12 +70,18 @@ import androidx.navigation.navArgument
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kr.hanchae.moyeotrip.BuildConfig
+import kr.hanchae.moyeotrip.data.CourseSource
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.auth.AuthDependencies
 import kr.hanchae.moyeotrip.data.network.AndroidNetworkMonitor
 import kr.hanchae.moyeotrip.data.network.OfflineCacheStore
 import kr.hanchae.moyeotrip.data.network.OfflineExperience
 import kr.hanchae.moyeotrip.data.network.offlineExperience
+import kr.hanchae.moyeotrip.data.tourism.FallbackTourismContentRepository
+import kr.hanchae.moyeotrip.data.tourism.HttpTourismContentRepository
+import kr.hanchae.moyeotrip.data.tourism.SampleTourismContentRepository
+import kr.hanchae.moyeotrip.notifications.PushNavigationEvent
 import kr.hanchae.moyeotrip.ui.screens.AccountDeleteScreen
 import kr.hanchae.moyeotrip.ui.screens.AuthFlowScreen
 import kr.hanchae.moyeotrip.ui.screens.BlockedUsersScreen
@@ -85,6 +92,7 @@ import kr.hanchae.moyeotrip.ui.screens.ChatRoomScreen
 import kr.hanchae.moyeotrip.ui.screens.CourseDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.CoursePublishScreen
 import kr.hanchae.moyeotrip.ui.screens.CourseRouteScreen
+import kr.hanchae.moyeotrip.ui.screens.CreateDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.CreateMeetPointScreen
 import kr.hanchae.moyeotrip.ui.screens.CreatePeopleScreen
 import kr.hanchae.moyeotrip.ui.screens.CreateScheduleScreen
@@ -109,8 +117,13 @@ import kr.hanchae.moyeotrip.ui.screens.NotificationCenterScreen
 import kr.hanchae.moyeotrip.ui.screens.NotificationDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.OfflineCachedBanner
 import kr.hanchae.moyeotrip.ui.screens.OfflineNoCacheScreen
+import kr.hanchae.moyeotrip.ui.screens.PlaceDetailScreen
+import kr.hanchae.moyeotrip.ui.screens.PlaceSearchScreen
 import kr.hanchae.moyeotrip.ui.screens.ProfileEditScreen
 import kr.hanchae.moyeotrip.ui.screens.ProfileScreen
+import kr.hanchae.moyeotrip.ui.screens.QaComponentStatesScreen
+import kr.hanchae.moyeotrip.ui.screens.QaDesignSystemOverviewScreen
+import kr.hanchae.moyeotrip.ui.screens.QaLeaveAlertScreen
 import kr.hanchae.moyeotrip.ui.screens.RecruitmentCourseSourceScreen
 import kr.hanchae.moyeotrip.ui.screens.ReportScreen
 import kr.hanchae.moyeotrip.ui.screens.SearchScreen
@@ -119,6 +132,7 @@ import kr.hanchae.moyeotrip.ui.screens.SpecialMessagesScreen
 import kr.hanchae.moyeotrip.ui.screens.StartupSplashScreen
 import kr.hanchae.moyeotrip.ui.screens.SystemNoticeMode
 import kr.hanchae.moyeotrip.ui.screens.SystemNoticeScreen
+import kr.hanchae.moyeotrip.ui.screens.TermsDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.TripConfirmedScreen
 import kr.hanchae.moyeotrip.ui.screens.TripDayScreen
 import kr.hanchae.moyeotrip.ui.screens.TripDetailScreen
@@ -144,12 +158,15 @@ private const val STARTUP_SPLASH_TRANSITION_MILLIS = 420
 @Composable
 fun MoyeoTripApp(
     startScreen: String? = null,
-    pushRoute: String? = null,
+    pushNavigationEvent: PushNavigationEvent? = null,
     skipStartupSplash: Boolean = false,
     skipAuthentication: Boolean = false,
-    onAuthenticationComplete: () -> Unit = {}
+    /** 번호별 비교 캡처는 다크/라이트 두 테마를 모두 찍는다. null이면 시스템 설정을 따른다. */
+    forceDarkTheme: Boolean? = null,
+    onAuthenticationComplete: () -> Unit = {},
+    onPushRouteHandled: (Long) -> Unit = {}
 ) {
-    MoyeoTripTheme {
+    MoyeoTripTheme(darkTheme = forceDarkTheme ?: isSystemInDarkTheme()) {
         val currentDensity = LocalDensity.current
         val context = LocalContext.current
         CompositionLocalProvider(
@@ -170,6 +187,19 @@ fun MoyeoTripApp(
                 ?: offlineExperience(detectedOnline, cacheStore.hasCachedContent)
             val isOnline = networkExperience == OfflineExperience.Online
             val authDependencies = remember(context) { AuthDependencies.appDefault(context) }
+            val tourismRepository = remember(authDependencies, startScreen) {
+                if (startScreen != null) {
+                    SampleTourismContentRepository
+                } else {
+                    FallbackTourismContentRepository(
+                        primary = HttpTourismContentRepository(
+                            baseUrl = BuildConfig.AUTH_API_BASE_URL,
+                            accessToken = { authDependencies.sessionStore.current.accessToken }
+                        ),
+                        fallback = SampleTourismContentRepository
+                    )
+                }
+            }
             val appScope = rememberCoroutineScope()
             val userProfile by authDependencies.userProfileStore.profile.collectAsState()
             val bypassAuthentication = skipAuthentication || startScreen != null
@@ -239,13 +269,15 @@ fun MoyeoTripApp(
                 }
             }
 
-            LaunchedEffect(pushRoute, authenticationComplete, bypassAuthentication) {
-                if (pushRoute != null && (authenticationComplete || bypassAuthentication)) {
-                    val targetRoute = QaStartRequest.parse(pushRoute).toRoute() ?: AppRoutes.HOME
+            LaunchedEffect(pushNavigationEvent?.id, authenticationComplete, bypassAuthentication) {
+                val pushEvent = pushNavigationEvent
+                if (pushEvent != null && (authenticationComplete || bypassAuthentication)) {
+                    val targetRoute = QaStartRequest.parse(pushEvent.route).toRoute() ?: AppRoutes.HOME
                     navController.navigate(targetRoute) {
                         popUpTo(AppRoutes.HOME) { inclusive = false }
                         launchSingleTop = true
                     }
+                    onPushRouteHandled(pushEvent.id)
                 }
             }
 
@@ -283,12 +315,14 @@ fun MoyeoTripApp(
                         }
                     }
                 ) { innerPadding ->
+                    // 스플래시는 iOS처럼 상태바 뒤까지 꽉 채운다 — 상단 안전 패딩을 주지 않는다
+                    val edgeToEdgeRoute = currentRoute == AppRoutes.QA_SPLASH
                     NavHost(
                         navController = navController,
                         startDestination = AppRoutes.HOME,
                         modifier = Modifier
                             .padding(innerPadding)
-                            .padding(top = topSafePadding)
+                            .padding(top = if (edgeToEdgeRoute) 0.dp else topSafePadding)
                     ) {
                         composable(AppRoutes.HOME) {
                             HomeScreen(
@@ -334,7 +368,7 @@ fun MoyeoTripApp(
                         composable(AppRoutes.FEED) {
                             FeedScreen(
                                 onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) },
-                                onWritePost = { navController.navigate(AppRoutes.FEED_WRITE) }
+                                onWritePost = { navController.navigate(AppRoutes.feedWrite()) }
                             )
                         }
                         composable(AppRoutes.MY) {
@@ -382,6 +416,9 @@ fun MoyeoTripApp(
                                 onOpenNotificationDetail = { navController.navigate(AppRoutes.NOTIFICATION_DETAIL) },
                                 onOpenBlockedUsers = { navController.navigate(AppRoutes.BLOCKED_USERS) },
                                 onOpenAccountDelete = { navController.navigate(AppRoutes.ACCOUNT_DELETE) },
+                                onOpenTerms = { document ->
+                                    navController.navigate(AppRoutes.termsDetail(document, "settings"))
+                                },
                                 onAuthenticationCleared = {
                                     authenticationComplete = false
                                     navController.navigate(AppRoutes.HOME) {
@@ -474,25 +511,61 @@ fun MoyeoTripApp(
                             CustomCourseScreen(
                                 draftId = entry.arguments?.getString("draftId").orEmpty(),
                                 onBack = { navController.popBackStack() },
+                                onOpenPlaceSearch = { navController.navigate(AppRoutes.placeSearch(it)) },
                                 onContinue = { navController.navigate(AppRoutes.createSchedule(it)) }
+                            )
+                        }
+                        composable(AppRoutes.PLACE_SEARCH) { entry ->
+                            PlaceSearchScreen(
+                                draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                onBack = { navController.popBackStack() },
+                                onOpenDetail = { draftId, contentId ->
+                                    navController.navigate(AppRoutes.placeDetail(draftId, contentId))
+                                },
+                                onDone = { draftId ->
+                                    navController.navigate(AppRoutes.customCourse(draftId)) {
+                                        popUpTo(AppRoutes.CUSTOM_COURSE) { inclusive = true }
+                                    }
+                                },
+                                repository = tourismRepository
+                            )
+                        }
+                        composable(AppRoutes.PLACE_DETAIL) { entry ->
+                            PlaceDetailScreen(
+                                draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                contentId = entry.arguments?.getString("contentId").orEmpty(),
+                                onBack = { navController.popBackStack() },
+                                onAdd = { draftId ->
+                                    navController.navigate(AppRoutes.customCourse(draftId)) {
+                                        popUpTo(AppRoutes.PLACE_SEARCH) { inclusive = false }
+                                    }
+                                },
+                                repository = tourismRepository
                             )
                         }
                         composable(AppRoutes.CREATE_SCHEDULE) { entry ->
                             CreateScheduleScreen(
                                 draftId = entry.arguments?.getString("draftId").orEmpty(),
                                 onBack = { navController.popBackStack() },
-                                onContinue = { navController.navigate(AppRoutes.createPeople(it)) }
+                                onContinue = { navController.navigate(AppRoutes.createMeetPoint(it)) }
                             )
                         }
                         composable(AppRoutes.CREATE_PEOPLE) { entry ->
                             CreatePeopleScreen(
                                 draftId = entry.arguments?.getString("draftId").orEmpty(),
                                 onBack = { navController.popBackStack() },
-                                onContinue = { navController.navigate(AppRoutes.createMeetPoint(it)) }
+                                onContinue = { navController.navigate(AppRoutes.createDetail(it)) }
                             )
                         }
                         composable(AppRoutes.CREATE_MEET_POINT) { entry ->
                             CreateMeetPointScreen(
+                                draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                onBack = { navController.popBackStack() },
+                                onSave = { navController.navigate(AppRoutes.createPeople(it)) }
+                            )
+                        }
+                        composable(AppRoutes.CREATE_DETAIL) { entry ->
+                            CreateDetailScreen(
                                 draftId = entry.arguments?.getString("draftId").orEmpty(),
                                 onBack = { navController.popBackStack() },
                                 onSave = { navController.navigate(AppRoutes.createSummary(it)) }
@@ -534,8 +607,17 @@ fun MoyeoTripApp(
                                 onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
                             )
                         }
-                        composable(AppRoutes.FEED_WRITE) {
+                        composable(
+                            route = AppRoutes.FEED_WRITE,
+                            arguments = listOf(
+                                navArgument("step") {
+                                    type = NavType.IntType
+                                    defaultValue = 1
+                                }
+                            )
+                        ) { entry ->
                             FeedWriteScreen(
+                                initialStep = entry.arguments?.getInt("step") ?: 1,
                                 onBack = { navController.popBackStack() },
                                 onPostCreated = { postId ->
                                     navController.navigate(AppRoutes.feedDetail(postId)) {
@@ -550,7 +632,12 @@ fun MoyeoTripApp(
                         composable(AppRoutes.SEARCH) {
                             SearchScreen(
                                 onBack = { navController.popBackStack() },
-                                onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) }
+                                onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
+                                initialQuery = if (startScreen?.substringBefore(":") == "search") {
+                                    "경주 단풍"
+                                } else {
+                                    ""
+                                }
                             )
                         }
                         composable(AppRoutes.TRIP_CONFIRMED) {
@@ -588,7 +675,7 @@ fun MoyeoTripApp(
                         composable(AppRoutes.TRIP_MESSAGE) {
                             TripMessageScreen(
                                 onBack = { navController.popBackStack() },
-                                onOpenFeedWrite = { navController.navigate(AppRoutes.FEED_WRITE) },
+                                onOpenFeedWrite = { navController.navigate(AppRoutes.feedWrite()) },
                                 onOpenCoursePublish = { navController.navigate(AppRoutes.COURSE_PUBLISH) },
                                 onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) }
                             )
@@ -653,6 +740,27 @@ fun MoyeoTripApp(
                                 onBack = { navController.popBackStack() }
                             )
                         }
+                        composable(AppRoutes.TERMS_DETAIL) { entry ->
+                            TermsDetailScreen(
+                                documentKey = entry.arguments?.getString("document").orEmpty(),
+                                source = entry.arguments?.getString("source").orEmpty(),
+                                onBack = { navController.popBackStack() }
+                            )
+                        }
+                        composable(AppRoutes.QA_SPLASH) { StartupSplashScreen() }
+                        composable(AppRoutes.QA_DESIGN_SYSTEM) { QaDesignSystemOverviewScreen() }
+                        composable(AppRoutes.QA_STATES) { QaComponentStatesScreen() }
+                        composable(AppRoutes.QA_LEAVE) {
+                            QaLeaveAlertScreen(onDismiss = { navController.popBackStack() })
+                        }
+                        composable(AppRoutes.QA_APPLY) { entry ->
+                            TripDetailScreen(
+                                tripId = entry.arguments?.getString("tripId").orEmpty(),
+                                onBack = { navController.popBackStack() },
+                                onOpenChatRoom = { navController.navigate(AppRoutes.chatRoom(it)) },
+                                showApplicationSheetInitially = true
+                            )
+                        }
                         composable(AppRoutes.FEED_COMMENTS) { entry ->
                             FeedCommentsScreen(
                                 postId = entry.arguments?.getString("postId").orEmpty(),
@@ -663,6 +771,20 @@ fun MoyeoTripApp(
                             val mockAuthDependencies = remember { AuthDependencies.demo() }
                             AuthFlowScreen(
                                 providedDependencies = mockAuthDependencies,
+                                onExit = { navController.popBackStack() },
+                                onComplete = {
+                                    navController.navigate(AppRoutes.HOME) {
+                                        popUpTo(navController.graph.findStartDestination().id)
+                                        launchSingleTop = true
+                                    }
+                                }
+                            )
+                        }
+                        composable(AppRoutes.MOCK_AUTH_STEP) { entry ->
+                            val mockAuthDependencies = remember { AuthDependencies.demo() }
+                            AuthFlowScreen(
+                                providedDependencies = mockAuthDependencies,
+                                initialStepKey = entry.arguments?.getString("startStep"),
                                 onExit = { navController.popBackStack() },
                                 onComplete = {
                                     navController.navigate(AppRoutes.HOME) {
@@ -725,16 +847,25 @@ internal data class QaStartRequest(private val key: String, private val identifi
     fun toRoute(): String? {
         val courseId = identifier ?: "cheongsong-juwangsan"
         val tripId = identifier ?: "trip-cheongsong-juwangsan"
+        // 모집 관리(18)의 기본 대상만 화면기획과 같은 경주 단풍·야경이다
+        val hostManageTripId = identifier ?: "trip-gyeongju-night"
         val chatId = identifier ?: "chat-cheongsong-juwangsan"
 
         return when (key) {
             "", "home" -> AppRoutes.HOME
 
+            "dsoverview" -> AppRoutes.QA_DESIGN_SYSTEM
+
+            "splash" -> AppRoutes.QA_SPLASH
+
             "explore", "exploremap", "map" -> AppRoutes.EXPLORE
 
             "meetings" -> AppRoutes.MEETINGS
 
-            "meetingsapplied", "chatlistapplied" -> AppRoutes.MEETINGS_APPLIED
+            "meetingsapplied", "chatlistapplied" -> {
+                MockTripRepository.ensureQaApplications()
+                AppRoutes.MEETINGS_APPLIED
+            }
 
             "chatlist" -> AppRoutes.CHAT_LIST
 
@@ -742,7 +873,7 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "my" -> AppRoutes.MY
 
-            "profile" -> AppRoutes.PROFILE
+            "profile", "publicprofile" -> AppRoutes.PROFILE
 
             "profileedit", "profile-edit", "editprofile", "edit-profile" -> AppRoutes.PROFILE_EDIT
 
@@ -754,19 +885,46 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "customer", "customercenter", "customer-center" -> AppRoutes.CUSTOMER_CENTER
 
-            "notifications", "notification" -> AppRoutes.NOTIFICATIONS
+            "notifications", "notification", "notif" -> AppRoutes.NOTIFICATIONS
 
             "search" -> AppRoutes.SEARCH
 
-            "auth", "onboarding", "login", "terms", "mockauth", "signup" -> AppRoutes.MOCK_AUTH
+            "auth", "onboarding", "mockauth", "signup" -> AppRoutes.MOCK_AUTH
+
+            "onb1" -> AppRoutes.mockAuth("onb-1")
+
+            "onb2" -> AppRoutes.mockAuth("onb-2")
+
+            "onb3" -> AppRoutes.mockAuth("onb-3")
+
+            "login" -> AppRoutes.mockAuth("login")
+
+            "emailauth" -> AppRoutes.mockAuth("email")
+
+            "nickname", "prof1" -> AppRoutes.mockAuth("nickname")
+
+            "profilebasic", "prof3" -> AppRoutes.mockAuth("profile-basic")
+
+            "profileimage", "prof2" -> AppRoutes.mockAuth("profile-image")
+
+            "terms" -> AppRoutes.mockAuth("terms")
 
             "course", "coursedetail" -> AppRoutes.courseDetail(courseId)
 
-            "trip", "tripdetail", "recruitment", "recruitmentdetail", "apply" -> AppRoutes.tripDetail(tripId)
+            "trip", "tripdetail", "recruitment", "recruitmentdetail", "detail" -> AppRoutes.tripDetail(tripId)
 
-            "create", "createrecruitment" -> AppRoutes.createRecruitment(courseId)
+            "apply" -> AppRoutes.qaApply(tripId)
+
+            "create", "createrecruitment", "createreview" -> AppRoutes.createRecruitment(courseId)
 
             "customcourse" -> AppRoutes.customCourse(MockTripRepository.beginRecruitmentDraft(courseId).id)
+
+            "placesearch" -> AppRoutes.placeSearch(MockTripRepository.beginRecruitmentDraft(courseId).id)
+
+            "placedetail" -> AppRoutes.placeDetail(
+                MockTripRepository.beginRecruitmentDraft(courseId).id,
+                identifier ?: "2299341"
+            )
 
             "createschedule" -> AppRoutes.createSchedule(MockTripRepository.beginRecruitmentDraft(courseId).id)
 
@@ -776,17 +934,32 @@ internal data class QaStartRequest(private val key: String, private val identifi
                 MockTripRepository.beginRecruitmentDraft(courseId).id
             )
 
-            "createsummary" -> AppRoutes.createSummary(MockTripRepository.beginRecruitmentDraft(courseId).id)
+            "createdetail" -> AppRoutes.createDetail(MockTripRepository.beginRecruitmentDraft(courseId).id)
 
-            "courseedit" -> AppRoutes.courseRoute("trip-cheongsong-juwangsan")
+            "createsummary", "createsummarycustom" -> recruitmentSummaryRoute(courseId, CourseSource.Custom)
 
-            "courseeditlinked" -> AppRoutes.courseRoute("trip-andong-dosan")
+            "createsummarylinked" -> recruitmentSummaryRoute(courseId, CourseSource.Linked)
 
-            "courseeditlocked" -> AppRoutes.courseRoute("trip-andong-hahoe")
+            "termsdetail" -> AppRoutes.termsDetail("service", "signup")
+
+            "termsprivacy" -> AppRoutes.termsDetail("privacy", "signup")
+
+            "termslocation" -> AppRoutes.termsDetail("location", "signup")
+
+            "termsmarketing" -> AppRoutes.termsDetail("marketing", "signup")
+
+            "termssettings" -> AppRoutes.termsDetail(identifier ?: "service", "settings")
+
+            "courseedit", "courseeditcustom" -> AppRoutes.courseRoute("trip-cheongsong-juwangsan")
+
+            // 화면기획 18-2/18-3은 같은 주왕산 코스를 잠금 상태만 바꿔 보여준다
+            "courseeditlinked" -> AppRoutes.courseRoute("trip-cheongsong-juwangsan-linked")
+
+            "courseeditlocked" -> AppRoutes.courseRoute("trip-cheongsong-juwangsan-locked")
 
             "noticehistory" -> AppRoutes.noticeHistory(tripId)
 
-            "hostmanage", "host" -> AppRoutes.hostManage(tripId)
+            "hostmanage", "host" -> AppRoutes.hostManage(hostManageTripId)
 
             "chat", "chatroom" -> AppRoutes.chatRoom(chatId)
 
@@ -794,7 +967,7 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "offlinechat" -> AppRoutes.chatRoom(chatId)
 
-            "specialmessages" -> AppRoutes.SPECIAL_MESSAGES
+            "specialmessages", "msgs" -> AppRoutes.SPECIAL_MESSAGES
 
             "tripconfirmed", "confirmed" -> AppRoutes.TRIP_CONFIRMED
 
@@ -807,6 +980,10 @@ internal data class QaStartRequest(private val key: String, private val identifi
             "tripmessage" -> AppRoutes.TRIP_MESSAGE
 
             "report" -> AppRoutes.REPORT
+
+            "leave" -> AppRoutes.QA_LEAVE
+
+            "states" -> AppRoutes.QA_STATES
 
             "blocked", "blockedusers" -> AppRoutes.BLOCKED_USERS
 
@@ -826,13 +1003,30 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "feeddetail", "feedpost" -> AppRoutes.feedDetail(identifier ?: "feed-1")
 
-            "feedwrite", "writefeed" -> AppRoutes.FEED_WRITE
+            "feedwrite", "writefeed" -> AppRoutes.feedWrite()
+
+            // 24-1~24-5 단계별 캡처 라우트
+            "feedwrite1" -> AppRoutes.feedWrite(1)
+
+            "feedwrite2" -> AppRoutes.feedWrite(2)
+
+            "feedwrite3" -> AppRoutes.feedWrite(3)
+
+            "feedwrite4" -> AppRoutes.feedWrite(4)
+
+            "feedwrite5" -> AppRoutes.feedWrite(5)
 
             else -> null
         }
     }
 
     companion object {
+        private fun recruitmentSummaryRoute(courseId: String, source: CourseSource): String {
+            val draft = MockTripRepository.beginRecruitmentDraft(courseId)
+            MockTripRepository.updateRecruitmentDraft(draft.copy(courseSource = source))
+            return AppRoutes.createSummary(draft.id)
+        }
+
         fun parse(value: String?): QaStartRequest {
             val rawValue = value?.trim().orEmpty()
             if (rawValue.isEmpty()) {

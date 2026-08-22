@@ -3,6 +3,7 @@ package kr.hanchae.moyeotrip.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,15 +19,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.AttachFile
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.MoreHoriz
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledIconButton
 import androidx.compose.material3.Icon
@@ -46,12 +47,14 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.time.LocalTime
@@ -63,6 +66,7 @@ import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.chat.ChatOutbox
 import kr.hanchae.moyeotrip.data.chat.QueuedChatMessage
 import kr.hanchae.moyeotrip.ui.components.InfoPill
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun ChatRoomScreen(
@@ -76,12 +80,25 @@ fun ChatRoomScreen(
 ) {
     val thread = MockTripRepository.findThread(threadId)
     val trip = thread.tripId?.let(MockTripRepository::findTrip)
-    val messages = remember(threadId) {
-        mutableStateListOf<ChatMessage>().also { it.addAll(thread.messages) }
+    val messages = remember(threadId, isOnline) {
+        mutableStateListOf<ChatMessage>().also {
+            if (isOnline) {
+                it.addAll(thread.messages)
+            } else {
+                // 화면기획 37 — 연결이 끊긴 시점의 대화 스냅숏
+                it.add(ChatMessage("숲속여행자", "주차장 도착하면 알려주세요~", ""))
+                it.add(ChatMessage("나", "네 곧 도착해요!", "09:31", mine = true))
+            }
+        }
     }
     var draft by rememberSaveable { mutableStateOf("") }
     var toolbarMessage by rememberSaveable { mutableStateOf<String?>(null) }
-    val outbox = remember(threadId) { ChatOutbox() }
+    val outbox = remember(threadId) {
+        ChatOutbox().apply {
+            // 화면기획 37 — 전송 대기 중인 메시지 한 건
+            if (!isOnline) enqueue("주차장 입구에서 만나요", "")
+        }
+    }
     var queuedMessages by remember(threadId) { mutableStateOf(outbox.pending) }
     val messageListState = rememberLazyListState()
     val canSend = draft.isNotBlank() && !thread.isReadOnly
@@ -119,17 +136,30 @@ fun ChatRoomScreen(
             }
         )
         if (!isOnline) OfflineChatWarning()
-        if (trip != null) {
+        if (trip != null && isOnline) {
             val pinned = MockTripRepository.noticesForTrip(trip.id).firstOrNull { it.isPinned }
             Text(
                 text =
                     "${trip.joined}/${trip.capacity}명 · ${trip.scheduleDate} " +
-                        "${trip.scheduleTime} · ${trip.scheduleType.label}",
+                        "${trip.scheduleTime} · ${trip.scheduleType.label} · ${trip.ddayLabel}",
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
                 textAlign = TextAlign.Center
             )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(
+                    "1인 ${"%,d".format(trip.estimatedCostPerPerson)}원",
+                    "${trip.minimumAge}~${trip.maximumAge}세",
+                    trip.genderCondition
+                ).forEach { condition -> InfoPill(condition) }
+            }
             if (pinned != null) {
                 ChatUtilityBar(
                     eyebrow = "고정 공지",
@@ -141,15 +171,15 @@ fun ChatRoomScreen(
             }
             ChatUtilityBar(
                 eyebrow = trip.courseSource.label,
-                title = "여행 경로 · 방문지 ${trip.routeStops.size.takeIf {
+                title = MockTripRepository.findCourseForTrip(trip).title,
+                body = "방문지 ${trip.routeStops.size.takeIf {
                     it > 0
-                } ?: MockTripRepository.findCourseForTrip(trip).stops.size}곳",
-                body = if (trip.courseSource ==
+                } ?: MockTripRepository.findCourseForTrip(trip).stops.size}곳 · " + if (trip.courseSource ==
                     kr.hanchae.moyeotrip.data.CourseSource.Custom
                 ) {
-                    "호스트가 만든 경로 보기 · 확정 전 편집 가능"
+                    "호스트가 만든 경로 · 확정 전 편집 가능"
                 } else {
-                    "등록 코스 경로 보기 · 방문지 수정 불가"
+                    "등록 코스 · 방문지 수정 불가"
                 },
                 tag = "chat-route-summary",
                 onClick = { onOpenRoute(trip.id) }
@@ -167,7 +197,7 @@ fun ChatRoomScreen(
                 item {
                     ChatArchiveNotice(thread = thread)
                 }
-            } else {
+            } else if (isOnline) {
                 item {
                     Text(
                         text = "모임 신청 후 이어지는 여행 채팅방이에요",
@@ -179,14 +209,29 @@ fun ChatRoomScreen(
                 }
             }
             items(messages) { message ->
-                if (message.sender == "시스템" && message.text.contains("경로를 수정")) {
-                    RouteChangeMessage(message)
-                } else {
-                    MessageBubble(message = message)
+                when {
+                    message.sender == "시스템" && message.text.contains("경로를 수정") ->
+                        RouteChangeMessage(message)
+
+                    // 입장·개설 같은 시스템 안내는 가운데 필 형태다 (화면기획 20)
+                    message.sender == "시스템" -> SystemPillMessage(message.text)
+
+                    else -> MessageBubble(message = message)
                 }
             }
             items(queuedMessages, key = { "queued-${it.id}" }) { message ->
                 QueuedMessageBubble(message)
+            }
+            if (queuedMessages.isNotEmpty()) {
+                item {
+                    Text(
+                        text = "연결되면 순서대로 보내드려요",
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.End,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
             }
         }
         Surface(color = colors.surface, shadowElevation = 8.dp) {
@@ -212,52 +257,68 @@ fun ChatRoomScreen(
                     )
                 }
             } else {
-                Row(
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .imePadding()
                         .navigationBarsPadding()
-                        .padding(12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    IconButton(
-                        onClick = onOpenAttachment,
-                        enabled = isOnline,
-                        modifier = Modifier.testTag("chat-attachment")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.AttachFile,
-                            contentDescription = if (isOnline) "첨부" else "오프라인에서는 첨부할 수 없어요"
-                        )
-                    }
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = { draft = it },
+                    Row(
                         modifier = Modifier
-                            .weight(1f)
-                            .testTag("chat-message-input"),
-                        placeholder = { Text("메시지 입력") },
-                        singleLine = true
-                    )
-                    FilledIconButton(
-                        onClick = {
-                            val trimmed = draft.trim()
-                            if (trimmed.isNotEmpty()) {
-                                if (isOnline) {
-                                    messages.add(MockTripRepository.appendChatMessage(threadId, trimmed))
-                                } else {
-                                    val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
-                                    outbox.enqueue(trimmed, time)
-                                    queuedMessages = outbox.pending
-                                }
-                                draft = ""
-                            }
-                        },
-                        enabled = canSend,
-                        modifier = Modifier.testTag("chat-message-send")
+                            .fillMaxWidth()
+                            .padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "보내기")
+                        IconButton(
+                            onClick = onOpenAttachment,
+                            enabled = isOnline,
+                            modifier = Modifier.testTag("chat-attachment")
+                        ) {
+                            // 화면기획의 첨부는 클립이 아니라 + 원형 버튼이다
+                            Icon(
+                                imageVector = Icons.Filled.Add,
+                                contentDescription = if (isOnline) "첨부" else "오프라인에서는 첨부할 수 없어요"
+                            )
+                        }
+                        OutlinedTextField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("chat-message-input"),
+                            placeholder = { Text("메시지 입력") },
+                            singleLine = true
+                        )
+                        FilledIconButton(
+                            onClick = {
+                                val trimmed = draft.trim()
+                                if (trimmed.isNotEmpty()) {
+                                    if (isOnline) {
+                                        messages.add(MockTripRepository.appendChatMessage(threadId, trimmed))
+                                    } else {
+                                        val time = LocalTime.now().format(DateTimeFormatter.ofPattern("HH:mm"))
+                                        outbox.enqueue(trimmed, time)
+                                        queuedMessages = outbox.pending
+                                    }
+                                    draft = ""
+                                }
+                            },
+                            enabled = canSend,
+                            modifier = Modifier.testTag("chat-message-send")
+                        ) {
+                            Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "보내기")
+                        }
+                    }
+                    if (!isOnline) {
+                        Text(
+                            text = "사진·장소 공유는 연결된 뒤에 보낼 수 있어요",
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 16.dp, bottom = 8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onSurfaceVariant
+                        )
                     }
                 }
             }
@@ -279,27 +340,27 @@ fun ChatRoomScreen(
 
 @Composable
 private fun OfflineChatWarning() {
+    val tints = MoyeoTheme.tints
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(36.dp)
-            .background(MaterialTheme.colorScheme.secondaryContainer)
+            .background(tints.warningTint)
             .padding(horizontal = 14.dp)
             .testTag("offline-chat-banner"),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.Center
+        verticalAlignment = Alignment.CenterVertically
     ) {
-        Icon(
-            imageVector = Icons.Filled.CloudOff,
-            contentDescription = null,
-            modifier = Modifier.size(15.dp),
-            tint = MaterialTheme.colorScheme.onSecondaryContainer
+        Box(
+            Modifier
+                .size(6.dp)
+                .clip(CircleShape)
+                .background(tints.onWarningTint)
         )
         Text(
-            text = "연결되면 대기 중인 메시지를 순서대로 보낼게요",
+            text = "연결이 끊겼어요. 보낸 메시지는 연결되면 자동으로 전송돼요.",
             modifier = Modifier.padding(start = 7.dp),
             style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSecondaryContainer,
+            color = tints.onWarningTint,
             fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
         )
     }
@@ -382,6 +443,24 @@ private fun ChatUtilityBar(eyebrow: String, title: String, body: String, tag: St
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1
+            )
+        }
+    }
+}
+
+@Composable
+private fun SystemPillMessage(text: String) {
+    Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+        Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MoyeoTheme.tints.systemMessage
+        ) {
+            Text(
+                text = text,
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.ExtraBold
             )
         }
     }
@@ -477,9 +556,10 @@ private fun ChatRoomTopBar(thread: ChatThread, onBack: () -> Unit, onCallClick: 
                             onClick = onCallClick,
                             modifier = Modifier.size(42.dp)
                         ) {
+                            // 화면기획·웹의 채팅 헤더는 대화 검색이다 (연락처를 받지 않아 통화 진입은 없다)
                             Icon(
-                                imageVector = Icons.Filled.Call,
-                                contentDescription = "전화",
+                                imageVector = Icons.Filled.Search,
+                                contentDescription = "대화 검색",
                                 tint = colors.onSurface
                             )
                         }
@@ -488,8 +568,8 @@ private fun ChatRoomTopBar(thread: ChatThread, onBack: () -> Unit, onCallClick: 
                             modifier = Modifier.size(42.dp)
                         ) {
                             Icon(
-                                imageVector = Icons.Filled.MoreHoriz,
-                                contentDescription = "더보기",
+                                imageVector = Icons.Filled.Menu,
+                                contentDescription = "모임 정보",
                                 tint = colors.onSurface
                             )
                         }
@@ -548,7 +628,8 @@ private fun ChatArchiveNotice(thread: ChatThread) {
 @Composable
 private fun MessageBubble(message: ChatMessage) {
     val colors = MaterialTheme.colorScheme
-    val bubbleColor = if (message.mine) colors.primaryContainer else colors.surface
+    // 디자인 시스템의 chat-mine 토큰. primaryContainer 는 선택 상태 색이라 "내 메시지"로 읽히지 않는다.
+    val bubbleColor = if (message.mine) MoyeoTheme.tints.chatMine else colors.surface
     val contentColor = if (message.mine) colors.onPrimaryContainer else colors.onSurface
     val metaColor = if (message.mine) colors.onPrimaryContainer.copy(alpha = 0.72f) else colors.onSurfaceVariant
 

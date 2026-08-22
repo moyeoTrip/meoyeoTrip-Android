@@ -3,8 +3,8 @@ package kr.hanchae.moyeotrip.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,12 +25,15 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.NotificationsNone
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -45,6 +48,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -56,6 +60,7 @@ import kr.hanchae.moyeotrip.domain.WeatherHero
 import kr.hanchae.moyeotrip.domain.WeatherHeroPolicy
 import kr.hanchae.moyeotrip.domain.WeatherHeroState
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun HomeScreen(
@@ -94,38 +99,68 @@ fun HomeScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                item {
-                    HomeHero(hero = hero)
-                }
-                item {
-                    HomeSectionHeader(
-                        title = "지금 떠나기 좋은 코스",
-                        trailing = "더보기 ›",
-                        onTrailingClick = onOpenExplore
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        items(recommendedCourses.take(6)) { course ->
-                            HomeMiniCourseCard(
-                                course = course,
-                                selected = course.id == featuredCourse.id,
-                                onClick = { onOpenCourse(course.id) }
-                            )
-                        }
+                if (isOnline) {
+                    item {
+                        HomeHero(hero = hero)
                     }
-                }
-                item {
-                    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                        HomeSectionHeader(title = "인기 코스 TOP 3")
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            homePopularCourses().forEach { ranked ->
-                                PopularCourseRow(
-                                    course = ranked,
-                                    onClick = { onOpenCourse(ranked.courseId) }
+                    item {
+                        HomeSectionHeader(
+                            title = "지금 떠나기 좋은 코스",
+                            trailing = "더보기 ›",
+                            onTrailingClick = onOpenExplore
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            items(recommendedCourses.take(6)) { course ->
+                                HomeMiniCourseCard(
+                                    course = course,
+                                    selected = course.id == featuredCourse.id,
+                                    onClick = { onOpenCourse(course.id) }
                                 )
                             }
                         }
                     }
+                    item {
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            HomeSectionHeader(title = "인기 코스 TOP 3")
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                homePopularCourses().forEach { ranked ->
+                                    PopularCourseRow(
+                                        course = ranked,
+                                        onClick = { onOpenCourse(ranked.courseId) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    item { OfflineWeatherPlaceholder() }
+                    item {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "저장해둔 코스",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Surface(
+                                modifier = Modifier.padding(start = 8.dp),
+                                shape = RoundedCornerShape(50),
+                                color = MaterialTheme.colorScheme.surfaceVariant
+                            ) {
+                                Text(
+                                    "오프라인에서도 열려요",
+                                    Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                    items(MockTripRepository.courses.take(3)) { course ->
+                        SavedOfflineCourseRow(course = course, onClick = { onOpenCourse(course.id) })
+                    }
+                    item { OfflineRecruitmentPlaceholder() }
                 }
             }
             FloatingActionButton(
@@ -355,7 +390,7 @@ private fun PopularCourseRow(course: HomePopularCourse, onClick: () -> Unit) {
 
 @Composable
 private fun HomeHero(hero: WeatherHero) {
-    val isDark = isSystemInDarkTheme()
+    val isDark = MoyeoTheme.isDark
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = hero.state.cardColor(isDark)),
@@ -409,6 +444,8 @@ private fun HomeHero(hero: WeatherHero) {
                         .fillMaxWidth()
                         .height(144.dp)
                         .clip(RoundedCornerShape(12.dp)),
+                    // 화면기획·웹과 같이 아래쪽 기준으로 자른다
+                    alignment = Alignment.BottomCenter,
                     contentScale = ContentScale.Crop
                 )
                 TextBubble(
@@ -526,4 +563,124 @@ private fun WeatherHero.imageResId(isDark: Boolean): Int = when (imageResourceNa
     "weather_dust_donggung_wolji" -> R.drawable.weather_dust_donggung_wolji
     "weather_dust_donggung_wolji_night" -> R.drawable.weather_dust_donggung_wolji_night
     else -> R.drawable.weather_heavy_rain_woljeonggyo
+}
+
+/** 오프라인에서는 오늘의 날씨와 추천을 만들 수 없다 — 자리만 알려준다 (화면기획). */
+@Composable
+private fun OfflineWeatherPlaceholder() {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(16.dp)
+            )
+            .padding(vertical = 26.dp, horizontal = 18.dp)
+            .testTag("home-offline-weather-placeholder"),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Icon(
+            imageVector = Icons.Filled.WbSunny,
+            contentDescription = null,
+            modifier = Modifier.size(22.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Text(
+            "오늘의 날씨와 추천 코스",
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.ExtraBold
+        )
+        Text(
+            "연결되면 오늘 경북 날씨에 맞는 코스를 보여드릴게요",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+    }
+}
+
+/** 저장해둔 코스 한 줄. 저장 시점을 함께 보여 캐시된 내용임을 알린다. */
+@Composable
+private fun SavedOfflineCourseRow(course: TripCourse, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .testTag("home-offline-saved-${course.id}"),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Row(
+            Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CourseScenicPanel(course = course, modifier = Modifier.size(62.dp), cornerRadius = 10.dp)
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(course.title, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+                Text(
+                    "${course.region} · ${course.duration} ${course.distance}",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "어제 저장됨",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+/** 연결이 필요한 동작은 눌릴 수 없다는 것을 카드 안에서 알려준다 (화면기획). */
+@Composable
+private fun OfflineRecruitmentPlaceholder() {
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag("home-offline-recruitment-placeholder"),
+        shape = RoundedCornerShape(14.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.People,
+                    contentDescription = null,
+                    modifier = Modifier.size(17.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "모집 신청 · 새 모집 만들기",
+                    Modifier.padding(start = 8.dp),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+            Text(
+                "연결된 뒤에 할 수 있어요. 지금 누르면 저장해뒀다가 연결되면 이어서 진행해요.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Text(
+                    "연결되면 신청할 수 있어요",
+                    Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+    }
 }

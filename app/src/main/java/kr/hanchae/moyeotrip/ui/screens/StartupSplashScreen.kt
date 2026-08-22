@@ -2,7 +2,6 @@ package kr.hanchae.moyeotrip.ui.screens
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,10 +23,11 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.R
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun StartupSplashScreen() {
-    val isDark = isSystemInDarkTheme()
+    val isDark = MoyeoTheme.isDark
     val imageRes = if (isDark) R.drawable.splash_generated_night else R.drawable.splash_generated
     val background = if (isDark) Color(0xFF071712) else Color(0xFFEFF7EF)
     val titleColor = if (isDark) Color(0xFFE8F6ED) else Color(0xFF0F5C3D)
