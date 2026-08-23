@@ -163,6 +163,8 @@ fun HomeScreen(
                     item { OfflineRecruitmentPlaceholder() }
                 }
             }
+            // 오프라인일 때 FAB 위에 떠 있던 안내 캡션은 두지 않는다 — 화면기획 36에는 없고,
+            // 카드 밖으로 밀려 FAB과 겹쳐 보였다. 같은 안내는 아래 모집 카드 안에 이미 있다.
             FloatingActionButton(
                 onClick = { if (isOnline) onCreateRecruitment(featuredCourse.id) },
                 modifier = Modifier
@@ -174,18 +176,10 @@ fun HomeScreen(
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary
             ) {
-                Icon(imageVector = Icons.Filled.Add, contentDescription = "모집 만들기", modifier = Modifier.size(26.dp))
-            }
-            if (!isOnline) {
-                Text(
-                    text = "연결되면 모집을 만들 수 있어요",
-                    modifier = Modifier
-                        .align(Alignment.BottomEnd)
-                        .padding(end = 20.dp, bottom = 74.dp)
-                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(8.dp))
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                Icon(
+                    imageVector = Icons.Filled.Add,
+                    contentDescription = if (isOnline) "모집 만들기" else "연결되면 모집을 만들 수 있어요",
+                    modifier = Modifier.size(26.dp)
                 )
             }
         }
@@ -538,7 +532,7 @@ private fun homePopularCourses(): List<HomePopularCourse> = listOf(
     HomePopularCourse(
         rank = 3,
         title = "울릉도 2박 3일 섬 여행",
-        subtitle = "울릉 · 섬",
+        subtitle = "울릉 · 힐링",
         courseId = "ulleung-island"
     )
 )

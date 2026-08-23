@@ -31,11 +31,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import kr.hanchae.moyeotrip.ui.components.OverlayBackdrop
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
@@ -221,22 +221,27 @@ private fun OfflineStateBanner() {
 }
 
 @Composable
-fun QaLeaveAlertScreen(onDismiss: () -> Unit) {
+fun QaLeaveAlertScreen(onDismiss: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP_THREAD_ID) {
     // 화면기획의 경고 팝업은 좌측 정렬 카드에 같은 너비의 두 버튼이다.
     // Material AlertDialog 는 제목을 가운데 두고 버튼을 우측에 몰아 다른 플랫폼과 어긋난다.
+    // changeLog14 "오버레이 배경 일괄" — 빈 딤 대신 20-1 채팅방 사이드 메뉴 본문을 깐다.
     val colors = MaterialTheme.colorScheme
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = .48f))
-            .testTag("leave-alert-screen"),
-        contentAlignment = Alignment.Center
+    OverlayBackdrop(
+        modifier = Modifier.testTag("leave-alert-screen"),
+        scrimAlpha = .48f,
+        onScrimClick = onDismiss,
+        background = { ChatMenuBody(threadId = backdropThreadId) }
     ) {
         Surface(
-            modifier = Modifier.widthIn(max = 372.dp).padding(horizontal = 18.dp),
+            modifier = Modifier
+                .align(Alignment.Center)
+                .widthIn(max = 372.dp)
+                .padding(horizontal = 18.dp),
             shape = RoundedCornerShape(20.dp),
-            color = colors.background,
-            border = BorderStroke(1.dp, colors.outline)
+            // 시트·팝업 표면은 화면 배경(background)과 구분되는 카드 표면(surface)이다
+            color = colors.surface,
+            border = BorderStroke(1.dp, colors.outline),
+            shadowElevation = 16.dp
         ) {
             Column(Modifier.padding(24.dp)) {
                 Box(

@@ -493,7 +493,7 @@ internal enum class TermsDocument(
     ),
     Marketing(
         "marketing",
-        "마케팅 정보 수신",
+        "마케팅 정보 수신 동의",
         false,
         "v1.0",
         "2026년 5월 1일 시행",
@@ -516,7 +516,10 @@ internal enum class TermsDocument(
 @Composable
 fun TermsDetailScreen(documentKey: String, source: String, onBack: () -> Unit, onAgree: () -> Unit = onBack) {
     val document = remember(documentKey) { TermsDocument.fromRoute(documentKey) }
+    // 화면기획 08-C~08-G는 흰 페이지 위에 회색 채움 요약 박스다. 기본 배경(#F7F8F7)은
+    // surfaceVariant와 같은 값이라 그대로 두면 요약 박스가 배경에 묻힌다.
     Scaffold(
+        containerColor = MoyeoTheme.pageSurface,
         topBar = {
             ChangeLogTopBar(document.title, onBack) {
                 // 화면기획의 우측 상단 공유
@@ -591,7 +594,7 @@ fun TermsDetailScreen(documentKey: String, source: String, onBack: () -> Unit, o
             item {
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                    color = MoyeoTheme.subtleSurface
                 ) {
                     Text(document.summary, Modifier.fillMaxWidth().padding(14.dp))
                 }

@@ -352,29 +352,24 @@ internal fun FeedMediaGrid(post: FeedPost, modifier: Modifier = Modifier, compac
 
 @Composable
 internal fun FeedPhotoPanel(post: FeedPost, modifier: Modifier = Modifier, cornerRadius: Dp = 0.dp) {
-    val colorScheme = MaterialTheme.colorScheme
-    val scenicTint = when (post.region) {
-        "경주" -> colorScheme.secondary
-        "안동" -> colorScheme.tertiary
-        else -> colorScheme.primary
-    }
+    // 화면기획의 피드 사진은 사진처럼 채도가 낮은 풍경 팔레트다 (코스 카드 썸네일과 같은 축).
+    // colorScheme.primary/tertiary 를 알파로 겹치면 다크에서도 형광 초록·파랑이 되어 라이트 자산처럼 보인다.
+    val palette = post.scenicKind().scenicPalette(MoyeoTheme.isDark)
 
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(cornerRadius))
-            .background(colorScheme.surfaceVariant)
+            .background(palette.sky)
     ) {
         Canvas(modifier = Modifier.fillMaxSize()) {
-            val sky = colorScheme.primaryContainer.copy(alpha = 0.82f)
-            val water = scenicTint.copy(alpha = 0.24f)
-            val farHill = scenicTint.copy(alpha = 0.30f)
-            val midHill = colorScheme.primary.copy(alpha = 0.44f)
-            val nearHill = colorScheme.primary.copy(alpha = 0.58f)
-            val foreground = colorScheme.onSurface.copy(alpha = 0.28f)
+            val farHill = palette.farHill
+            val midHill = palette.midHill
+            val nearHill = palette.nearHill
+            val foreground = palette.sky.copy(alpha = 0.42f)
 
             drawRect(
                 brush = Brush.verticalGradient(
-                    colors = listOf(sky, water),
+                    colors = listOf(palette.sky, palette.haze, palette.ground),
                     startY = 0f,
                     endY = size.height
                 )
@@ -431,6 +426,14 @@ internal fun FeedPhotoPanel(post: FeedPost, modifier: Modifier = Modifier, corne
             }
         }
     }
+}
+
+/** 화면기획의 `Photo hue` 와 같은 축 — 피드 글의 지역으로 풍경 종류를 고른다. */
+private fun FeedPost.scenicKind(): PlaceScenicKind = when (region) {
+    "안동" -> PlaceScenicKind.Hanok
+    "경주" -> PlaceScenicKind.Autumn
+    "포항", "울릉", "영덕", "울진" -> PlaceScenicKind.Coast
+    else -> PlaceScenicKind.Forest
 }
 
 @Composable

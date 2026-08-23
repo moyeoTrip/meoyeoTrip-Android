@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -44,10 +46,12 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -172,9 +176,16 @@ fun ProfileScreen(
 }
 
 @Composable
-fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
+fun ProfileEditScreen(
+    userProfile: UserDisplayProfile,
+    onBack: () -> Unit,
+    // 캡처용 — true면 28-1 여행 취향 편집 시트가 열린 채 시작한다
+    showTasteSheetInitially: Boolean = false
+) {
     val profile = MockTripRepository.profile
-    var selectedRegions by remember { mutableStateOf(setOf("경주", "안동", "포항", "문경")) }
+    var selectedStyles by remember { mutableStateOf(DefaultTravelStyles.toSet()) }
+    var selectedRegions by remember { mutableStateOf(DefaultInterestRegions.toSet()) }
+    var showTasteSheet by remember { mutableStateOf(showTasteSheetInitially) }
     var showSavedDialog by remember { mutableStateOf(false) }
     val colors = MaterialTheme.colorScheme
     val tints = MoyeoTheme.tints
@@ -188,6 +199,7 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
         CompactMenuHeader(
             title = "프로필 수정",
             onBack = onBack,
+            containerColor = MoyeoTheme.cardSurface,
             trailing = {
                 TextButton(
                     onClick = { showSavedDialog = true },
@@ -206,12 +218,20 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
         ) {
             item {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(MoyeoTheme.cardSurface)
+                        .padding(vertical = 24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box {
-                        AnimalAvatar(profileAvatarEmoji(profile.nickname), modifier = Modifier.size(96.dp))
+                        // 화면기획 28의 아바타 배경은 연초록(primary100)이다 — 기본 코랄이 아니다
+                        AnimalAvatar(
+                            profileAvatarEmoji(profile.nickname),
+                            modifier = Modifier.size(96.dp),
+                            container = tints.primaryTintStrong
+                        )
                         Surface(
                             modifier = Modifier.align(Alignment.BottomEnd).size(26.dp),
                             shape = CircleShape,
@@ -238,6 +258,7 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
                         style = MaterialTheme.typography.labelMedium,
                         color = colors.onSurfaceVariant
                     )
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
             item { ProfileEditGroupHeader("공개 프로필") }
@@ -245,53 +266,13 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
                 ProfileEditRow(label = "자기소개", value = "느긋한 여행 좋아해요", showsChevron = true)
             }
             item {
-                ProfileEditRow(label = "여행 스타일", value = "자연 · 사진", showsChevron = true)
-            }
-            item {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    Text("관심 지역", fontWeight = FontWeight.Bold)
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("경주", "안동", "포항", "문경").forEach { region ->
-                            val on = region in selectedRegions
-                            Surface(
-                                modifier = Modifier.clickable {
-                                    selectedRegions = if (on) {
-                                        selectedRegions - region
-                                    } else {
-                                        selectedRegions + region
-                                    }
-                                },
-                                shape = RoundedCornerShape(50),
-                                color = if (on) colors.primary else colors.surface,
-                                border = BorderStroke(1.dp, if (on) colors.primary else colors.outline)
-                            ) {
-                                Text(
-                                    region,
-                                    Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.Bold,
-                                    color = if (on) colors.onPrimary else colors.onSurface
-                                )
-                            }
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = colors.surfaceVariant,
-                            border = BorderStroke(1.dp, colors.outline)
-                        ) {
-                            Text(
-                                "+ 추가",
-                                Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = colors.onSurfaceVariant,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
+                // changeLog13 — 여행 스타일 행 + 관심 지역 블록을 여행 취향 통합 블록 하나로 합쳤다.
+                // 블록 안 인라인 편집은 없다 — 어디를 탭해도 28-1 편집 시트가 열린다.
+                ProfileEditTasteBlock(
+                    selectedStyles = TravelStyleOptions.filter { it in selectedStyles },
+                    selectedRegions = InterestRegionOptions.filter { it in selectedRegions },
+                    onClick = { showTasteSheet = true }
+                )
             }
             item { ProfileEditGroupHeader("비공개 정보") }
             item {
@@ -310,7 +291,7 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
                     "비공개 정보는 다른 여행자에게 보이지 않아요.",
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
                     style = MaterialTheme.typography.labelSmall,
-                    color = tints.softLine.let { colors.onSurfaceVariant }
+                    color = colors.onSurfaceVariant
                 )
             }
         }
@@ -330,17 +311,214 @@ fun ProfileEditScreen(userProfile: UserDisplayProfile, onBack: () -> Unit) {
             }
         )
     }
+
+    if (showTasteSheet) {
+        TasteEditSheet(
+            initialStyles = selectedStyles,
+            initialRegions = selectedRegions,
+            onDismiss = { showTasteSheet = false },
+            onSave = { styles, regions ->
+                selectedStyles = styles
+                selectedRegions = regions
+                showTasteSheet = false
+            }
+        )
+    }
+}
+
+/** 28의 여행 취향 통합 블록 — 조회와 수정 진입이 한 자리에서 일어난다 (changeLog13). */
+@Composable
+private fun ProfileEditTasteBlock(selectedStyles: List<String>, selectedRegions: List<String>, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MoyeoTheme.cardSurface)
+            .testTag("profile-edit-taste")
+            .clickable(onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("여행 취향", fontWeight = FontWeight.Bold)
+            Text(
+                "탭해서 바로 수정",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant
+            )
+        }
+        Text(
+            "여행 스타일",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant
+        )
+        TasteSummaryChipRow(labels = selectedStyles)
+        Text(
+            "관심 지역",
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onSurfaceVariant
+        )
+        TasteSummaryChipRow(labels = selectedRegions)
+    }
+}
+
+/** 선택된 취향 칩 줄 + `+ 추가` 칩. 칩 자체는 탭 대상이 아니다 — 블록 전체가 시트를 연다. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TasteSummaryChipRow(labels: List<String>) {
+    val colors = MaterialTheme.colorScheme
+    FlowRow(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        labels.forEach { label ->
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = colors.primary
+            ) {
+                Text(
+                    label,
+                    Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = colors.onPrimary
+                )
+            }
+        }
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = colors.surfaceVariant,
+            border = BorderStroke(1.dp, colors.outline)
+        ) {
+            Text(
+                "+ 추가",
+                Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                style = MaterialTheme.typography.labelMedium,
+                color = colors.onSurfaceVariant,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+/** 28-1 · 여행 취향 편집 Bottom Sheet — 후보·기본값·"각 1개 이상" 규칙은 06-1과 동일. */
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun TasteEditSheet(
+    initialStyles: Set<String>,
+    initialRegions: Set<String>,
+    onDismiss: () -> Unit,
+    onSave: (Set<String>, Set<String>) -> Unit
+) {
+    var draftStyles by remember { mutableStateOf(initialStyles) }
+    var draftRegions by remember { mutableStateOf(initialRegions) }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = MoyeoTheme.sheetSurface,
+        tonalElevation = 0.dp
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(start = 20.dp, end = 20.dp, bottom = 28.dp)
+                .testTag("taste-edit-sheet"),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "여행 취향 편집",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    "여행 스타일과 관심 지역은 함께 저장돼요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                TasteRequirementLabel(title = "여행 스타일", requirement = "1개 이상")
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    TravelStyleOptions.forEach { label ->
+                        TasteChip(
+                            label = label,
+                            selected = label in draftStyles,
+                            tag = "taste-edit-style-$label",
+                            contentDescription = "여행 스타일 $label 선택",
+                            onClick = {
+                                draftStyles = if (label in draftStyles) draftStyles - label else draftStyles + label
+                            }
+                        )
+                    }
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                TasteRequirementLabel(title = "관심 지역", requirement = "경북 안에서 1곳 이상")
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    InterestRegionOptions.forEach { label ->
+                        TasteChip(
+                            label = label,
+                            selected = label in draftRegions,
+                            tag = "taste-edit-region-$label",
+                            contentDescription = "관심 지역 $label 선택",
+                            onClick = {
+                                draftRegions = if (label in draftRegions) draftRegions - label else draftRegions + label
+                            }
+                        )
+                    }
+                }
+            }
+            TasteSelectionCaption(styleCount = draftStyles.size, regionCount = draftRegions.size)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier
+                        .height(52.dp)
+                        .testTag("taste-edit-cancel")
+                ) {
+                    Text("취소", fontWeight = FontWeight.Bold)
+                }
+                Button(
+                    onClick = { onSave(draftStyles, draftRegions) },
+                    enabled = draftStyles.isNotEmpty() && draftRegions.isNotEmpty(),
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(52.dp)
+                        .testTag("taste-edit-save"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text("저장", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+    }
 }
 
 /** 프로필 수정의 그룹 제목. 공개/비공개 묶음을 구분한다. */
 @Composable
 private fun ProfileEditGroupHeader(title: String) {
+    // 회색 밴드는 페이지 배경(bgSubtle)이 그대로 드러난 자리다 — 행 그룹만 흰 표면을 깐다
     Text(
         title,
         modifier = Modifier
             .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .padding(horizontal = 20.dp, vertical = 10.dp),
+            .padding(start = 20.dp, top = 20.dp, end = 20.dp, bottom = 8.dp),
         style = MaterialTheme.typography.labelMedium,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         fontWeight = FontWeight.Bold
@@ -351,7 +529,7 @@ private fun ProfileEditGroupHeader(title: String) {
 @Composable
 private fun ProfileEditRow(label: String, value: String, showsChevron: Boolean = false, locked: Boolean = false) {
     val colors = MaterialTheme.colorScheme
-    Column {
+    Column(modifier = Modifier.background(MoyeoTheme.cardSurface)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -639,19 +817,19 @@ fun FriendDexScreen(onBack: () -> Unit) {
                             Text(
                                 text = "카드 뒷면이 비어 있는 친구 2명",
                                 style = MaterialTheme.typography.labelLarge,
-                                color = ForestGreen,
+                                color = MoyeoTheme.tints.onPrimaryTint,
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
                                 text = "경주 단풍·야경에서 만난 친구들에게 한 줄 남겨볼까요?",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MoyeoTheme.tints.primaryEmphasis
                             )
                         }
                         Icon(
                             imageVector = Icons.Filled.ChevronRight,
                             contentDescription = null,
-                            tint = ForestGreen,
+                            tint = MoyeoTheme.tints.primaryEmphasis,
                             modifier = Modifier.size(18.dp)
                         )
                     }
@@ -666,7 +844,7 @@ fun FriendDexScreen(onBack: () -> Unit) {
             }
             item {
                 Text(
-                    text = "다음 모임에서 새 친구를 만나보세요",
+                    text = "다음 모임에서 새 친구를 만나보세요 ✨",
                     modifier = Modifier.fillMaxWidth(),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -984,11 +1162,13 @@ fun SettingsScreen(
 private fun CompactMenuHeader(
     title: String,
     onBack: () -> Unit,
+    // 화면기획에서 헤더는 페이지가 회색인 화면(28)에서만 흰 표면으로 따로 칠해진다
+    containerColor: Color? = null,
     trailing: @Composable () -> Unit = {
         Box(modifier = Modifier.size(34.dp))
     }
 ) {
-    Column {
+    Column(modifier = if (containerColor == null) Modifier else Modifier.background(containerColor)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1352,7 +1532,8 @@ private fun DogamFriendCard(friend: DogamFriend, modifier: Modifier = Modifier) 
                 }
             }
             Text(
-                text = friend.nickname,
+                // 화면기획 27의 카드 라벨은 닉네임 앞 두 어절만 — 숫자까지 넣으면 한 줄에 안 들어간다
+                text = friend.nickname.split(" ").take(2).joinToString(" "),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurface,
                 fontWeight = FontWeight.ExtraBold,
@@ -1922,7 +2103,7 @@ private fun SettingsActionDialog(
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = MoyeoTheme.sheetSurface,
         titleContentColor = if (action.danger) Coral else MaterialTheme.colorScheme.onSurface,
         textContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
         title = {

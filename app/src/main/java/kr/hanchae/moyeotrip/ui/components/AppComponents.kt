@@ -28,14 +28,71 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.domain.RecruitmentSummary
 import kr.hanchae.moyeotrip.domain.recruitmentSummary
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 import kr.hanchae.moyeotrip.ui.theme.SunYellow
+
+/**
+ * 본문 안의 일부 어절만 굵게 강조한다 — 화면기획 본문의 `<b>` 구간을 그대로 옮기기 위한 헬퍼.
+ *
+ * 한 문장을 여러 Text로 쪼개면 줄바꿈 위치가 기획과 달라지므로 반드시 한 AnnotatedString으로 만든다.
+ * [boldParts] 는 문장에 나타나는 순서대로 찾는다. 찾지 못한 조각은 그냥 건너뛴다.
+ */
+fun emphasized(
+    text: String,
+    vararg boldParts: String,
+    boldWeight: FontWeight = FontWeight.Bold,
+    boldColor: Color? = null
+): AnnotatedString = buildAnnotatedString {
+    var cursor = 0
+    boldParts.forEach { part ->
+        if (part.isEmpty()) return@forEach
+        val start = text.indexOf(part, cursor)
+        if (start < 0) return@forEach
+        append(text.substring(cursor, start))
+        withStyle(SpanStyle(fontWeight = boldWeight, color = boldColor ?: Color.Unspecified)) {
+            append(part)
+        }
+        cursor = start + part.length
+    }
+    append(text.substring(cursor))
+}
+
+/**
+ * 화면기획의 모집 진행바. Material3 기본값이 넣는 끝점 표시(초록 점)와 트랙 사이 여백을 없애고,
+ * 라이트에서도 보이는 트랙 색(`softLine`)을 쓴다. 기본 `surfaceVariant`는 라이트 배경(#F7F8F7)과
+ * 같은 값이라 미충족 구간이 아예 보이지 않는다.
+ */
+@Composable
+fun MoyeoLinearProgress(
+    progress: Float,
+    modifier: Modifier = Modifier,
+    height: Dp = 6.dp,
+    color: Color? = null,
+    trackColor: Color? = null
+) {
+    LinearProgressIndicator(
+        progress = { progress },
+        modifier = modifier
+            .height(height)
+            .clip(RoundedCornerShape(50)),
+        color = color ?: MaterialTheme.colorScheme.primary,
+        trackColor = trackColor ?: MoyeoTheme.tints.softLine,
+        gapSize = 0.dp,
+        drawStopIndicator = {}
+    )
+}
 
 @Composable
 fun ScreenHeader(
@@ -273,14 +330,11 @@ fun RecruitmentProgress(summary: RecruitmentSummary, modifier: Modifier = Modifi
     val colorScheme = MaterialTheme.colorScheme
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        LinearProgressIndicator(
-            progress = { summary.progress },
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .clip(RoundedCornerShape(50)),
-            color = if (summary.minimumMet) colorScheme.primary else colorScheme.secondary,
-            trackColor = colorScheme.surfaceVariant
+        MoyeoLinearProgress(
+            progress = summary.progress,
+            modifier = Modifier.fillMaxWidth(),
+            height = 8.dp,
+            color = if (summary.minimumMet) colorScheme.primary else colorScheme.secondary
         )
         Row(
             modifier = Modifier.fillMaxWidth(),

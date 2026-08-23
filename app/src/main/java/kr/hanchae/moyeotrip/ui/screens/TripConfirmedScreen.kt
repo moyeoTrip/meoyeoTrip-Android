@@ -53,6 +53,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kr.hanchae.moyeotrip.R
+import kr.hanchae.moyeotrip.ui.components.emphasized
+import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun TripConfirmedScreen(onBack: () -> Unit, onOpenChat: () -> Unit) {
@@ -114,7 +116,13 @@ fun TripConfirmedScreen(onBack: () -> Unit, onOpenChat: () -> Unit) {
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    text = "5월 22일 마감까지 5명이 모였어요.\n이제 함께 떠나기만 하면 돼요.",
+                    // 화면기획 20-4는 모인 인원만 굵은 초록으로 강조한다
+                    text = emphasized(
+                        "5월 22일 마감까지 5명이 모였어요.\n이제 함께 떠나기만 하면 돼요.",
+                        "5명",
+                        boldWeight = FontWeight.ExtraBold,
+                        boldColor = MoyeoTheme.tints.primaryEmphasis
+                    ),
                     modifier = Modifier.padding(top = 8.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurfaceVariant,

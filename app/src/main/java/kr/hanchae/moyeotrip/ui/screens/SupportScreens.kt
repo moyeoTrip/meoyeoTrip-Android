@@ -41,7 +41,9 @@ import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Route
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.filled.WbSunny
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -65,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
@@ -80,6 +83,8 @@ import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.components.emphasized
+import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -90,7 +95,8 @@ fun NotificationCenterScreen(
     onOpenPost: (String) -> Unit,
     onOpenCourse: (String) -> Unit,
     onOpenTripConfirmed: () -> Unit = {},
-    onOpenTripMessage: () -> Unit = {}
+    onOpenTripMessage: () -> Unit = {},
+    onOpenRemovalReason: () -> Unit = {}
 ) {
     // 항목 구성은 화면기획 13 알림과 동일하다 (오늘 5 · 어제 2, 안읽음 4)
     val notifications = listOf(
@@ -100,7 +106,8 @@ fun NotificationCenterScreen(
             "방금 전",
             "confirmed",
             "trip-cheongsong-juwangsan",
-            unread = true
+            unread = true,
+            emphasis = listOf("주왕산 & 주산지")
         ),
         NotificationItem(
             "경주 단풍·야경 모임이 만들어졌어요 ✨",
@@ -108,7 +115,8 @@ fun NotificationCenterScreen(
             "10분 전",
             "trip",
             "trip-gyeongju-night",
-            unread = true
+            unread = true,
+            emphasis = listOf("경주 단풍·야경")
         ),
         NotificationItem(
             "우직한 곰 7821님이 메시지를 보냈어요",
@@ -116,7 +124,8 @@ fun NotificationCenterScreen(
             "1시간 전",
             "feed",
             "feed-1",
-            unread = true
+            unread = true,
+            emphasis = listOf("메시지")
         ),
         NotificationItem(
             "여행 잘 마치셨죠? 함께 걸은 친구에게 한 줄 남겨볼까요",
@@ -124,14 +133,17 @@ fun NotificationCenterScreen(
             "2시간 전",
             "message",
             "trip-gyeongju-night",
-            unread = true
+            unread = true,
+            emphasis = listOf("한 줄")
         ),
+        // 마감 임박 알림은 시계 아이콘 + 주의 노랑이다 (화면기획 13)
         NotificationItem(
             "마감 D-1 · 현재 4/8명이에요",
             "",
             "3시간 전",
-            "trip",
-            "trip-gyeongju-night"
+            "deadline",
+            "trip-gyeongju-night",
+            emphasis = listOf("D-1")
         ),
         NotificationItem(
             "엉뚱한 토끼 1457님이 친구 요청을 보냈어요",
@@ -139,7 +151,18 @@ fun NotificationCenterScreen(
             "어제 오후 4시",
             "friend-request",
             "friend-rabbit",
-            group = "어제"
+            group = "어제",
+            emphasis = listOf("친구 요청")
+        ),
+        // changeLog14 — 강퇴 통보는 알림 센터의 한 행으로 도착하고, 탭하면 사유(13-1)로 간다
+        NotificationItem(
+            "감포 바다 일출 모임에서 내보내졌어요 · 사유 확인",
+            "",
+            "어제 오후 6시",
+            "removal",
+            "trip-gampo-sunrise",
+            group = "어제",
+            emphasis = listOf("감포 바다 일출 모임")
         ),
         NotificationItem(
             "3명이 내 피드에 좋아요를 눌렀어요",
@@ -147,7 +170,8 @@ fun NotificationCenterScreen(
             "어제 오전 11시",
             "likes",
             "feed-1",
-            group = "어제"
+            group = "어제",
+            emphasis = listOf("3명")
         )
     )
 
@@ -199,6 +223,7 @@ fun NotificationCenterScreen(
                                     "course" -> onOpenCourse(item.targetId)
                                     "confirmed" -> onOpenTripConfirmed()
                                     "message" -> onOpenTripMessage()
+                                    "removal" -> onOpenRemovalReason()
                                     "friend-request" -> Unit
                                     else -> onOpenTrip(item.targetId)
                                 }
@@ -208,8 +233,10 @@ fun NotificationCenterScreen(
                         verticalAlignment = Alignment.Top,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        IconBubble {
-                            // 알림 종류마다 아이콘이 다르다 (화면기획·iOS와 같은 규칙)
+                        // 알림 종류마다 원 배경과 아이콘 색이 다르다 (화면기획 13).
+                        // 전부 초록이면 확정·메시지·마감·강퇴가 목록에서 구분되지 않는다.
+                        val tone = notificationTone(item.type)
+                        IconBubble(color = tone.container) {
                             Icon(
                                 imageVector = when (item.type) {
                                     "confirmed" -> Icons.Filled.Celebration
@@ -217,17 +244,19 @@ fun NotificationCenterScreen(
                                     "course" -> Icons.Filled.WbSunny
                                     "message" -> Icons.Filled.Description
                                     "friend-request" -> Icons.Filled.PersonAdd
+                                    "removal" -> Icons.Filled.WarningAmber
                                     "likes" -> Icons.Filled.FavoriteBorder
+                                    "deadline" -> Icons.Filled.Schedule
                                     else -> Icons.Filled.Groups
                                 },
                                 contentDescription = null,
-                                tint = ForestGreen,
+                                tint = tone.content,
                                 modifier = Modifier.size(20.dp)
                             )
                         }
                         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                             Text(
-                                text = item.title,
+                                text = emphasized(item.title, *item.emphasis.toTypedArray()),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
@@ -269,6 +298,164 @@ fun NotificationCenterScreen(
                         }
                     }
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                }
+            }
+        }
+    }
+}
+
+// / 13-1 내보내기 안내 (changeLog14) — 강퇴 알림을 탭했을 때만 진입한다.
+// / 채팅방은 이미 사라진 뒤라 사유와 이후 정책을 이 화면 하나로 전달하고, 하단 동작은 확인 하나뿐이다.
+@Composable
+fun RemovalReasonScreen(onBack: () -> Unit) {
+    val tints = MoyeoTheme.tints
+    // iOS 다크 표면 위계를 기준으로 맞춘다: 페이지 < 인용 박스 < 카드(+softLine 테두리).
+    // 라이트에서는 페이지·카드가 흰색으로 같아지고 테두리·회색 인용 박스만 남는다 — iOS와 동일.
+    val pageColor = if (MoyeoTheme.isDark) {
+        MaterialTheme.colorScheme.background
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val cardColor = if (MoyeoTheme.isDark) {
+        MaterialTheme.colorScheme.surfaceVariant
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
+    val quoteColor = if (MoyeoTheme.isDark) {
+        MaterialTheme.colorScheme.surface
+    } else {
+        MaterialTheme.colorScheme.surfaceVariant
+    }
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("removal-reason-screen")
+    ) {
+        SupportScaffold(
+            title = "내보내기 안내",
+            containerColor = pageColor,
+            onBack = onBack,
+            bottomBar = {
+                Button(
+                    onClick = onBack,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .testTag("removal-reason-confirm"),
+                    shape = RoundedCornerShape(14.dp)
+                ) {
+                    Text(
+                        text = "확인",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        ) {
+            item {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(top = 26.dp, bottom = 6.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(18.dp)
+                ) {
+                    Surface(modifier = Modifier.size(64.dp), shape = CircleShape, color = tints.dangerTint) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Filled.WarningAmber,
+                                contentDescription = null,
+                                tint = tints.onDangerTint,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "감포 바다 일출 모임에서\n내보내졌어요",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center
+                    )
+                    Text(
+                        text = "2026.08.22 (토) 오후 6:02 · 호스트 결정",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
+            }
+            item {
+                // 사유는 호스트가 남긴 서술 하나만 — 정형 카테고리 태그는 두지 않는다 (changeLog14)
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = cardColor),
+                    border = BorderStroke(1.dp, tints.softLine),
+                    shape = RoundedCornerShape(14.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "호스트가 남긴 사유",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp),
+                            color = quoteColor
+                        ) {
+                            Text(
+                                text = "“모임 컨셉과 맞지 않는 대화가 반복되어, 남은 멤버들을 위해 함께하기 어렵다고 판단했어요.”",
+                                modifier = Modifier.padding(14.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                // 이후 정책 3가지 고지 — 이의 제기·고객센터 경로는 화면기획에 없으므로 두지 않는다
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = cardColor),
+                    border = BorderStroke(1.dp, tints.softLine),
+                    shape = RoundedCornerShape(14.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "내보내진 뒤에는",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        listOf(
+                            "이 모임에는 다시 신청할 수 없어요.",
+                            "채팅방이 내 목록에서 사라져요. 이미 남긴 대화는 모임 채팅방에 그대로 남아요.",
+                            "다른 모임을 찾고 신청하는 데에는 아무 영향이 없어요."
+                        ).forEach { line ->
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "•",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                    text = line,
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -671,35 +858,6 @@ fun HostManageScreen(
                         text = "거절 사유: 일정과 동선 조건이 맞지 않아요.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.secondary,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-        }
-        item {
-            // 모집 취소는 목록 끝의 보조 동작으로 남긴다 (기획 18의 주 동작은 채팅방 CTA)
-            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
-                Text(
-                    text = if (isRecruitmentClosed) "모집 취소됨" else "모집 진행중",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (isRecruitmentClosed) {
-                        MaterialTheme.colorScheme.error
-                    } else {
-                        MaterialTheme.colorScheme.primary
-                    },
-                    fontWeight = FontWeight.ExtraBold,
-                    modifier = Modifier.testTag("host-manage-close-state")
-                )
-                TextButton(
-                    onClick = {
-                        isRecruitmentClosed = !isRecruitmentClosed
-                        MockTripRepository.setRecruitmentClosed(trip.id, isRecruitmentClosed)
-                    },
-                    modifier = Modifier.testTag("host-manage-toggle-close")
-                ) {
-                    Text(
-                        if (isRecruitmentClosed) "모집 다시 열기" else "모집 취소",
-                        color = MaterialTheme.colorScheme.error,
                         fontWeight = FontWeight.Bold
                     )
                 }
@@ -1984,12 +2142,15 @@ private fun SupportScaffold(
     trailingTitle: String? = null,
     onTrailingClick: (() -> Unit)? = null,
     bottomBar: (@Composable () -> Unit)? = null,
+    // 기본 배경(#F7F8F7)은 surfaceVariant와 같은 값이라, 회색 채움 카드를 쓰는 화면은
+    // 화면기획처럼 흰 배경(surface)으로 바꿔야 카드가 읽힌다.
+    containerColor: Color? = null,
     content: androidx.compose.foundation.lazy.LazyListScope.() -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(containerColor ?: MaterialTheme.colorScheme.background)
     ) {
         Row(
             modifier = Modifier
@@ -2127,8 +2288,8 @@ private fun SupportField(label: String, value: String) {
 }
 
 @Composable
-private fun IconBubble(content: @Composable () -> Unit) {
-    Surface(modifier = Modifier.size(42.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primaryContainer) {
+private fun IconBubble(color: Color = MaterialTheme.colorScheme.primaryContainer, content: @Composable () -> Unit) {
+    Surface(modifier = Modifier.size(42.dp), shape = CircleShape, color = color) {
         Box(contentAlignment = Alignment.Center) {
             content()
         }
@@ -2153,6 +2314,28 @@ private fun SupportChip(text: String, modifier: Modifier = Modifier, onClick: ((
     }
 }
 
+/** 알림 한 줄의 아이콘 원 색 조합. */
+private data class NotificationTone(val container: Color, val content: Color)
+
+@Composable
+private fun notificationTone(type: String): NotificationTone {
+    val tints = MoyeoTheme.tints
+    return when (type) {
+        // 메시지·좋아요는 코랄 계열, 좋아요만 한 단 밝은 코랄이다 (화면기획 13)
+        "feed" -> NotificationTone(tints.accentTint, tints.onAccentTint)
+
+        "likes" -> NotificationTone(tints.accentTint, Coral)
+
+        "deadline" -> NotificationTone(tints.warningTint, tints.onWarningTint)
+
+        "friend-request" -> NotificationTone(tints.infoTint, tints.onInfoTint)
+
+        "removal" -> NotificationTone(tints.dangerTint, tints.onDangerTint)
+
+        else -> NotificationTone(tints.primaryTintStrong, tints.primaryEmphasis)
+    }
+}
+
 private data class NotificationItem(
     val title: String,
     val body: String,
@@ -2161,5 +2344,7 @@ private data class NotificationItem(
     val targetId: String,
     // / 화면기획처럼 오늘/어제로 묶어서 보여준다
     val group: String = "오늘",
-    val unread: Boolean = false
+    val unread: Boolean = false,
+    // / 화면기획 본문의 `<b>` 구간 — 모임 이름·핵심 단어만 굵게 남긴다
+    val emphasis: List<String> = emptyList()
 )

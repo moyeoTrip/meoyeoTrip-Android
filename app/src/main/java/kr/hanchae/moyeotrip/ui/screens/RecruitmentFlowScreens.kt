@@ -1,10 +1,11 @@
 package kr.hanchae.moyeotrip.ui.screens
 
+import android.graphics.Paint
+import android.graphics.Typeface
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,7 +22,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Group
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
@@ -55,7 +56,6 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
@@ -70,17 +70,22 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.CourseSource
@@ -91,6 +96,7 @@ import kr.hanchae.moyeotrip.data.RouteStop
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.data.TripScheduleType
+import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
@@ -435,7 +441,7 @@ fun CreatePeopleScreen(draftId: String, onBack: () -> Unit, onContinue: (String)
     var showAgeSheet by rememberSaveable { mutableStateOf(false) }
 
     if (showAgeSheet) {
-        ModalBottomSheet(onDismissRequest = { showAgeSheet = false }) {
+        ModalBottomSheet(onDismissRequest = { showAgeSheet = false }, containerColor = MoyeoTheme.sheetSurface) {
             Column(
                 Modifier.padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -590,12 +596,6 @@ fun CreatePeopleScreen(draftId: String, onBack: () -> Unit, onContinue: (String)
                 )
             }
         }
-        item {
-            InfoBanner(
-                icon = Icons.Filled.Notifications,
-                text = "최소 인원이 모이면 채팅방이 자동으로 열려요. 모집 마감 전까지 정원을 채울 수 있어요."
-            )
-        }
     }
 }
 
@@ -633,11 +633,9 @@ private fun RecruitmentCardPreview(minimum: Int, capacity: Int) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            LinearProgressIndicator(
-                progress = { minimum / capacity.coerceAtLeast(1).toFloat() },
-                modifier = Modifier.fillMaxWidth().height(6.dp).clip(RoundedCornerShape(50)),
-                color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            MoyeoLinearProgress(
+                progress = minimum / capacity.coerceAtLeast(1).toFloat(),
+                modifier = Modifier.fillMaxWidth()
             )
             Text(
                 mood.first,
@@ -787,29 +785,22 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                 }
             }
         }
+        item { LabeledValue("집합 장소 *", query.ifBlank { "청송 시외버스터미널" }, Icons.Filled.Place) }
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf("터미널 정문 앞", "2번 출구", "주차장 입구").forEach { option ->
-                    OutlinedButton(onClick = { detail = option }, shape = RoundedCornerShape(20.dp)) {
-                        Text(
-                            option,
-                            color = if (detail ==
-                                option
-                            ) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            }
-                        )
-                    }
-                }
+            // changeLog15 — 상세 안내는 추천 칩이 아니라 자유 텍스트 입력이다
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Text("상세 안내", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                OutlinedTextField(
+                    value = detail,
+                    onValueChange = { detail = it },
+                    leadingIcon = { Icon(Icons.Filled.EditNote, contentDescription = null) },
+                    placeholder = { Text("만나는 위치를 자세히 남겨주세요 (예: 터미널 정문 앞)") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("meeting-point-detail")
+                )
             }
         }
-        item { LabeledValue("집합 장소 *", query.ifBlank { "청송 시외버스터미널" }, Icons.Filled.Place) }
-        item { LabeledValue("상세 안내", detail, Icons.Filled.EditNote) }
         item { LabeledValue("좌표 (자동 저장)", "36.435612, 129.057214", Icons.Filled.MyLocation) }
         item { LabeledValue("집합 시간 *", draft.meetingLocation.meetingTime, Icons.Filled.Schedule) }
         item {
@@ -966,7 +957,8 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
                     fontWeight = FontWeight.ExtraBold
                 )
                 OutlinedTextField(
-                    value = costText,
+                    // 화면기획 표기는 "45,000원" — 입력값도 천 단위로 끊어 보여준다
+                    value = costText.toIntOrNull()?.let { "%,d".format(it) } ?: costText,
                     onValueChange = { costText = it.filter(Char::isDigit).take(7) },
                     leadingIcon = {
                         Icon(
@@ -1080,22 +1072,31 @@ fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRec
             }
         }
         item {
-            InfoBanner(
-                Icons.Filled.EditNote,
-                if (draft.courseSource ==
-                    CourseSource.Custom
-                ) {
+            // 화면기획 17-7 — 등록 코스는 자물쇠 아이콘, "경로(방문지·순서)는 수정할 수 없고"만 볼드
+            if (draft.courseSource == CourseSource.Custom) {
+                InfoBanner(
+                    Icons.Filled.EditNote,
                     "호스트가 직접 만든 코스예요. 여행이 확정되기 전까지 방문지·시간·순서를 자유롭게 고칠 수 있고, 수정하면 멤버 모두에게 알림이 가요."
-                } else {
-                    "서비스에 등록된 코스를 그대로 가져왔어요. 경로(방문지·순서)는 수정할 수 없고, 일정·집합 장소·인원 조건은 마감 전까지 바꿀 수 있어요."
-                },
-                neutral = draft.courseSource == CourseSource.Linked
-            )
+                )
+            } else {
+                InfoBanner(
+                    icon = Icons.Filled.Lock,
+                    text = buildAnnotatedString {
+                        append("서비스에 등록된 코스를 그대로 가져왔어요. ")
+                        withStyle(SpanStyle(fontWeight = FontWeight.ExtraBold)) {
+                            append("경로(방문지·순서)는 수정할 수 없고")
+                        }
+                        append(", 일정·집합 장소·인원 조건은 마감 전까지 바꿀 수 있어요.")
+                    },
+                    neutral = true
+                )
+            }
         }
         item {
+            // 화면기획 17-7 — 두 번째 초록 카드는 아이콘 없이 텍스트만
             InfoBanner(
-                Icons.Filled.Notifications,
-                "최소 ${draft.minParticipants}명이 모이면 채팅방이 자동으로 열리고, 마감일까지 못 채우면 자연스럽게 소멸돼요."
+                icon = null,
+                text = "최소 ${draft.minParticipants}명이 모이면 채팅방이 자동으로 열리고, 마감일까지 못 채우면 자연스럽게 소멸돼요."
             )
         }
     }
@@ -1238,7 +1239,7 @@ fun CourseRouteScreen(
             }
         }
         items(stops, key = { it.id }) { stop ->
-            RouteStopRow(stop, stops.indexOf(stop), routeEditable) {
+            RouteStopRow(stop, stops.indexOf(stop), routeEditable, locked = confirmed) {
                 if (stops.size > 2) stops = stops.filterNot { item -> item.id == stop.id }
             }
         }
@@ -1319,6 +1320,30 @@ fun NoticeHistoryScreen(tripId: String, onBack: () -> Unit) {
     }
 }
 
+/** 집합 장소 공지의 지도 미리보기 — 화면기획 20-3의 초록 지도 판 + 가운데 핀. */
+@Composable
+private fun NoticeMapPreview() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(68.dp)
+            .background(MoyeoTheme.tints.mapGreen, RoundedCornerShape(10.dp))
+            .testTag("notice-map-preview"),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(modifier = Modifier.size(30.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Filled.LocationOn,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onPrimary
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun NoticeSectionTitle(title: String) {
     Text(
@@ -1386,9 +1411,15 @@ private fun RecruitmentScaffold(
 
 @Composable
 private fun RecruitmentStepIndicator(activeStep: Int) {
+    // 화면기획 17-x 공용 진행 단계 — 완료: 초록 테두리+초록 체크, 현재: 틴트 원+초록 테두리+초록 아이콘, 미래: 회색
     val labels = listOf("코스", "일정", "인원", "세부", "리뷰")
+    val colors = MaterialTheme.colorScheme
+    val tints = MoyeoTheme.tints
+    val isDark = MoyeoTheme.isDark
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         labels.forEachIndexed { index, label ->
+            val done = index < activeStep
+            val current = index == activeStep
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -1396,49 +1427,27 @@ private fun RecruitmentStepIndicator(activeStep: Int) {
                 Surface(
                     modifier = Modifier.size(36.dp),
                     shape = CircleShape,
-                    color = if (index == activeStep) MaterialTheme.colorScheme.onPrimary else Color.Transparent,
-                    border = BorderStroke(
-                        1.dp,
-                        if (index <=
-                            activeStep
-                        ) {
-                            MaterialTheme.colorScheme.primary
-                        } else {
-                            MaterialTheme.colorScheme.outline
-                        }
-                    )
+                    color = when {
+                        current -> tints.primaryTint
+                        done -> Color.Transparent
+                        else -> if (isDark) colors.surfaceVariant else colors.surface
+                    },
+                    border = BorderStroke(1.dp, if (done || current) colors.primary else colors.outline)
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
-                            if (index <
-                                activeStep
-                            ) {
-                                Icons.Filled.Check
-                            } else {
-                                stepIcon(index)
-                            },
+                            if (done) Icons.Filled.Check else stepIcon(index),
                             null,
                             Modifier.size(17.dp),
-                            tint = if (index ==
-                                activeStep
-                            ) {
-                                MaterialTheme.colorScheme.primary
-                            } else {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            }
+                            tint = if (done || current) colors.primary else colors.onSurfaceVariant
                         )
                     }
                 }
                 Text(
                     label,
                     style = MaterialTheme.typography.labelSmall,
-                    color = if (index ==
-                        activeStep
-                    ) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    }
+                    color = if (done || current) colors.primary else colors.onSurfaceVariant,
+                    fontWeight = if (current) FontWeight.ExtraBold else FontWeight.Medium
                 )
             }
         }
@@ -1589,7 +1598,13 @@ private fun CompactCourseChoice(
 }
 
 @Composable
-private fun InfoBanner(icon: ImageVector, text: String, warning: Boolean = false, neutral: Boolean = false) {
+private fun InfoBanner(icon: ImageVector?, text: String, warning: Boolean = false, neutral: Boolean = false) {
+    InfoBanner(icon = icon, text = AnnotatedString(text), warning = warning, neutral = neutral)
+}
+
+/** 화면기획 17-7처럼 본문 일부만 볼드로 강조하거나(icon=null) 아이콘 없이 쓰는 안내 카드. */
+@Composable
+private fun InfoBanner(icon: ImageVector?, text: AnnotatedString, warning: Boolean = false, neutral: Boolean = false) {
     val tints = MoyeoTheme.tints
     val container = when {
         warning -> tints.warningTint
@@ -1608,10 +1623,12 @@ private fun InfoBanner(icon: ImageVector, text: String, warning: Boolean = false
         border = if (neutral) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.Top) {
-            Icon(icon, null, Modifier.size(18.dp), tint = content)
+            if (icon != null) {
+                Icon(icon, null, Modifier.size(18.dp), tint = content)
+            }
             Text(
                 text,
-                Modifier.padding(start = 10.dp),
+                Modifier.padding(start = if (icon != null) 10.dp else 0.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = content,
                 lineHeight = 18.sp
@@ -1636,15 +1653,42 @@ private fun RouteMapPreview(stopCount: Int, modifier: Modifier = Modifier) {
             points.drop(1).forEach { lineTo(it.x, it.y) }
         }
         drawPath(path, Color(0xFF4E9B6B), style = Stroke(width = 8f, cap = StrokeCap.Round))
+        // 화면기획 18-x — 경로 마커는 점이 아니라 순번 숫자가 들어간 원이다
+        val markerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.White.toArgb()
+            textAlign = Paint.Align.CENTER
+            textSize = 12.dp.toPx()
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
         points.forEachIndexed { index, point ->
             drawCircle(Color(0xFF4E9B6B), 15.dp.toPx(), point)
-            drawCircle(Color(0xFFF4F8F5), 3.dp.toPx(), point)
+            if (count >= 2) {
+                drawContext.canvas.nativeCanvas.drawText(
+                    (index + 1).toString(),
+                    point.x,
+                    point.y + markerTextPaint.textSize * 0.36f,
+                    markerTextPaint
+                )
+            } else {
+                drawCircle(Color(0xFFF4F8F5), 3.dp.toPx(), point)
+            }
         }
     }
 }
 
 @Composable
-private fun RouteStopRow(stop: RouteStop, index: Int, editable: Boolean, onRemove: () -> Unit) {
+private fun RouteStopRow(
+    stop: RouteStop,
+    index: Int,
+    editable: Boolean,
+    locked: Boolean = false,
+    onRemove: () -> Unit
+) {
+    // 화면기획 18-3 — 경로가 잠긴 화면의 순번 원은 중립 회색이다 (다크 #506157 / 라이트 #B5BCB5)
+    val orderCircle = when {
+        locked -> if (MoyeoTheme.isDark) Color(0xFF506157) else Color(0xFFB5BCB5)
+        else -> MaterialTheme.colorScheme.primary
+    }
     Surface(
         Modifier.fillMaxWidth(),
         RoundedCornerShape(10.dp),
@@ -1658,11 +1702,11 @@ private fun RouteStopRow(stop: RouteStop, index: Int, editable: Boolean, onRemov
                 Modifier.size(18.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Surface(Modifier.padding(start = 10.dp).size(28.dp), CircleShape, MaterialTheme.colorScheme.primary) {
+            Surface(Modifier.padding(start = 10.dp).size(28.dp), CircleShape, orderCircle) {
                 Box(contentAlignment = Alignment.Center) {
                     Text(
                         "${index + 1}",
-                        color = MaterialTheme.colorScheme.onPrimary,
+                        color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 12.sp
                     )
@@ -1707,18 +1751,24 @@ private fun ScheduleTypeButton(
     modifier: Modifier,
     onClick: () -> Unit
 ) {
+    // 화면기획 17-2 — 선택된 세그먼트는 틴트 배경 + 초록 테두리 + 초록 텍스트
+    val tints = MoyeoTheme.tints
     Surface(
         modifier.clickable(onClick = onClick),
         RoundedCornerShape(8.dp),
-        if (selected) MaterialTheme.colorScheme.background else Color.Transparent,
+        if (selected) tints.primaryTint else Color.Transparent,
         border = if (selected) BorderStroke(1.dp, MaterialTheme.colorScheme.primary) else null
     ) {
         Column(Modifier.padding(vertical = 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(label, fontWeight = FontWeight.ExtraBold)
+            Text(
+                label,
+                fontWeight = FontWeight.ExtraBold,
+                color = if (selected) tints.onPrimaryTint else MaterialTheme.colorScheme.onSurface
+            )
             Text(
                 subtitle,
                 style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+                color = if (selected) tints.onPrimaryTint else MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -1904,6 +1954,10 @@ private fun NoticeCard(notice: RecruitmentNotice, onTogglePin: () -> Unit) {
                 }
             }
             Text(notice.body, style = MaterialTheme.typography.bodyMedium)
+            // 집합 장소 공지에는 지도 미리보기가 함께 붙는다 (화면기획 20-3)
+            if (notice.includesMap) {
+                NoticeMapPreview()
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "${notice.author} · ${notice.createdAt}",

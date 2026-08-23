@@ -477,6 +477,7 @@ object MockTripRepository {
             title = "경주 단풍·야경 1박 2일",
             scheduleDate = "2026.06.05 (금)",
             scheduleTime = "14:00 - 다음 날 12:00",
+            assemblyTimeLabel = "14:00",
             meetingPoint = "경주역 2번 출구",
             joined = 4,
             capacity = 8,
@@ -493,11 +494,12 @@ object MockTripRepository {
             title = "포항·영덕 동해 드라이브",
             scheduleDate = "2026.06.15 (월)",
             scheduleTime = "09:30 - 17:30",
-            meetingPoint = "포항역 1번 출구",
+            assemblyTimeLabel = "09:30",
+            meetingPoint = "포항역 광장",
             joined = 6,
             capacity = 6,
             minParticipants = 3,
-            ddayLabel = "D-11",
+            ddayLabel = "D-1",
             statusLabel = "출발확정",
             host = "우직한 곰 7821",
             hostAvatar = "🐻",
@@ -1191,7 +1193,7 @@ object MockTripRepository {
                 body =
                     "${trip.scheduleDate} ${trip.meetingLocation.meetingTime} " +
                         "${trip.meetingLocation.name} ${trip.meetingLocation.detail}\n" +
-                        "정각에 출발해요. 늦으면 채팅방에 남겨주세요!",
+                        "${trip.scheduleTime.substringBefore(" -").trim()} 정각에 출발해요. 늦으면 채팅방에 남겨주세요!",
                 author = "${trip.host} (호스트)",
                 createdAt = "5월 20일 오후 2:14",
                 isPinned = true,
@@ -1210,7 +1212,7 @@ object MockTripRepository {
                 id = "notice-$tripId-parking",
                 tripId = tripId,
                 title = "주차 안내",
-                body = "터미널 공영주차장을 이용하면 돼요.",
+                body = "터미널 공영주차장 이용하시면 돼요 (하루 3,000원)",
                 author = "${trip.host} (호스트)",
                 createdAt = "5월 18일 오후 7:30",
                 isPinned = false
@@ -1219,7 +1221,7 @@ object MockTripRepository {
                 id = "notice-$tripId-lunch",
                 tripId = tripId,
                 title = "점심 메뉴 투표 결과",
-                body = "달기약수탕 백숙으로 정해졌어요.",
+                body = "달기약수탕 백숙으로 정해졌어요 🍲",
                 author = "${trip.host} (호스트)",
                 createdAt = "5월 17일 오후 9:12",
                 isPinned = false

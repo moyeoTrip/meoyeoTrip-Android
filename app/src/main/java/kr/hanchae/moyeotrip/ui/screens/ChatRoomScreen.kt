@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -26,10 +27,18 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Autorenew
+import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.People
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledIconButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,10 +62,15 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
@@ -127,6 +141,7 @@ fun ChatRoomScreen(
     ) {
         ChatRoomTopBar(
             thread = thread,
+            showCount = trip == null || !isOnline,
             onBack = onBack,
             onCallClick = {
                 toolbarMessage = "호스트 연락 방식과 통화 가능 시간을 확인할 수 있어요."
@@ -137,11 +152,19 @@ fun ChatRoomScreen(
         )
         if (!isOnline) OfflineChatWarning()
         if (trip != null && isOnline) {
-            val pinned = MockTripRepository.noticesForTrip(trip.id).firstOrNull { it.isPinned }
+            val notices = MockTripRepository.noticesForTrip(trip.id)
+            val pinnedCount = notices.count { it.isPinned }
+            // 화면기획 20 — "2/5명 · 5/25(토) 08:00–18:00 · 당일치기 · 마감 D-3", 마감만 강조색
             Text(
-                text =
-                    "${trip.joined}/${trip.capacity}명 · ${trip.scheduleDate} " +
-                        "${trip.scheduleTime} · ${trip.scheduleType.label} · ${trip.ddayLabel}",
+                text = buildAnnotatedString {
+                    append(
+                        "${trip.joined}/${trip.capacity}명 · ${chatCompactDate(trip.scheduleDate)} " +
+                            "${trip.scheduleTime.replace(" - ", "–")} · ${trip.scheduleType.label} · "
+                    )
+                    withStyle(SpanStyle(color = colors.secondary, fontWeight = FontWeight.Bold)) {
+                        append("마감 ${trip.ddayLabel}")
+                    }
+                },
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 style = MaterialTheme.typography.bodySmall,
                 color = colors.onSurfaceVariant,
@@ -155,34 +178,56 @@ fun ChatRoomScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 listOf(
-                    "1인 ${"%,d".format(trip.estimatedCostPerPerson)}원",
-                    "${trip.minimumAge}~${trip.maximumAge}세",
-                    trip.genderCondition
-                ).forEach { condition -> InfoPill(condition) }
+                    Icons.Filled.Payments to "1인 ${"%,d".format(trip.estimatedCostPerPerson)}원",
+                    Icons.Filled.People to "${trip.minimumAge}~${trip.maximumAge}세",
+                    Icons.Filled.Person to trip.genderCondition
+                ).forEach { (icon, condition) -> ConditionChip(icon = icon, text = condition) }
             }
-            if (pinned != null) {
+            HorizontalDivider(color = colors.outline.copy(alpha = .45f), modifier = Modifier.padding(top = 6.dp))
+            if (pinnedCount > 0) {
+                // 화면기획 20 — 고정 공지 바: "07:50 … 집합" + "공지 n개 · 고정 n · 이력 보기"
                 ChatUtilityBar(
-                    eyebrow = "고정 공지",
-                    title = pinned.title,
-                    body = pinned.body,
+                    icon = Icons.Filled.Description,
+                    title = "${trip.meetingLocation.meetingTime} ${trip.meetingLocation.name} " +
+                        "${trip.meetingLocation.detail} 집합",
+                    subtitle = "공지 ${notices.size}개 · 고정 $pinnedCount · 이력 보기",
+                    tinted = true,
                     tag = "chat-pinned-notice",
-                    onClick = { onOpenNotices(trip.id) }
+                    onClick = { onOpenNotices(trip.id) },
+                    trailing = {
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = colors.onSurfaceVariant
+                        )
+                    }
                 )
             }
             ChatUtilityBar(
-                eyebrow = trip.courseSource.label,
+                icon = Icons.Filled.Map,
                 title = MockTripRepository.findCourseForTrip(trip).title,
-                body = "방문지 ${trip.routeStops.size.takeIf {
+                subtitle = "방문지 ${trip.routeStops.size.takeIf {
                     it > 0
-                } ?: MockTripRepository.findCourseForTrip(trip).stops.size}곳 · " + if (trip.courseSource ==
-                    kr.hanchae.moyeotrip.data.CourseSource.Custom
-                ) {
-                    "호스트가 만든 경로 · 확정 전 편집 가능"
-                } else {
-                    "등록 코스 · 방문지 수정 불가"
-                },
+                } ?: MockTripRepository.findCourseForTrip(trip).stops.size}곳 · ${trip.courseSource.label}",
                 tag = "chat-route-summary",
-                onClick = { onOpenRoute(trip.id) }
+                onClick = { onOpenRoute(trip.id) },
+                trailing = {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = Color.Transparent,
+                        border = BorderStroke(1.dp, colors.primary.copy(alpha = .65f)),
+                        modifier = Modifier.clickable { onOpenRoute(trip.id) }.testTag("chat-route-edit")
+                    ) {
+                        Text(
+                            text = "경로 수정",
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colors.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
             )
         }
         LazyColumn(
@@ -196,16 +241,6 @@ fun ChatRoomScreen(
             if (thread.isReadOnly) {
                 item {
                     ChatArchiveNotice(thread = thread)
-                }
-            } else if (isOnline) {
-                item {
-                    Text(
-                        text = "모임 신청 후 이어지는 여행 채팅방이에요",
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colors.onSurfaceVariant
-                    )
                 }
             }
             items(messages) { message ->
@@ -338,6 +373,22 @@ fun ChatRoomScreen(
     }
 }
 
+/**
+ * 오버레이 배경으로 쓰는 기본 채팅방 — 캡처 도구가 쓰는 기본 chatId와 같다.
+ */
+internal const val OVERLAY_BACKDROP_THREAD_ID = "chat-cheongsong-juwangsan"
+
+/**
+ * 오버레이(20-2 첨부 시트 · 32 신고 시트) 배경으로 쓰는 채팅방 본문 — changeLog14 `ChatRoomBody`.
+ *
+ * 화면과 오버레이 배경이 같은 코드를 쓰도록 [ChatRoomScreen]을 그대로 재사용한다.
+ * 상호작용은 위에 얹히는 스크림이 차단하므로 콜백은 비워 둔다.
+ */
+@Composable
+internal fun ChatRoomBody(threadId: String = OVERLAY_BACKDROP_THREAD_ID, isOnline: Boolean = true) {
+    ChatRoomScreen(threadId = threadId, isOnline = isOnline, onBack = {})
+}
+
 @Composable
 private fun OfflineChatWarning() {
     val tints = MoyeoTheme.tints
@@ -421,29 +472,74 @@ private fun Modifier.dashedRoundedBorder(color: Color, radius: androidx.compose.
     )
 }
 
+/** 화면기획 20 조건 칩 — 아이콘 + 텍스트의 필 형태. */
 @Composable
-private fun ChatUtilityBar(eyebrow: String, title: String, body: String, tag: String, onClick: () -> Unit) {
+private fun ConditionChip(icon: ImageVector, text: String) {
+    val colors = MaterialTheme.colorScheme
     Surface(
-        modifier = Modifier.fillMaxWidth().padding(
-            horizontal = 16.dp,
-            vertical = 4.dp
-        ).testTag(tag).clickable(onClick = onClick),
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f))
+        shape = RoundedCornerShape(50),
+        color = if (MoyeoTheme.isDark) colors.surfaceVariant else colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
     ) {
-        Column(
-            Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
+        Row(
+            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(5.dp)
         ) {
-            Text(eyebrow, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
-            Text(title, style = MaterialTheme.typography.labelLarge)
-            Text(
-                body,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1
-            )
+            Icon(imageVector = icon, contentDescription = null, modifier = Modifier.size(14.dp))
+            Text(text = text, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/**
+ * 화면기획 20의 고정 공지/코스 바 — 전체 폭 띠에 아이콘 + 굵은 제목 + 회색 부제,
+ * 우측에는 화면별 트레일링(공지: 셰브런, 코스: "경로 수정" 버튼)이 붙는다.
+ */
+@Composable
+private fun ChatUtilityBar(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    tag: String,
+    onClick: () -> Unit,
+    tinted: Boolean = false,
+    trailing: (@Composable () -> Unit)? = null
+) {
+    val colors = MaterialTheme.colorScheme
+    val container = when {
+        tinted -> MoyeoTheme.tints.primaryTint
+        MoyeoTheme.isDark -> colors.surfaceVariant
+        else -> colors.surface
+    }
+    Surface(
+        modifier = Modifier.fillMaxWidth().testTag(tag).clickable(onClick = onClick),
+        color = container
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = colors.onSurfaceVariant
+                )
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(title, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant,
+                        maxLines = 1
+                    )
+                }
+                trailing?.invoke()
+            }
+            HorizontalDivider(color = colors.outline.copy(alpha = .45f))
         }
     }
 }
@@ -466,31 +562,72 @@ private fun SystemPillMessage(text: String) {
     }
 }
 
+/**
+ * 화면기획 20의 경로 수정 카드 — 아이콘+굵은 제목, 본문(바뀐 방문지만 볼드), "바뀐 경로 보기 →" 링크.
+ */
 @Composable
 private fun RouteChangeMessage(message: ChatMessage) {
+    val tints = MoyeoTheme.tints
+    val lines = message.text.split("\n", limit = 2)
+    val title = lines.first()
+    val body = lines.getOrElse(1) { "" }
+    val changedRange = Regex("""\S+ → .+?(?=(으|이|가|은|는|을|를)?로\s|$)""").find(body)?.range
+
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("chat-route-change-message"),
-        shape = RoundedCornerShape(10.dp),
-        color = MaterialTheme.colorScheme.primaryContainer
+        shape = RoundedCornerShape(14.dp),
+        color = tints.primaryTint
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text("경로 변경", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.primary)
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                Icon(
+                    imageVector = Icons.Filled.Autorenew,
+                    contentDescription = null,
+                    modifier = Modifier.size(15.dp),
+                    tint = tints.onPrimaryTint
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = tints.onPrimaryTint,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+            if (body.isNotEmpty()) {
+                Text(
+                    text = buildAnnotatedString {
+                        append(body)
+                        if (changedRange != null) {
+                            addStyle(
+                                SpanStyle(fontWeight = FontWeight.ExtraBold),
+                                changedRange.first,
+                                changedRange.last + 1
+                            )
+                        }
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    lineHeight = 18.sp
+                )
+            }
             Text(
-                message.text,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-            Text(
-                message.time,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = .7f)
+                text = "바뀐 경로 보기 →",
+                style = MaterialTheme.typography.labelMedium,
+                color = tints.onPrimaryTint,
+                fontWeight = FontWeight.ExtraBold
             )
         }
     }
 }
 
 @Composable
-private fun ChatRoomTopBar(thread: ChatThread, onBack: () -> Unit, onCallClick: () -> Unit, onMoreClick: () -> Unit) {
+private fun ChatRoomTopBar(
+    thread: ChatThread,
+    onBack: () -> Unit,
+    onCallClick: () -> Unit,
+    onMoreClick: () -> Unit,
+    showCount: Boolean = true
+) {
     val colors = MaterialTheme.colorScheme
 
     Column(
@@ -534,11 +671,14 @@ private fun ChatRoomTopBar(thread: ChatThread, onBack: () -> Unit, onCallClick: 
                     color = colors.onSurface,
                     textAlign = TextAlign.Center
                 )
-                Text(
-                    text = thread.countText,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = colors.onSurfaceVariant
-                )
+                if (showCount) {
+                    // 화면기획 20은 헤더 아래 메타 줄이 인원을 보여줘 헤더에는 중복 표기하지 않는다
+                    Text(
+                        text = thread.countText,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = colors.onSurfaceVariant
+                    )
+                }
             }
 
             Box(modifier = Modifier.width(112.dp), contentAlignment = Alignment.CenterEnd) {
@@ -629,43 +769,80 @@ private fun ChatArchiveNotice(thread: ChatThread) {
 private fun MessageBubble(message: ChatMessage) {
     val colors = MaterialTheme.colorScheme
     // 디자인 시스템의 chat-mine 토큰. primaryContainer 는 선택 상태 색이라 "내 메시지"로 읽히지 않는다.
-    val bubbleColor = if (message.mine) MoyeoTheme.tints.chatMine else colors.surface
+    // 상대 버블은 화면기획 20 기준 다크에서 한 단 밝은 bgRaised(#18231E)다.
+    val bubbleColor = when {
+        message.mine -> MoyeoTheme.tints.chatMine
+        MoyeoTheme.isDark -> colors.surfaceVariant
+        else -> colors.surface
+    }
     val contentColor = if (message.mine) colors.onPrimaryContainer else colors.onSurface
-    val metaColor = if (message.mine) colors.onPrimaryContainer.copy(alpha = 0.72f) else colors.onSurfaceVariant
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = if (message.mine) Arrangement.End else Arrangement.Start
-    ) {
-        Box(
+    val bubbleShape = RoundedCornerShape(
+        topStart = 18.dp,
+        topEnd = 18.dp,
+        bottomStart = if (message.mine) 18.dp else 4.dp,
+        bottomEnd = if (message.mine) 4.dp else 18.dp
+    )
+    val bubble: @Composable () -> Unit = {
+        Text(
+            text = message.text,
             modifier = Modifier
-                .fillMaxWidth(0.78f),
-            contentAlignment = if (message.mine) Alignment.CenterEnd else Alignment.CenterStart
+                .widthIn(max = 264.dp)
+                .background(color = bubbleColor, shape = bubbleShape)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            style = MaterialTheme.typography.bodyLarge,
+            color = contentColor
+        )
+    }
+
+    if (message.mine) {
+        // 화면기획 20 — 내 메시지는 시간 라벨이 버블 왼쪽에 붙는다
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.Bottom
         ) {
+            Text(
+                text = message.time,
+                modifier = Modifier.padding(end = 6.dp, bottom = 2.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant
+            )
+            bubble()
+        }
+    } else {
+        // 화면기획 20 — 상대 메시지는 아바타 + 이름 + 버블, 시간은 버블 오른쪽
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            UserAvatar(
+                imageUrl = null,
+                nickname = message.sender,
+                modifier = Modifier.size(36.dp),
+                fallbackFontSize = 18.sp
+            )
             Column(
-                modifier = Modifier
-                    .background(
-                        color = bubbleColor,
-                        shape = RoundedCornerShape(
-                            topStart = 18.dp,
-                            topEnd = 18.dp,
-                            bottomStart = if (message.mine) 18.dp else 4.dp,
-                            bottomEnd = if (message.mine) 4.dp else 18.dp
-                        )
-                    )
-                    .padding(horizontal = 14.dp, vertical = 10.dp)
+                modifier = Modifier.padding(start = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 Text(
-                    text = message.text,
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = contentColor
+                    text = message.sender,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant
                 )
-                Text(
-                    text = message.time,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = metaColor
-                )
+                Row(verticalAlignment = Alignment.Bottom) {
+                    bubble()
+                    Text(
+                        text = message.time,
+                        modifier = Modifier.padding(start = 6.dp, bottom = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
             }
         }
     }
+}
+
+/** 화면기획 20의 날짜 표기 — "2026.05.25 (토)" → "5/25(토)". */
+private fun chatCompactDate(value: String): String {
+    val match = Regex("""\d{4}\.\s*(\d{1,2})\.\s*(\d{1,2})\s*\(([^)]+)\)""").find(value) ?: return value
+    return "${match.groupValues[1].toInt()}/${match.groupValues[2].toInt()}(${match.groupValues[3]})"
 }

@@ -8,6 +8,8 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
@@ -102,6 +104,7 @@ import kr.hanchae.moyeotrip.domain.auth.ProfileImageCandidates
 import kr.hanchae.moyeotrip.domain.auth.SignupState
 import kr.hanchae.moyeotrip.notifications.MoyeoPushTokenStore
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -148,6 +151,15 @@ fun AuthFlowScreen(
     var agreedLocation by rememberSaveable { mutableStateOf(false) }
     var agreedMarketing by rememberSaveable { mutableStateOf(false) }
     var termsDetailDocument by rememberSaveable { mutableStateOf<String?>(null) }
+    // changeLog13 — 여행 취향. Set은 rememberSaveable로 저장할 수 없어 문자열로 인코딩해 둔다.
+    var selectedTravelStyles by rememberSaveable(initialStepKey) {
+        mutableStateOf(DefaultTravelStyles.joinToString(","))
+    }
+    var selectedInterestRegions by rememberSaveable(initialStepKey) {
+        mutableStateOf(DefaultInterestRegions.joinToString(","))
+    }
+    val travelStyleSelection = decodeTasteSelection(selectedTravelStyles)
+    val interestRegionSelection = decodeTasteSelection(selectedInterestRegions)
     val step = AuthStep.valueOf(stepName)
 
     LaunchedEffect(coordinator, initialStepKey) {
@@ -194,7 +206,9 @@ fun AuthFlowScreen(
 
             AuthStep.BASIC_INFO -> AuthStep.NICKNAME.name
 
-            AuthStep.TERMS -> AuthStep.BASIC_INFO.name
+            AuthStep.TASTE -> AuthStep.BASIC_INFO.name
+
+            AuthStep.TERMS -> AuthStep.TASTE.name
         }
     }
 
@@ -302,7 +316,7 @@ fun AuthFlowScreen(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    // 화면기획은 이전 / 저장하고 프로필 만들기 두 버튼이다
+                    // 화면기획(changeLog13)은 이전 / 저장하고 다음 두 버튼이다 — 다음은 여행 취향(7/8)
                     AuthGhostButton(
                         text = "이전",
                         tag = "auth-basic-back",
@@ -311,15 +325,43 @@ fun AuthFlowScreen(
                         onClick = goBack
                     )
                     AuthPrimaryButton(
-                        text = if (authState.isLoading) "계정을 만들고 있어요..." else "저장하고 프로필 만들기",
+                        text = if (authState.isLoading) "계정을 만들고 있어요..." else "저장하고 다음",
                         tag = "auth-basic-next",
-                        contentDescription = "기본정보 저장하고 프로필 만들기",
+                        contentDescription = "기본정보 저장하고 다음",
                         enabled = isValidBirthDate(selectedBirth) &&
                             selectedGender.isNotBlank() &&
                             !authState.isLoading,
                         modifier = Modifier.weight(1f),
-                        onClick = { stepName = AuthStep.TERMS.name }
+                        onClick = { stepName = AuthStep.TASTE.name }
                     )
+                }
+
+                AuthStep.TASTE -> {
+                    // 선택 개수 요약은 CTA 바로 위에 붙는다 (화면기획 06-1)
+                    TasteSelectionCaption(
+                        styleCount = travelStyleSelection.size,
+                        regionCount = interestRegionSelection.size
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        AuthGhostButton(
+                            text = "이전",
+                            tag = "auth-taste-back",
+                            contentDescription = "여행 취향 이전 단계",
+                            modifier = Modifier.width(96.dp),
+                            onClick = goBack
+                        )
+                        AuthPrimaryButton(
+                            text = "저장하고 프로필 만들기",
+                            tag = "auth-taste-next",
+                            contentDescription = "여행 취향 저장하고 프로필 만들기",
+                            enabled = travelStyleSelection.isNotEmpty() && interestRegionSelection.isNotEmpty(),
+                            modifier = Modifier.weight(1f),
+                            onClick = { stepName = AuthStep.TERMS.name }
+                        )
+                    }
                 }
 
                 AuthStep.TERMS -> AuthPrimaryButton(
@@ -403,6 +445,17 @@ fun AuthFlowScreen(
                 onRetry = submitSignup
             )
 
+            AuthStep.TASTE -> TasteStep(
+                selectedStyles = travelStyleSelection,
+                selectedRegions = interestRegionSelection,
+                onToggleStyle = { label ->
+                    selectedTravelStyles = encodeToggledTaste(TravelStyleOptions, travelStyleSelection, label)
+                },
+                onToggleRegion = { label ->
+                    selectedInterestRegions = encodeToggledTaste(InterestRegionOptions, interestRegionSelection, label)
+                }
+            )
+
             AuthStep.TERMS -> TermsStep(
                 agreedAge = agreedAge,
                 agreedService = agreedService,
@@ -438,6 +491,7 @@ private fun authStepForKey(key: String?): AuthStep = when (key) {
     "email" -> AuthStep.EMAIL
     "nickname" -> AuthStep.NICKNAME
     "profile-basic" -> AuthStep.BASIC_INFO
+    "profile-taste" -> AuthStep.TASTE
     "profile-image" -> AuthStep.CHARACTER
     "terms" -> AuthStep.TERMS
     else -> AuthStep.ONBOARDING_ONE
@@ -445,7 +499,7 @@ private fun authStepForKey(key: String?): AuthStep = when (key) {
 
 private fun previewAuthState(key: String?): AuthFlowState {
     val nickname = NicknameSelectionState.initial().select("따스한 사슴 3492")
-    // 7단계 진입 상태는 후보 0개다. 화면기획·웹·iOS 모두 "만들기 전" 화면을 보여준다.
+    // 8단계 진입 상태는 후보 0개다. 화면기획·웹·iOS 모두 "만들기 전" 화면을 보여준다.
     val profileImages = ProfileImageCandidates(
         candidates = emptyList(),
         generationCount = 0,
@@ -537,7 +591,7 @@ private fun AuthFlowFrame(
                     Spacer(modifier = Modifier.size(44.dp))
                 }
             }
-            // 단계 라벨은 7단계 프로그레스와 한 쌍이다. 프로그레스가 없는 보조 화면
+            // 단계 라벨은 8단계 프로그레스와 한 쌍이다. 프로그레스가 없는 보조 화면
             // (스플래시·약관)에서는 본문 제목과 같은 말이 두 번 나와서 그리지 않는다.
             if (progress != null) {
                 Row(
@@ -557,14 +611,9 @@ private fun AuthFlowFrame(
                         color = colorScheme.onSurfaceVariant
                     )
                 }
-                LinearProgressIndicator(
-                    progress = { progress.current / progress.total.toFloat() },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(50)),
-                    color = colorScheme.primary,
-                    trackColor = colorScheme.surfaceVariant
+                MoyeoLinearProgress(
+                    progress = progress.current / progress.total.toFloat(),
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }
@@ -1328,7 +1377,7 @@ private fun ProfileImageGeneratingCard(nickname: String?) {
                     .height(6.dp)
                     .clip(RoundedCornerShape(99.dp)),
                 color = MaterialTheme.colorScheme.primary,
-                trackColor = MaterialTheme.colorScheme.surfaceVariant
+                trackColor = MoyeoTheme.tints.softLine
             )
             Text(
                 text = "조금 오래 걸릴 수 있어요. 다른 화면으로 이동해도 완성된 후보는 서버에 보관돼요.",
@@ -1712,7 +1761,7 @@ private fun BirthDateBottomSheet(initialDate: LocalDate, onDismiss: () -> Unit, 
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
-        containerColor = MaterialTheme.colorScheme.surface,
+        containerColor = MoyeoTheme.sheetSurface,
         tonalElevation = 0.dp
     ) {
         Column(
@@ -1778,6 +1827,155 @@ internal fun isValidBirthDate(value: String, today: LocalDate = LocalDate.now())
     val date = LocalDate.parse(value)
     !date.isAfter(today) && date.year >= 1900
 }.getOrDefault(false)
+
+// changeLog13 — 여행 취향 후보. 코스 태그·지역 목데이터와 같은 단어를 쓴다.
+internal val TravelStyleOptions = listOf("자연", "힐링", "사진", "맛집", "역사", "야경", "트레킹", "카페")
+internal val InterestRegionOptions = listOf("경주", "안동", "포항", "문경", "청송", "영주", "울진", "울릉")
+
+// 기본 선택은 비교 목데이터와 같다 — 28 프로필 수정과 25 공개 프로필이 이미 쓰는 값.
+internal val DefaultTravelStyles = listOf("자연", "사진")
+internal val DefaultInterestRegions = listOf("경주", "안동", "포항", "문경")
+
+internal fun decodeTasteSelection(encoded: String): Set<String> = encoded.split(",").filter { it.isNotBlank() }.toSet()
+
+/** 토글 결과를 후보 순서대로 다시 인코딩한다 — 표시 순서가 탭 순서에 흔들리지 않는다. */
+internal fun encodeToggledTaste(options: List<String>, current: Set<String>, label: String): String {
+    val next = if (label in current) current - label else current + label
+    return options.filter { it in next }.joinToString(",")
+}
+
+/** 06-1 · 여행 취향 — 스타일 & 관심 지역 (Step 7/8). */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun TasteStep(
+    selectedStyles: Set<String>,
+    selectedRegions: Set<String>,
+    onToggleStyle: (String) -> Unit,
+    onToggleRegion: (String) -> Unit
+) {
+    StepTitle(
+        title = "어떤 여행을 좋아하세요?",
+        subtitle = "여행 스타일과 관심 지역을 알려주시면\n딱 맞는 모집을 먼저 보여드려요."
+    )
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        TasteRequirementLabel(title = "여행 스타일", requirement = "1개 이상")
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            TravelStyleOptions.forEach { label ->
+                TasteChip(
+                    label = label,
+                    selected = label in selectedStyles,
+                    tag = "auth-taste-style-$label",
+                    contentDescription = "여행 스타일 $label 선택",
+                    onClick = { onToggleStyle(label) }
+                )
+            }
+        }
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        TasteRequirementLabel(title = "관심 지역", requirement = "경북 안에서 1곳 이상")
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            InterestRegionOptions.forEach { label ->
+                TasteChip(
+                    label = label,
+                    selected = label in selectedRegions,
+                    tag = "auth-taste-region-$label",
+                    contentDescription = "관심 지역 $label 선택",
+                    onClick = { onToggleRegion(label) }
+                )
+            }
+        }
+    }
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("auth-taste-info"),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Text(
+            text = "여행 스타일과 관심 지역은 마이 > 프로필 수정에서 언제든 함께 바꿀 수 있어요.",
+            modifier = Modifier.padding(14.dp),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/** "여행 스타일 * · 1개 이상" 같은 필수 라벨 줄. 가입(06-1)과 편집 시트(28-1)가 함께 쓴다. */
+@Composable
+internal fun TasteRequirementLabel(title: String, requirement: String) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = " *",
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.error
+        )
+        Text(
+            text = " · $requirement",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+/**
+ * 여행 취향 선택 칩 — changeLog12의 단일 강조 원칙대로 배경 틴트 + 외곽선으로만
+ * 선택을 표시하고 체크 배지를 두지 않는다. 가입(06-1)과 편집 시트(28-1)가 함께 쓴다.
+ */
+@Composable
+internal fun TasteChip(label: String, selected: Boolean, tag: String, contentDescription: String, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier
+            .height(38.dp)
+            .testTag(tag)
+            .semantics { this.contentDescription = contentDescription }
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(999.dp),
+        color = if (selected) MoyeoTheme.tints.primaryTint else colors.surface,
+        border = BorderStroke(1.dp, if (selected) colors.primary else colors.outline)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxHeight()
+                .padding(horizontal = 14.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelMedium,
+                color = if (selected) colors.primary else colors.onSurface,
+                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium
+            )
+        }
+    }
+}
+
+/** "여행 스타일 N개 · 관심 지역 N곳 선택" 요약 캡션. */
+@Composable
+internal fun TasteSelectionCaption(styleCount: Int, regionCount: Int, modifier: Modifier = Modifier) {
+    Text(
+        text = "여행 스타일 ${styleCount}개 · 관심 지역 ${regionCount}곳 선택",
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("taste-selection-caption"),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center
+    )
+}
 
 @Composable
 private fun TermsStep(
@@ -2392,28 +2590,28 @@ private enum class AuthStep(
         headerLabel = "온보딩",
         testTag = "auth-step-onboarding-1",
         screenDescription = "온보딩 첫 번째 화면",
-        progress = AuthProgress(current = 1, total = 7)
+        progress = AuthProgress(current = 1, total = 8)
     ),
     ONBOARDING_TWO(
         headerLabel = "온보딩",
         testTag = "auth-step-onboarding-2",
         screenDescription = "온보딩 두 번째 화면",
-        progress = AuthProgress(current = 2, total = 7)
+        progress = AuthProgress(current = 2, total = 8)
     ),
     ONBOARDING_THREE(
         headerLabel = "온보딩",
         testTag = "auth-step-onboarding-3",
         screenDescription = "온보딩 세 번째 화면",
-        progress = AuthProgress(current = 3, total = 7)
+        progress = AuthProgress(current = 3, total = 8)
     ),
     LOGIN(
         headerLabel = "로그인",
         testTag = "auth-step-login",
         screenDescription = "소셜 로그인 화면",
-        progress = AuthProgress(current = 4, total = 7)
+        progress = AuthProgress(current = 4, total = 8)
     ),
     EMAIL(
-        // 이메일 로그인은 로그인 방식 선택에서 갈라지는 보조 화면이다 — 7단계 프로그레스를 다시 그리지 않는다
+        // 이메일 로그인은 로그인 방식 선택에서 갈라지는 보조 화면이다 — 8단계 프로그레스를 다시 그리지 않는다
         headerLabel = "이메일 로그인",
         testTag = "auth-step-email",
         screenDescription = "이메일 로그인 및 계정 생성 화면",
@@ -2423,22 +2621,30 @@ private enum class AuthStep(
         headerLabel = "프로필 설정",
         testTag = "auth-step-nickname",
         screenDescription = "닉네임 선택 화면",
-        progress = AuthProgress(current = 5, total = 7)
+        progress = AuthProgress(current = 5, total = 8)
     ),
     CHARACTER(
         headerLabel = "프로필 설정",
         testTag = "auth-step-profile-image",
         screenDescription = "프로필 이미지 생성 선택 화면",
-        progress = AuthProgress(current = 7, total = 7)
+        progress = AuthProgress(current = 8, total = 8)
     ),
     BASIC_INFO(
         headerLabel = "프로필 설정",
         testTag = "auth-step-basic-info",
         screenDescription = "생년월일 성별 선택 화면",
-        progress = AuthProgress(current = 6, total = 7)
+        progress = AuthProgress(current = 6, total = 8)
+    ),
+
+    // changeLog13 — 기본 정보(6/8) 다음의 여행 취향 단계. 스타일과 지역을 한 화면에서 함께 받는다.
+    TASTE(
+        headerLabel = "프로필 설정",
+        testTag = "auth-step-taste",
+        screenDescription = "여행 취향 선택 화면",
+        progress = AuthProgress(current = 7, total = 8)
     ),
     TERMS(
-        // 약관 동의는 프로필 7단계 밖의 보조 화면이다 — 7/7 프로그레스를 다시 그리지 않는다
+        // 약관 동의는 프로필 8단계 밖의 보조 화면이다 — 8/8 프로그레스를 다시 그리지 않는다
         headerLabel = "약관 동의",
         testTag = "auth-step-terms",
         screenDescription = "약관 동의 화면",

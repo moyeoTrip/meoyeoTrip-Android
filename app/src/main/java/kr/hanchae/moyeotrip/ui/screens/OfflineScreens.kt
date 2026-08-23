@@ -11,8 +11,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -38,10 +40,14 @@ import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun OfflineNoCacheScreen(onRetry: () -> Unit, onOpenSavedTrips: () -> Unit = {}) {
+    // 화면기획 35의 페이지는 흰색(bgBase)이고 "지금도 볼 수 있는 것"만 회색 채움 박스다.
+    // 배너는 상태바 아래에서 시작해야 시계·시그널과 겹치지 않는다.
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .background(MoyeoTheme.pageSurface)
+            .statusBarsPadding()
+            .navigationBarsPadding()
             .testTag("offline-no-cache")
     ) {
         // 연결 상태는 화면 최상단 배너로 먼저 알린다 (화면기획)
@@ -56,7 +62,7 @@ fun OfflineNoCacheScreen(onRetry: () -> Unit, onOpenSavedTrips: () -> Unit = {})
             Surface(
                 modifier = Modifier.size(108.dp),
                 shape = CircleShape,
-                color = MaterialTheme.colorScheme.surfaceVariant
+                color = MoyeoTheme.subtleSurface
             ) {
                 Icon(
                     imageVector = Icons.Filled.WifiOff,
@@ -87,8 +93,8 @@ fun OfflineNoCacheScreen(onRetry: () -> Unit, onOpenSavedTrips: () -> Unit = {})
                     .fillMaxWidth()
                     .padding(top = 26.dp),
                 shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                color = MoyeoTheme.subtleSurface,
+                border = BorderStroke(1.dp, MoyeoTheme.tints.softLine)
             ) {
                 Column(
                     modifier = Modifier.padding(18.dp),
@@ -213,7 +219,7 @@ private fun OfflineCapabilityRow(icon: androidx.compose.ui.graphics.vector.Image
             imageVector = icon,
             contentDescription = null,
             modifier = Modifier.size(20.dp),
-            tint = MaterialTheme.colorScheme.primary
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
             text = label,

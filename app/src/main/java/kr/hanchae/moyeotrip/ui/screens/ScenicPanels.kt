@@ -72,7 +72,7 @@ internal fun CourseScenicPanel(course: TripCourse, modifier: Modifier = Modifier
     }
 }
 
-private data class ScenicPalette(
+internal data class ScenicPalette(
     val sky: Color,
     val haze: Color,
     val ground: Color,
@@ -204,7 +204,7 @@ internal fun PlaceScenicPanel(kind: PlaceScenicKind, modifier: Modifier = Modifi
 /** 방문지 썸네일 풍경 종류. 웹 프로토타입의 `Photo hue` 와 같은 축이다. */
 internal enum class PlaceScenicKind { Forest, Coast, Autumn, Hanok, Pebble }
 
-private fun PlaceScenicKind.scenicPalette(isDark: Boolean): ScenicPalette = when {
+internal fun PlaceScenicKind.scenicPalette(isDark: Boolean): ScenicPalette = when {
     isDark && this == PlaceScenicKind.Coast -> ScenicPalette(
         sky = Color(0xFF263447),
         haze = Color(0xFF1D2A32),

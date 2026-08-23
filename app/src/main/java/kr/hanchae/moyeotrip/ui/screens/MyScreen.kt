@@ -26,7 +26,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -51,6 +50,7 @@ import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
@@ -114,7 +114,8 @@ fun MyScreen(
                         MyTripCard(
                             course = course,
                             title = trip.title,
-                            date = trip.scheduleDate,
+                            // 화면기획 26은 집합 시간이 있는 모집만 "날짜 시간"으로 적는다
+                            date = listOfNotNull(trip.scheduleDate, trip.assemblyTimeLabel).joinToString(" "),
                             place = trip.meetingPoint,
                             dday = trip.ddayLabel,
                             peopleText = trip.myPeopleText(),
@@ -303,7 +304,12 @@ private fun MyProfileSummaryCard(userProfile: UserDisplayProfile, onClick: () ->
                 )
             } else {
                 // 화면기획 26은 곰 캐릭터 아바타를 보여준다
-                AnimalAvatar(profileAvatarEmoji(profile.animalBuddy), modifier = Modifier.size(50.dp))
+                // 화면기획 26의 프로필 아바타 배경은 연초록(primary50)이다 — 기본 코랄이 아니다
+                AnimalAvatar(
+                    profileAvatarEmoji(profile.animalBuddy),
+                    modifier = Modifier.size(50.dp),
+                    container = MoyeoTheme.tints.primaryTint
+                )
             }
             Column(
                 modifier = Modifier.weight(1f),
@@ -629,14 +635,11 @@ private fun MyTripCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    LinearProgressIndicator(
-                        progress = { progress },
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(4.dp)
-                            .clip(RoundedCornerShape(50)),
-                        color = ForestGreen,
-                        trackColor = MaterialTheme.colorScheme.surfaceVariant
+                    MoyeoLinearProgress(
+                        progress = progress,
+                        modifier = Modifier.weight(1f),
+                        height = 4.dp,
+                        color = ForestGreen
                     )
                     Text(
                         text = peopleText,

@@ -59,6 +59,11 @@ data class TripRecruitment(
     val recruitmentName: String = title,
     val scheduleDate: String,
     val scheduleTime: String,
+    /**
+     * 마이(26) 여행 카드에서 날짜 뒤에 붙는 집합 시간. 화면기획은 모집마다 표기 여부가 다르므로
+     * (경주 14:00 / 포항 09:30만 표기) `scheduleTime` 에서 기계적으로 뽑지 않고 값으로 둔다.
+     */
+    val assemblyTimeLabel: String? = null,
     val meetingPoint: String,
     val joined: Int,
     val capacity: Int,

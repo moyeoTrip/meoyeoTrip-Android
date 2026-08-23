@@ -30,7 +30,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.StickyNote2
 import androidx.compose.material.icons.filled.AccessTime
-import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.CalendarToday
@@ -58,6 +58,8 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -71,6 +73,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
@@ -81,6 +84,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -106,6 +110,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.components.OverlayBackdrop
+import kr.hanchae.moyeotrip.ui.components.emphasized
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 private data class MenuEntry(
@@ -213,18 +219,33 @@ fun ChatMenuScreen(
     onOpenNotificationSettings: () -> Unit,
     onOpenReport: () -> Unit,
     onOpenNotices: (String) -> Unit,
-    onOpenRoute: (String) -> Unit
+    onOpenRoute: (String) -> Unit,
+    // / 20-1a 캡처용 — 멤버 액션 시트를 처음부터 열어 둔다 (qaApply 선례)
+    showActionsSheetInitially: Boolean = false,
+    // / 20-1b 캡처용 — 사유 입력 시트를 처음부터 열어 둔다
+    showRemoveSheetInitially: Boolean = false
 ) {
     val thread = MockTripRepository.findThread(threadId)
     val trip = thread.tripId?.let(MockTripRepository::findTrip)
+    // 화면기획 20-1은 전원 "매너 4.8 · 여행 8회"로 표기하고, 역할(호스트·나)은 우측 칩으로 둔다
     val members = listOf(
-        // 화면기획 20-1은 전원 "매너 4.8 · 여행 8회"로 표기한다
-        FriendEntry("🐻", "숲속여행자", "호스트 · 매너 4.8 · 여행 8회"),
-        FriendEntry("🦌", "따스한 사슴 3492", "나 · 매너 4.8 · 여행 8회"),
+        FriendEntry("🐻", "숲속여행자", "매너 4.8 · 여행 8회"),
+        FriendEntry("🦌", "따스한 사슴 3492", "매너 4.8 · 여행 8회"),
         FriendEntry("🐰", "엉뚱한 토끼 1457", "매너 4.8 · 여행 8회"),
         FriendEntry("🐢", "잔잔한 거북이 9032", "매너 4.8 · 여행 8회"),
         FriendEntry("🦝", "호기심 많은 너구리 9027", "매너 4.8 · 여행 8회")
     )
+    val memberRoles = mapOf("숲속여행자" to "호스트", "따스한 사슴 3492" to "나")
+    // ⋯은 두 단계다 — 20-1a 멤버 액션 시트를 먼저 열고, 내보내기를 고르면 20-1b 사유 시트로 넘어간다.
+    // 화면기획 캡처의 기본 대상은 둘 다 너구리 9027.
+    var actionTargetName by rememberSaveable {
+        mutableStateOf(if (showActionsSheetInitially) "호기심 많은 너구리 9027" else null)
+    }
+    var removeTargetName by rememberSaveable {
+        mutableStateOf(if (showRemoveSheetInitially) "호기심 많은 너구리 9027" else null)
+    }
+    val actionTarget = members.firstOrNull { it.name == actionTargetName }
+    val removeTarget = members.firstOrNull { it.name == removeTargetName }
     ChangeLogScaffold(title = "모임 정보", onBack = onBack, modifier = Modifier.testTag("chat-menu-screen")) { padding ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(padding),
@@ -328,8 +349,44 @@ fun ChatMenuScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
-                    IconButton(onClick = {}, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.MoreHoriz, contentDescription = "${member.name} 관리")
+                    // 화면기획 20-1: 호스트·나는 역할 칩, 나머지 멤버만 ⋯ 로 액션 시트를 연다
+                    val role = memberRoles[member.name].orEmpty()
+                    if (role.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (role == "호스트") {
+                                MoyeoTheme.tints.primaryTint
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            border = BorderStroke(
+                                1.dp,
+                                if (role == "호스트") {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = .4f)
+                                } else {
+                                    MaterialTheme.colorScheme.outline
+                                }
+                            )
+                        ) {
+                            Text(
+                                role,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (role == "호스트") {
+                                    MoyeoTheme.tints.onPrimaryTint
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { actionTargetName = member.name },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(Icons.Filled.MoreHoriz, contentDescription = "${member.name} 관리")
+                        }
                     }
                 }
             }
@@ -358,11 +415,309 @@ fun ChatMenuScreen(
             }
         }
     }
+    if (actionTarget != null) {
+        MemberActionsSheet(
+            member = actionTarget,
+            onRemove = {
+                removeTargetName = actionTarget.name
+                actionTargetName = null
+            },
+            onDismiss = { actionTargetName = null }
+        )
+    }
+    if (removeTarget != null) {
+        MemberRemoveSheet(member = removeTarget, onDismiss = { removeTargetName = null })
+    }
+}
+
+/**
+ * 오버레이(31 모임 종료 경고) 배경으로 쓰는 20-1 채팅방 사이드 메뉴 본문 — changeLog14 `ChatMenuBody`.
+ *
+ * 화면과 오버레이 배경이 같은 코드를 쓰도록 [ChatMenuScreen]을 그대로 재사용한다.
+ * 상호작용은 위에 얹히는 스크림이 차단하므로 콜백은 비워 둔다.
+ */
+@Composable
+internal fun ChatMenuBody(threadId: String = OVERLAY_BACKDROP_THREAD_ID) {
+    ChatMenuScreen(
+        threadId = threadId,
+        onBack = {},
+        onOpenSpecialMessages = {},
+        onOpenNotificationSettings = {},
+        onOpenReport = {},
+        onOpenNotices = {},
+        onOpenRoute = {}
+    )
+}
+
+// / 20-1a 멤버 액션 시트 (changeLog14) — ⋯의 첫 단계.
+// / 내보내기 행은 호스트에게만 보인다는 전제이고, 캡처 화면에서는 항상 표시한다.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MemberActionsSheet(member: FriendEntry, onRemove: () -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MoyeoTheme.sheetSurface,
+        modifier = Modifier.testTag("member-actions-sheet")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 16.dp)
+                .navigationBarsPadding()
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                AnimalAvatar(member.emoji, modifier = Modifier.size(40.dp))
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text(member.name, fontWeight = FontWeight.ExtraBold)
+                    Text(
+                        text = "${member.subtitle} · 어제 합류",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            MemberActionRow(
+                icon = Icons.Outlined.AccountCircle,
+                title = "친구 요청하기",
+                iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
+                titleColor = MaterialTheme.colorScheme.onSurface,
+                tag = "member-actions-friend",
+                onClick = {}
+            )
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            MemberActionRow(
+                icon = Icons.Filled.WarningAmber,
+                title = "내보내기",
+                iconTint = MaterialTheme.colorScheme.error,
+                titleColor = MaterialTheme.colorScheme.error,
+                tag = "member-actions-remove",
+                onClick = onRemove
+            )
+            Text(
+                text = "내보내기는 호스트에게만 보여요.",
+                modifier = Modifier.padding(top = 4.dp, bottom = 14.dp),
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            OutlinedButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("member-actions-close"),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
+            ) {
+                Text("닫기", fontWeight = FontWeight.Bold)
+            }
+        }
+    }
+}
+
+// / 멤버 액션 시트의 한 행 — 아이콘 + 제목 + 셰브론
+@Composable
+private fun MemberActionRow(
+    icon: ImageVector,
+    title: String,
+    iconTint: Color,
+    titleColor: Color,
+    tag: String,
+    onClick: () -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(54.dp)
+            .clickable(role = Role.Button, onClick = onClick)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp), tint = iconTint)
+        Text(
+            text = title,
+            modifier = Modifier.weight(1f),
+            fontWeight = FontWeight.Bold,
+            color = titleColor
+        )
+        Icon(
+            Icons.Filled.ChevronRight,
+            contentDescription = null,
+            modifier = Modifier.size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+// / 20-1b 멤버 내보내기 사유 시트 (changeLog14) — 사유는 자유 서술 하나(10자 이상)이고,
+// / 입력 전에는 내보내기가 비활성이다. 이 사유가 그대로 상대의 13-1 내보내기 안내에 보인다.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MemberRemoveSheet(member: FriendEntry, onDismiss: () -> Unit) {
+    var reason by rememberSaveable { mutableStateOf("") }
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MoyeoTheme.sheetSurface,
+        modifier = Modifier.testTag("member-remove-sheet")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 16.dp)
+                .navigationBarsPadding(),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    text = "멤버 내보내기",
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = "내보낸 자리는 대기 큐에서 자동으로 채워져요.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    AnimalAvatar(member.emoji, modifier = Modifier.size(40.dp))
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(member.name, fontWeight = FontWeight.ExtraBold)
+                        Text(
+                            text = "${member.subtitle} · 어제 합류",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row {
+                    Text(
+                        text = "내보내는 사유",
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        text = " *",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+                Box {
+                    OutlinedTextField(
+                        value = reason,
+                        onValueChange = { if (it.length <= 200) reason = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(108.dp)
+                            .testTag("member-remove-reason"),
+                        placeholder = {
+                            Text(
+                                text = "사유를 남겨주세요. 상대에게 알림으로 그대로 전달돼요. (10자 이상)",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        },
+                        textStyle = MaterialTheme.typography.bodySmall,
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                    Text(
+                        text = "${reason.length}/200",
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 14.dp, bottom = 10.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            // 정책 안내 3줄 — 재신청 불가 · 즉시 제외·기록 비공개 · 사유 알림 전달
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(
+                        "내보내면 이 모임에 다시 신청할 수 없어요.",
+                        "내보내는 즉시 채팅방에서 제외돼요. 이미 남긴 대화는 채팅방에 그대로 남아요.",
+                        "사유는 상대에게 알림으로 전달돼요."
+                    ).forEach { line ->
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(
+                                text = "•",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = line,
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                TextButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.testTag("member-remove-cancel")
+                ) {
+                    Text("취소", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
+                }
+                Button(
+                    onClick = onDismiss,
+                    enabled = reason.trim().length >= 10,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(50.dp)
+                        .testTag("member-remove-submit"),
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("내보내기", fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ChatAttachmentScreen(onBack: () -> Unit, onOpenSpecialMessages: () -> Unit, isOnline: Boolean) {
+fun ChatAttachmentScreen(
+    onBack: () -> Unit,
+    onOpenSpecialMessages: () -> Unit,
+    isOnline: Boolean,
+    backdropThreadId: String = OVERLAY_BACKDROP_THREAD_ID
+) {
     val items = listOf(
         Triple(Icons.Filled.CameraAlt, "사진", "최대 20MB · 1장씩"),
         Triple(Icons.Filled.LocationOn, "장소", "TourAPI 장소 카드"),
@@ -371,39 +726,18 @@ fun ChatAttachmentScreen(onBack: () -> Unit, onOpenSpecialMessages: () -> Unit, 
         Triple(Icons.Filled.Payments, "정산", "메모용 · 송금 아님"),
         Triple(Icons.AutoMirrored.Filled.StickyNote2, "메모", "상단 고정 공지")
     )
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .testTag("chat-attach-screen")
-            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.72f))
+    // changeLog14 "오버레이 배경 일괄" — 채팅 버블 실루엣 대신 실제 채팅방 본문을 깐다.
+    OverlayBackdrop(
+        modifier = Modifier.testTag("chat-attach-screen"),
+        scrimAlpha = 0.45f,
+        onScrimClick = onBack,
+        background = { ChatRoomBody(threadId = backdropThreadId, isOnline = isOnline) }
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 20.dp, vertical = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(20.dp)
-        ) {
-            Surface(
-                modifier = Modifier.fillMaxWidth(0.55f).height(40.dp),
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.48f)
-            ) {}
-            Surface(
-                modifier = Modifier.align(Alignment.End).fillMaxWidth(0.42f).height(40.dp),
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.48f)
-            ) {}
-            Surface(
-                modifier = Modifier.fillMaxWidth(0.62f).height(40.dp),
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.48f)
-            ) {}
-        }
-
         Surface(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            color = MaterialTheme.colorScheme.surface
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 16.dp
         ) {
             Column(modifier = Modifier.navigationBarsPadding().padding(horizontal = 20.dp, vertical = 14.dp)) {
                 Box(
@@ -594,8 +928,11 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
                                 verticalArrangement = Arrangement.spacedBy(6.dp)
                             ) {
                                 Text(
-                                    "함께 여행한 친구는 친구가 아니어도 도감에 남아요. " +
-                                        "친구 신청은 피드를 구독하고 싶을 때만 하면 돼요.",
+                                    emphasized(
+                                        "함께 여행한 친구는 친구가 아니어도 도감에 남아요. " +
+                                            "친구 신청은 피드를 구독하고 싶을 때만 하면 돼요.",
+                                        "친구가 아니어도 도감에 남아요."
+                                    ),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = tints.onPrimaryTint
                                 )
@@ -657,7 +994,10 @@ fun TripMessageScreen(
             item {
                 Text("함께 걸어준 친구들에게\n한 줄 남겨볼까요?", style = MaterialTheme.typography.headlineSmall)
                 Text(
-                    "남긴 메시지는 상대방의 도감 카드 뒷면에 적혀요. 안 남겨도 카드는 그대로 모여요.",
+                    emphasized(
+                        "남긴 메시지는 상대방의 도감 카드 뒷면에 적혀요. 안 남겨도 카드는 그대로 모여요.",
+                        "도감 카드 뒷면"
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 8.dp)
@@ -730,22 +1070,24 @@ private fun RelatedActionCard(icon: ImageVector, text: String, action: String, o
 }
 
 @Composable
-fun ReportScreen(onBack: () -> Unit) {
+fun ReportScreen(onBack: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP_THREAD_ID) {
     val reasons = listOf("스팸 · 도박", "성희롱 · 불쾌한 언행", "돈거래 유도", "허위 정보", "부적절한 내용", "기타")
     var selected by rememberSaveable { mutableStateOf(reasons[1]) }
     var block by rememberSaveable { mutableStateOf(true) }
-    // 화면기획 32는 전체 화면이 아니라 어두운 채팅 위로 올라오는 바텀시트다
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = .45f))
-            .testTag("report-screen"),
-        contentAlignment = Alignment.BottomCenter
+    // 화면기획 32는 전체 화면이 아니라 채팅방 위로 올라오는 바텀시트다 —
+    // changeLog14 "오버레이 배경 일괄": 빈 딤 대신 실제 채팅방 본문을 깐다.
+    OverlayBackdrop(
+        modifier = Modifier.testTag("report-screen"),
+        scrimAlpha = .45f,
+        onScrimClick = onBack,
+        background = { ChatRoomBody(threadId = backdropThreadId) }
     ) {
         Surface(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            color = MaterialTheme.colorScheme.background
+            // 시트 표면은 화면 배경(background)과 구분되는 카드 표면(surface)이다
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 16.dp
         ) {
             Column(Modifier.navigationBarsPadding()) {
                 Box(
@@ -789,7 +1131,11 @@ fun ReportScreen(onBack: () -> Unit) {
                             shape = RoundedCornerShape(11.dp),
                             border = BorderStroke(
                                 1.5.dp,
-                                if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                                if (chosen) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.outlineVariant
+                                }
                             ),
                             color = if (chosen) MoyeoTheme.tints.primaryTint else MaterialTheme.colorScheme.surface
                         ) {
@@ -812,7 +1158,11 @@ fun ReportScreen(onBack: () -> Unit) {
                                 Text(
                                     reason,
                                     fontWeight = FontWeight.Bold,
-                                    color = if (chosen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+                                    color = if (chosen) {
+                                        MaterialTheme.colorScheme.primary
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurface
+                                    }
                                 )
                             }
                         }
@@ -888,7 +1238,11 @@ fun BlockedUsersScreen(onBack: () -> Unit) {
             item {
                 RoundedPanel(containerColor = MaterialTheme.colorScheme.surfaceVariant) {
                     Text(
-                        "차단하면 그 사람이 만들었거나 참여한 모집이 홈·탐색·코스 상세에서 모두 숨겨져요. 상대방에게는 알려지지 않아요.",
+                        emphasized(
+                            "차단하면 그 사람이 만들었거나 참여한 모집이 홈·탐색·코스 상세에서 모두 숨겨져요. " +
+                                "상대방에게는 알려지지 않아요.",
+                            "만들었거나 참여한 모집"
+                        ),
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -1178,7 +1532,8 @@ fun TripDayScreen(
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     IconButton(onClick = onOpenAttachment, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.Filled.AttachFile, contentDescription = "첨부")
+                        // 화면기획 20-5의 입력창 좌측은 클립이 아니라 + 다
+                        Icon(Icons.Filled.Add, contentDescription = "첨부")
                     }
                     Surface(
                         modifier = Modifier.weight(1f).height(44.dp),
@@ -1189,7 +1544,8 @@ fun TripDayScreen(
                             Text("메시지 입력", color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    FilledIconButton(onClick = {}, modifier = Modifier.size(48.dp)) {
+                    // 빈 입력 진입 상태에서는 전송이 비활성이다 (changeLog16)
+                    FilledIconButton(onClick = {}, enabled = false, modifier = Modifier.size(48.dp)) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "보내기")
                     }
                 }
@@ -1262,13 +1618,24 @@ fun TripDayScreen(
                 }
             }
             item {
-                Text(
-                    "오늘 여행이 시작됐어요 🎒",
+                // 시스템 안내는 연초록 pill 안에 들어간다 (화면기획 20-5)
+                Row(
                     modifier = Modifier.fillMaxWidth().padding(18.dp),
-                    textAlign = TextAlign.Center,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.Bold
-                )
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MoyeoTheme.tints.systemMessage
+                    ) {
+                        Text(
+                            "오늘 여행이 시작됐어요 🎒",
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                            textAlign = TextAlign.Center,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
                 RoundedPanel(modifier = Modifier.padding(horizontal = 18.dp)) {
                     Text("엉뚱한 토끼 1457", style = MaterialTheme.typography.labelSmall)
                     Text("주왕산 3폭포 도착! 생각보다 사람 적어요 👍", modifier = Modifier.padding(top = 4.dp))
@@ -1326,8 +1693,13 @@ private fun TripDayMiniMap() {
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun NotificationDetailScreen(onBack: () -> Unit) {
-    val modes = listOf("모든 메시지", "멘션 · 답글만", "받지 않기")
-    var mode by rememberSaveable { mutableStateOf(modes.first()) }
+    // 화면기획 29-2는 옵션마다 무엇이 오는지 부제로 알려준다 — 제목만 두면 차이를 알 수 없다
+    val modes = listOf(
+        "모든 메시지" to "모임의 모든 대화를 알려드려요",
+        "멘션·답글만" to "나를 부르거나 내 메시지에 답할 때만",
+        "받지 않기" to "앱을 열었을 때만 확인해요"
+    )
+    var mode by rememberSaveable { mutableStateOf(modes.first().first) }
     var dnd by rememberSaveable { mutableStateOf(true) }
     var muted by rememberSaveable { mutableStateOf(setOf("경주 단풍·야경 1박 2일")) }
     val selectedDays = remember { mutableStateListOf("월", "화", "수", "목", "금") }
@@ -1344,24 +1716,33 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
             item {
                 Text("모임이 여러 개면 알림이 금방 쌓여요. 받고 싶은 만큼만 켜두세요.", style = MaterialTheme.typography.bodySmall)
             }
-            items(modes) { item ->
+            items(modes) { (title, description) ->
+                val selected = mode == title
                 Surface(
-                    modifier = Modifier.fillMaxWidth().height(58.dp).clickable { mode = item },
+                    modifier = Modifier.fillMaxWidth().clickable { mode = title },
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(
                         1.dp,
-                        if (mode ==
-                            item
-                        ) {
+                        if (selected) {
                             MaterialTheme.colorScheme.primary
                         } else {
                             MaterialTheme.colorScheme.outlineVariant
                         }
                     )
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = mode == item, onClick = { mode = item })
-                        Text(item, fontWeight = FontWeight.Bold)
+                    Row(
+                        modifier = Modifier.padding(end = 14.dp, top = 10.dp, bottom = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        RadioButton(selected = selected, onClick = { mode = title })
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(title, fontWeight = FontWeight.Bold)
+                            Text(
+                                description,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
             }
@@ -1435,7 +1816,10 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
                             }
                         }
                         Text(
-                            "집합 30분 전 알림처럼 여행 당일 안내는 방해금지 시간에도 전달돼요.",
+                            emphasized(
+                                "집합 30분 전 알림처럼 여행 당일 안내는 방해금지 시간에도 전달돼요.",
+                                "여행 당일 안내는 방해금지 시간에도"
+                            ),
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 12.dp)
@@ -1659,8 +2043,10 @@ fun SystemNoticeScreen(mode: SystemNoticeMode, onRetry: () -> Unit, onBack: () -
     val maintenance = mode == SystemNoticeMode.Maintenance
     val tints = MoyeoTheme.tints
     // 화면기획 33·34: 본문은 세로 중앙, CTA와 캡션은 화면 바닥에 붙는다
+    // 화면기획 33·34의 페이지는 흰색(bgBase)이고 점검 안내 박스만 회색 채움이다.
+    // 기본 배경(#F7F8F7)은 surfaceVariant와 같은 값이라 박스가 배경에 묻힌다.
     Column(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(28.dp)
+        modifier = Modifier.fillMaxSize().background(MoyeoTheme.pageSurface).padding(28.dp)
             .testTag(if (maintenance) "system-maintenance-screen" else "system-error-screen"),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -1700,8 +2086,7 @@ fun SystemNoticeScreen(mode: SystemNoticeMode, onRetry: () -> Unit, onBack: () -
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
                     shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surface,
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = .6f))
+                    color = MoyeoTheme.subtleSurface
                 ) {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf("예상 종료 · 오늘 오전 4:00", "점검 중에는 모집·채팅이 열리지 않아요").forEach { line ->
@@ -2003,8 +2388,8 @@ private fun QuietHourField(label: String, value: String, modifier: Modifier = Mo
         Surface(
             modifier = Modifier.fillMaxWidth().height(48.dp),
             shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            border = BorderStroke(1.dp, MoyeoTheme.tints.softLine)
+            color = MoyeoTheme.cardSurface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
         ) {
             Row(
                 Modifier.padding(horizontal = 13.dp),

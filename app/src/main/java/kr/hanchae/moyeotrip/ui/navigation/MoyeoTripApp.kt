@@ -125,6 +125,7 @@ import kr.hanchae.moyeotrip.ui.screens.QaComponentStatesScreen
 import kr.hanchae.moyeotrip.ui.screens.QaDesignSystemOverviewScreen
 import kr.hanchae.moyeotrip.ui.screens.QaLeaveAlertScreen
 import kr.hanchae.moyeotrip.ui.screens.RecruitmentCourseSourceScreen
+import kr.hanchae.moyeotrip.ui.screens.RemovalReasonScreen
 import kr.hanchae.moyeotrip.ui.screens.ReportScreen
 import kr.hanchae.moyeotrip.ui.screens.SearchScreen
 import kr.hanchae.moyeotrip.ui.screens.SettingsScreen
@@ -151,6 +152,15 @@ private val bottomDestinations = listOf(
     BottomDestination(BottomTab.Feed, Icons.AutoMirrored.Filled.Article),
     BottomDestination(BottomTab.My, Icons.Filled.Person)
 )
+
+/**
+ * 현재 라우트가 어떤 하단 탭에 속하는지. 탭 화면의 변형 라우트(모임 목록의 신청중 세그먼트,
+ * 캡처용 채팅 목록)도 화면기획에서는 같은 탭 안에 있으므로 탭바가 보여야 한다.
+ */
+private fun bottomTabRouteFor(currentRoute: String?): String? = when (currentRoute) {
+    AppRoutes.MEETINGS_APPLIED, AppRoutes.CHAT_LIST -> AppRoutes.MEETINGS
+    else -> bottomDestinations.firstOrNull { it.route == currentRoute }?.route
+}
 
 private const val STARTUP_SPLASH_HOLD_MILLIS = 1_150L
 private const val STARTUP_SPLASH_TRANSITION_MILLIS = 420
@@ -247,7 +257,9 @@ fun MoyeoTripApp(
             val navController = rememberNavController()
             val backStackEntry by navController.currentBackStackEntryAsState()
             val currentRoute = backStackEntry?.destination?.route
-            val showBottomBar = bottomDestinations.any { it.route == currentRoute }
+            // 19·19-1은 화면기획에서 "모임" 탭 화면이다 — 세그먼트만 다른 라우트에서도 탭바를 유지한다
+            val bottomBarRoute = bottomTabRouteFor(currentRoute)
+            val showBottomBar = bottomBarRoute != null
             val topSafePadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 12.dp
 
             LaunchedEffect(skipStartupSplash) {
@@ -295,13 +307,14 @@ fun MoyeoTripApp(
                         if (networkExperience == OfflineExperience.Cached &&
                             currentRoute?.startsWith("chat/") != true
                         ) {
-                            OfflineCachedBanner()
+                            // Scaffold 가 인셋을 소비하지 않으므로 배너가 상태바와 겹친다
+                            OfflineCachedBanner(modifier = Modifier.statusBarsPadding())
                         }
                     },
                     bottomBar = {
                         if (showBottomBar) {
                             MoyeoBottomBar(
-                                currentRoute = currentRoute,
+                                currentRoute = bottomBarRoute,
                                 onDestinationClick = { destination ->
                                     navController.navigate(destination.route) {
                                         popUpTo(navController.graph.findStartDestination().id) {
@@ -493,8 +506,12 @@ fun MoyeoTripApp(
                                 onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) },
                                 onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
                                 onOpenTripConfirmed = { navController.navigate(AppRoutes.TRIP_CONFIRMED) },
-                                onOpenTripMessage = { navController.navigate(AppRoutes.TRIP_MESSAGE) }
+                                onOpenTripMessage = { navController.navigate(AppRoutes.TRIP_MESSAGE) },
+                                onOpenRemovalReason = { navController.navigate(AppRoutes.REMOVAL_REASON) }
                             )
+                        }
+                        composable(AppRoutes.REMOVAL_REASON) {
+                            RemovalReasonScreen(onBack = { navController.popBackStack() })
                         }
                         composable(
                             route = AppRoutes.CREATE_RECRUITMENT,
@@ -761,6 +778,37 @@ fun MoyeoTripApp(
                                 showApplicationSheetInitially = true
                             )
                         }
+                        composable(AppRoutes.QA_MEMBER_ACTIONS) { entry ->
+                            ChatMenuScreen(
+                                threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                onBack = { navController.popBackStack() },
+                                onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
+                                onOpenNotificationSettings = { navController.navigate(AppRoutes.NOTIFICATION_DETAIL) },
+                                onOpenReport = { navController.navigate(AppRoutes.REPORT) },
+                                onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
+                                onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                showActionsSheetInitially = true
+                            )
+                        }
+                        composable(AppRoutes.QA_MEMBER_REMOVE) { entry ->
+                            ChatMenuScreen(
+                                threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                onBack = { navController.popBackStack() },
+                                onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
+                                onOpenNotificationSettings = { navController.navigate(AppRoutes.NOTIFICATION_DETAIL) },
+                                onOpenReport = { navController.navigate(AppRoutes.REPORT) },
+                                onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
+                                onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                showRemoveSheetInitially = true
+                            )
+                        }
+                        composable(AppRoutes.QA_PROFILE_TASTE_EDIT) {
+                            ProfileEditScreen(
+                                userProfile = userProfile,
+                                onBack = { navController.popBackStack() },
+                                showTasteSheetInitially = true
+                            )
+                        }
                         composable(AppRoutes.FEED_COMMENTS) { entry ->
                             FeedCommentsScreen(
                                 postId = entry.arguments?.getString("postId").orEmpty(),
@@ -867,7 +915,11 @@ internal data class QaStartRequest(private val key: String, private val identifi
                 AppRoutes.MEETINGS_APPLIED
             }
 
-            "chatlist" -> AppRoutes.CHAT_LIST
+            // 화면기획 19는 하단 탭바가 있는 "모임" 탭 화면이고, 신청중 세그먼트에 2건이 있다
+            "chatlist" -> {
+                MockTripRepository.ensureQaApplications()
+                AppRoutes.MEETINGS
+            }
 
             "feed" -> AppRoutes.FEED
 
@@ -904,6 +956,10 @@ internal data class QaStartRequest(private val key: String, private val identifi
             "nickname", "prof1" -> AppRoutes.mockAuth("nickname")
 
             "profilebasic", "prof3" -> AppRoutes.mockAuth("profile-basic")
+
+            "profiletaste", "prof4" -> AppRoutes.mockAuth("profile-taste")
+
+            "profiletasteedit", "tasteedit" -> AppRoutes.QA_PROFILE_TASTE_EDIT
 
             "profileimage", "prof2" -> AppRoutes.mockAuth("profile-image")
 
@@ -973,6 +1029,11 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "chatmenu" -> AppRoutes.chatMenu(chatId)
 
+            // 캡처 도구의 moyeo_screen="member-actions"/"member-remove"는 하이픈이 제거되어 들어온다
+            "memberactions" -> AppRoutes.qaMemberActions(chatId)
+
+            "memberremove" -> AppRoutes.qaMemberRemove(chatId)
+
             "chatattach", "attachment" -> AppRoutes.CHAT_ATTACH
 
             "friends" -> AppRoutes.FRIENDS
@@ -992,6 +1053,9 @@ internal data class QaStartRequest(private val key: String, private val identifi
             "tripday" -> AppRoutes.tripDay(chatId)
 
             "notificationdetail", "notifdetail" -> AppRoutes.NOTIFICATION_DETAIL
+
+            // 캡처 도구의 moyeo_screen="removal-reason"은 하이픈이 제거되어 들어온다
+            "removalreason" -> AppRoutes.REMOVAL_REASON
 
             "accountdelete" -> AppRoutes.ACCOUNT_DELETE
 

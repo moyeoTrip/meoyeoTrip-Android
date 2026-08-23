@@ -24,7 +24,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ChatBubble
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
@@ -36,7 +35,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -64,6 +62,7 @@ import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.domain.ApplicationNotePolicy
 import kr.hanchae.moyeotrip.domain.recruitmentSummary
+import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
@@ -280,14 +279,9 @@ private fun GroupDetailPanel(course: TripCourse, trip: TripRecruitment) {
                         content = colors.primary
                     )
                 }
-                LinearProgressIndicator(
-                    progress = { recruitment.progress },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(50)),
-                    color = colors.primary,
-                    trackColor = colors.outline.copy(alpha = 0.45f)
+                MoyeoLinearProgress(
+                    progress = recruitment.progress,
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
 
@@ -582,10 +576,10 @@ private fun ApplicationSheet(
     onApplicationSubmit: () -> Unit,
     onDone: () -> Unit
 ) {
-    var message by rememberSaveable {
-        mutableStateOf("처음 참여라 집결지에서 같이 움직이고 싶어요.")
-    }
+    // 화면기획 16 — 진입 시 입력은 비어 있고 카운터는 0/200이다
+    var message by rememberSaveable { mutableStateOf("") }
     var isSubmitted by rememberSaveable { mutableStateOf(false) }
+    var submitAttempted by rememberSaveable { mutableStateOf(false) }
     val isMessageValid = ApplicationNotePolicy.isValid(message)
     val colors = MaterialTheme.colorScheme
     val isDark = MoyeoTheme.isDark
@@ -630,7 +624,8 @@ private fun ApplicationSheet(
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter),
             shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-            color = colors.surface
+            // 화면기획 16 — 시트 표면은 bgRaised(다크 #18231E)다 (changeLog15)
+            color = MoyeoTheme.sheetSurface
         ) {
             Column(
                 modifier = Modifier
@@ -676,27 +671,27 @@ private fun ApplicationSheet(
                             color = colors.onSurface,
                             fontWeight = FontWeight.Bold
                         )
-                        OutlinedTextField(
-                            value = message,
-                            onValueChange = { message = ApplicationNotePolicy.sanitize(it) },
-                            placeholder = { Text("간단한 인사나 기대하는 마음을 남겨주세요.") },
-                            modifier = Modifier.fillMaxWidth(),
-                            minLines = 4,
-                            supportingText = {
-                                Row(modifier = Modifier.fillMaxWidth()) {
-                                    Text(
-                                        text = ApplicationNotePolicy.helperText(message),
-                                        modifier = Modifier.weight(1f),
-                                        color = if (isMessageValid) colors.onSurfaceVariant else colors.error
-                                    )
-                                    Text(
-                                        text = ApplicationNotePolicy.counterText(message),
-                                        color = colors.onSurfaceVariant
-                                    )
-                                }
-                            },
-                            isError = !isMessageValid
-                        )
+                        // 화면기획 16 — 자수 안내는 플레이스홀더에, 카운터는 박스 안 우하단에
+                        Box {
+                            OutlinedTextField(
+                                value = message,
+                                onValueChange = { message = ApplicationNotePolicy.sanitize(it) },
+                                placeholder = {
+                                    Text("간단한 인사나 기대하는 마음을\n남겨주세요 😊 (10자 이상 200자 이하)")
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                minLines = 4,
+                                isError = submitAttempted && !isMessageValid
+                            )
+                            Text(
+                                text = ApplicationNotePolicy.counterText(message),
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .padding(end = 14.dp, bottom = 10.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
                     }
 
                     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -710,7 +705,8 @@ private fun ApplicationSheet(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
-                                .background(colors.surfaceVariant)
+                                // 시트(bgRaised) 위 카드라 다크에서는 한 단 어두운 surface가 기획과 맞다
+                                .background(if (MoyeoTheme.isDark) colors.surface else colors.surfaceVariant)
                                 .padding(14.dp),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -724,7 +720,7 @@ private fun ApplicationSheet(
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Text(
-                                    text = "자연 속에서 편안한 걸 좋아해요! 사진 찍는 것도 좋아합니다.",
+                                    text = "자연 속에서 힐링하는 걸 좋아해요!\n사진 찍는 것도 좋아합니다",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = colors.onSurfaceVariant
                                 )
@@ -732,20 +728,21 @@ private fun ApplicationSheet(
                         }
                     }
 
+                    // 화면기획 16 — 버튼은 텍스트만, 진입 상태(빈 입력)에서도 초록 활성으로 보인다
                     Button(
                         onClick = {
-                            onApplicationSubmit()
-                            isSubmitted = true
+                            submitAttempted = true
+                            if (isMessageValid) {
+                                onApplicationSubmit()
+                                isSubmitted = true
+                            }
                         },
                         modifier = Modifier.fillMaxWidth(),
-                        enabled = isMessageValid,
                         colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
                         shape = RoundedCornerShape(9.dp)
                     ) {
-                        Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = null)
                         Text(
                             text = "신청하기",
-                            modifier = Modifier.padding(start = 8.dp),
                             fontWeight = FontWeight.ExtraBold
                         )
                     }

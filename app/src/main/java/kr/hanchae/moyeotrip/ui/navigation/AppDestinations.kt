@@ -44,6 +44,9 @@ object AppRoutes {
     const val COURSE_PUBLISH = "course_publish"
     const val TRIP_DAY = "trip_day/{threadId}"
     const val NOTIFICATION_DETAIL = "notification_detail"
+
+    // 13-1 내보내기 안내 — 강퇴 알림 탭에서만 진입한다 (changeLog14)
+    const val REMOVAL_REASON = "removal_reason"
     const val ACCOUNT_DELETE = "account_delete"
     const val SYSTEM_MAINTENANCE = "system_maintenance"
     const val SYSTEM_ERROR = "system_error"
@@ -56,6 +59,15 @@ object AppRoutes {
     const val QA_STATES = "qa_states"
     const val QA_LEAVE = "qa_leave"
     const val QA_APPLY = "qa_apply/{tripId}"
+
+    // 28-1 캡처용 — 프로필 수정을 여행 취향 편집 시트가 열린 채로 연다
+    const val QA_PROFILE_TASTE_EDIT = "qa_profile_taste_edit"
+
+    // 20-1a 캡처용 — 채팅 메뉴를 멤버 액션 시트가 열린 채로 연다 (changeLog14)
+    const val QA_MEMBER_ACTIONS = "qa_member_actions/{threadId}"
+
+    // 20-1b 캡처용 — 채팅 메뉴를 내보내기 사유 시트가 열린 채로 연다 (changeLog14)
+    const val QA_MEMBER_REMOVE = "qa_member_remove/{threadId}"
 
     fun feedWrite(step: Int = 1) = "feed_write?step=$step"
 
@@ -80,6 +92,10 @@ object AppRoutes {
     fun termsDetail(document: String, source: String) = "terms_detail/$document/$source"
 
     fun qaApply(tripId: String) = "qa_apply/$tripId"
+
+    fun qaMemberActions(threadId: String) = "qa_member_actions/$threadId"
+
+    fun qaMemberRemove(threadId: String) = "qa_member_remove/$threadId"
 
     fun mockAuth(startStep: String) = "mock_auth/$startStep"
 

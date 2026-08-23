@@ -640,12 +640,23 @@ private fun TripCourse.matchesExploreFilter(filter: String): Boolean = when (fil
     else -> true
 }
 
+/**
+ * 화면기획 10의 카드 부제("지역 · 테마") 테마 값. 코스마다 정해진 값이라 지역에서 기계적으로
+ * 뽑으면 "역사, 문화"로 뭉개지거나 두 번째 테마가 사라진다.
+ */
+private val exploreThemeByCourseId = mapOf(
+    "cheongsong-juwangsan" to "자연, 히든명소",
+    "andong-hahoe" to "역사, 문화",
+    "ulleung-island" to "자연, 힐링",
+    "gyeongju-healing" to "역사, 야경",
+    "pohang-sea" to "바다, 드라이브",
+    "mungyeong-saejae" to "자연, 단풍",
+    "yeongju-buseoksa" to "역사, 사찰",
+    "andong-dosan" to "역사, 그늘"
+)
+
 private fun TripCourse.exploreArea(): String {
-    val theme = when (region) {
-        "청송", "울릉", "문경" -> "자연"
-        "안동", "경주", "영주" -> "역사, 문화"
-        else -> tags.firstOrNull() ?: "여행"
-    }
+    val theme = exploreThemeByCourseId[id] ?: tags.take(2).joinToString(", ").ifBlank { "여행" }
     return "$region · $theme"
 }
 
