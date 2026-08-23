@@ -114,6 +114,7 @@ dependencies {
     implementation(libs.firebase.auth)
     implementation(libs.firebase.messaging)
     implementation(libs.google.id)
+    implementation(libs.kakao.maps)
     implementation(libs.kakao.user)
     implementation(libs.sentry.android)
 

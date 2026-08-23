@@ -70,6 +70,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -88,6 +89,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.util.Locale
 import kr.hanchae.moyeotrip.data.CourseSource
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.RecruitmentDraft
@@ -96,6 +98,8 @@ import kr.hanchae.moyeotrip.data.RouteStop
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.data.TripScheduleType
+import kr.hanchae.moyeotrip.ui.components.KakaoMapView
+import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
 import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -710,6 +714,10 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
     var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
     var query by rememberSaveable { mutableStateOf(draft.meetingLocation.name) }
     var detail by rememberSaveable { mutableStateOf("터미널 정문 앞") }
+    // 실지도에서는 지도를 끌면 중앙 좌표가 바뀐다. 목업 폴백일 때는 목데이터 좌표가 그대로 남는다.
+    var pinned by remember(draftId) {
+        mutableStateOf(MoyeoLatLng(draft.meetingLocation.latitude, draft.meetingLocation.longitude))
+    }
 
     // 집합 장소는 일정 단계(2/5)에서 열리는 화면이라 다른 플랫폼처럼 단계 뷰를 함께 그린다
     RecruitmentScaffold(
@@ -727,7 +735,9 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                         draft = draft.copy(
                             meetingLocation = draft.meetingLocation.copy(
                                 name = query.ifBlank { "청송 시외버스터미널" },
-                                detail = detail
+                                detail = detail,
+                                latitude = pinned.latitude,
+                                longitude = pinned.longitude
                             )
                         )
                         MockTripRepository.updateRecruitmentDraft(draft)
@@ -743,7 +753,15 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
         item { SectionIntro("집합 장소 정하기", "검색하거나 지도의 핀을 움직여 정확한 위치를 알려주세요.") }
         item {
             Box {
-                RouteMapPreview(stopCount = 1, modifier = Modifier.fillMaxWidth().height(300.dp))
+                // 카카오 실지도 — 지도를 끌면 화면 중앙(아래 핀 위치)의 위경도가 좌표 칸에 반영된다.
+                KakaoMapView(
+                    center = pinned,
+                    modifier = Modifier.fillMaxWidth().height(300.dp).clip(RoundedCornerShape(12.dp)),
+                    zoomLevel = 16,
+                    draggablePin = true,
+                    onPinMove = { pinned = it },
+                    fallback = { fallbackModifier -> RouteMapPreview(stopCount = 1, modifier = fallbackModifier) }
+                )
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
@@ -801,7 +819,13 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                 )
             }
         }
-        item { LabeledValue("좌표 (자동 저장)", "36.435612, 129.057214", Icons.Filled.MyLocation) }
+        item {
+            LabeledValue(
+                "좌표 (자동 저장)",
+                "%.6f, %.6f".format(Locale.US, pinned.latitude, pinned.longitude),
+                Icons.Filled.MyLocation
+            )
+        }
         item { LabeledValue("집합 시간 *", draft.meetingLocation.meetingTime, Icons.Filled.Schedule) }
         item {
             InfoBanner(

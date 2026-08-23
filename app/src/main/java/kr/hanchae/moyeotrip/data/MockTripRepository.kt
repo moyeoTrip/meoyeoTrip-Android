@@ -31,6 +31,8 @@ object MockTripRepository {
             // 경로 미리보기는 화면기획과 같은 4개 지점이다 (집합지 포함)
             stops = listOf("주왕산국립공원", "용연폭포", "주산지", "달기약수탕"),
             recruitmentNote = "주왕산 숲길을 천천히 걷고 주산지 물그림자까지 둘러보는 당일 모임이에요.",
+            latitude = 36.3931,
+            longitude = 129.1728,
             publisher = CoursePublisher(
                 name = "숲속여행자",
                 avatar = "🐻",
@@ -58,7 +60,9 @@ object MockTripRepository {
             rating = 4.9,
             tags = listOf("고택", "산책", "로컬간식"),
             stops = listOf("하회마을 입구", "부용대 전망", "로컬 찻집", "월영교 야경"),
-            recruitmentNote = "사진 찍는 속도에 맞춰 여유롭게 이동해요. 혼자 오는 분 환영!"
+            recruitmentNote = "사진 찍는 속도에 맞춰 여유롭게 이동해요. 혼자 오는 분 환영!",
+            latitude = 36.5390,
+            longitude = 128.5180
         ),
         TripCourse(
             id = "gyeongju-healing",
@@ -80,7 +84,9 @@ object MockTripRepository {
             rating = 4.8,
             tags = listOf("야경", "피크닉", "역사"),
             stops = listOf("황리단길", "첨성대", "동궁과 월지", "감포 바다"),
-            recruitmentNote = "야간 산책과 조용한 대화를 좋아하는 분들에게 잘 맞아요."
+            recruitmentNote = "야간 산책과 조용한 대화를 좋아하는 분들에게 잘 맞아요.",
+            latitude = 35.8348,
+            longitude = 129.2194
         ),
         TripCourse(
             id = "pohang-sea",
@@ -102,7 +108,9 @@ object MockTripRepository {
             rating = 4.7,
             tags = listOf("바다", "브런치", "시장"),
             stops = listOf("영일대해수욕장", "스페이스워크", "오션뷰 브런치", "죽도시장"),
-            recruitmentNote = "시장 먹거리 취향을 나눠서 여러 메뉴를 같이 맛봐요."
+            recruitmentNote = "시장 먹거리 취향을 나눠서 여러 메뉴를 같이 맛봐요.",
+            latitude = 36.0592,
+            longitude = 129.3830
         ),
         TripCourse(
             id = "ulleung-island",
@@ -124,7 +132,9 @@ object MockTripRepository {
             rating = 4.8,
             tags = listOf("섬", "트레킹", "바다"),
             stops = listOf("도동항", "행남해안산책로", "나리분지", "저동항"),
-            recruitmentNote = "배편 확정 전까지 함께 일정을 조율하고, 확정 후 채팅방에서 준비물을 나눠요."
+            recruitmentNote = "배편 확정 전까지 함께 일정을 조율하고, 확정 후 채팅방에서 준비물을 나눠요.",
+            latitude = 37.4839,
+            longitude = 130.9057
         ),
         TripCourse(
             id = "mungyeong-saejae",
@@ -146,7 +156,9 @@ object MockTripRepository {
             rating = 4.8,
             tags = listOf("단풍", "트레킹", "숲길"),
             stops = listOf("제1관문", "조령원터", "오픈세트장", "새재길 쉼터"),
-            recruitmentNote = "대화보다 풍경을 즐기는 조용한 속도, 쉬는 시간을 자주 가져요."
+            recruitmentNote = "대화보다 풍경을 즐기는 조용한 속도, 쉬는 시간을 자주 가져요.",
+            latitude = 36.7592,
+            longitude = 128.0783
         ),
         TripCourse(
             id = "yeongju-buseoksa",
@@ -168,7 +180,9 @@ object MockTripRepository {
             rating = 4.7,
             tags = listOf("사찰", "눈", "짧은동선"),
             stops = listOf("부석사 일주문", "무량수전", "소수서원", "풍기 카페"),
-            recruitmentNote = "눈길 이동을 줄이고 따뜻한 실내 휴식 시간을 넉넉히 잡아요."
+            recruitmentNote = "눈길 이동을 줄이고 따뜻한 실내 휴식 시간을 넉넉히 잡아요.",
+            latitude = 36.9975,
+            longitude = 128.6870
         ),
         TripCourse(
             id = "andong-dosan",
@@ -190,7 +204,9 @@ object MockTripRepository {
             rating = 4.6,
             tags = listOf("역사", "그늘", "짧은동선"),
             stops = listOf("도산서원", "낙동강 전망대", "서원 숲길", "전통찻집"),
-            recruitmentNote = "더운 날씨에는 그늘과 실내 휴식 시간을 먼저 확인하며 움직여요."
+            recruitmentNote = "더운 날씨에는 그늘과 실내 휴식 시간을 먼저 확인하며 움직여요.",
+            latitude = 36.7267,
+            longitude = 128.8452
         )
     )
 

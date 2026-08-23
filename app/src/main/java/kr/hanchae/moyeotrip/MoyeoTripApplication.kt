@@ -8,6 +8,7 @@ import com.kakao.sdk.common.KakaoSdk
 import io.sentry.android.core.SentryAndroid
 import kr.hanchae.moyeotrip.notifications.MoyeoPushNotificationChannels
 import kr.hanchae.moyeotrip.notifications.MoyeoPushTokenStore
+import kr.hanchae.moyeotrip.ui.components.MoyeoMapSdk
 
 class MoyeoTripApplication : Application() {
     override fun onCreate() {
@@ -20,6 +21,8 @@ class MoyeoTripApplication : Application() {
         }
         if (BuildConfig.KAKAO_NATIVE_APP_KEY.isNotBlank()) {
             KakaoSdk.init(this, BuildConfig.KAKAO_NATIVE_APP_KEY)
+            // 지도 SDK도 같은 네이티브 앱 키를 쓴다. 키가 없거나 초기화가 실패하면 지도는 목업으로 폴백한다.
+            MoyeoMapSdk.init(this, BuildConfig.KAKAO_NATIVE_APP_KEY)
         }
         if (BuildConfig.SENTRY_DSN.isNotBlank()) {
             SentryAndroid.init(this) { options ->

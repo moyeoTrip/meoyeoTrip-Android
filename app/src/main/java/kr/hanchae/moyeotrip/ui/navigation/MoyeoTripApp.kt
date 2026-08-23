@@ -82,6 +82,7 @@ import kr.hanchae.moyeotrip.data.tourism.FallbackTourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.HttpTourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.SampleTourismContentRepository
 import kr.hanchae.moyeotrip.notifications.PushNavigationEvent
+import kr.hanchae.moyeotrip.ui.components.LocalMapCaptureMode
 import kr.hanchae.moyeotrip.ui.screens.AccountDeleteScreen
 import kr.hanchae.moyeotrip.ui.screens.AuthFlowScreen
 import kr.hanchae.moyeotrip.ui.screens.BlockedUsersScreen
@@ -180,7 +181,10 @@ fun MoyeoTripApp(
         val currentDensity = LocalDensity.current
         val context = LocalContext.current
         CompositionLocalProvider(
-            LocalDensity provides Density(currentDensity.density, fontScale = 1f)
+            LocalDensity provides Density(currentDensity.density, fontScale = 1f),
+            // QA 캡처(moyeo_screen)로 들어온 실행에서는 실지도 대신 목업 지도를 그린다 — 타일 로딩이
+            // 비결정적이라 번호별 비교 캡처가 깨진다.
+            LocalMapCaptureMode provides (startScreen != null)
         ) {
             var showStartupSplash by remember { mutableStateOf(!skipStartupSplash) }
             val qaStartRequest = remember(startScreen) { QaStartRequest.parse(startScreen) }

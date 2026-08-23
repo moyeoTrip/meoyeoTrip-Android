@@ -22,6 +22,12 @@ data class TripCourse(
     val tags: List<String>,
     val stops: List<String>,
     val recruitmentNote: String,
+    /**
+     * 지도(화면기획 11)에 찍을 코스 대표 좌표. 0.0이면 좌표 미상이라 그 코스는 지도에 올리지 않고,
+     * 좌표를 가진 코스가 하나도 없으면 지도 자체가 목업으로 폴백한다.
+     */
+    val latitude: Double = 0.0,
+    val longitude: Double = 0.0,
     val publisher: CoursePublisher? = null
 )
 

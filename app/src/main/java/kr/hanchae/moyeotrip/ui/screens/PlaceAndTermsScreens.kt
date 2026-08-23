@@ -63,6 +63,10 @@ import kr.hanchae.moyeotrip.data.tourism.TourismContentDetail
 import kr.hanchae.moyeotrip.data.tourism.TourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.TourismContentSummary
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.KakaoMapView
+import kr.hanchae.moyeotrip.ui.components.MapMarker
+import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
+import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 internal enum class TourismContentType(val label: String, val icon: ImageVector) {
@@ -206,10 +210,28 @@ fun PlaceSearchScreen(
                         }
                     }
                     if (showsMap) {
-                        PlaceScenicPanel(
-                            kind = PlaceScenicKind.Forest,
-                            modifier = Modifier.fillMaxWidth().height(150.dp),
-                            cornerRadius = 12.dp
+                        // "지도에서 보기" — TourAPI 방문지 좌표를 그대로 실지도 순번 마커로 올린다
+                        val placeMarkers = results
+                            .filter { it.latitude != 0.0 && it.longitude != 0.0 }
+                            .mapIndexed { index, place ->
+                                MapMarker(
+                                    id = "place-${place.contentId}",
+                                    position = MoyeoLatLng(place.latitude, place.longitude),
+                                    shape = MapMarkerShape.Numbered,
+                                    badge = "${index + 1}"
+                                )
+                            }
+                        KakaoMapView(
+                            center = placeMarkers.firstOrNull()?.position ?: MoyeoLatLng(36.4361, 129.0573),
+                            modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(12.dp)),
+                            markers = placeMarkers,
+                            fallback = { fallbackModifier ->
+                                PlaceScenicPanel(
+                                    kind = PlaceScenicKind.Forest,
+                                    modifier = fallbackModifier,
+                                    cornerRadius = 12.dp
+                                )
+                            }
                         )
                     }
                     Text(

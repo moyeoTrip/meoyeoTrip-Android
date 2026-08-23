@@ -54,6 +54,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.ui.components.KakaoMapView
+import kr.hanchae.moyeotrip.ui.components.MapMarker
+import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
+import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -389,6 +393,75 @@ private fun ExploreMapView(
 ) {
     val selectedCourse = courses.first()
     Box(modifier = modifier) {
+        // 카카오 실지도 + 지역별 코스 묶음 마커. 폴백(키 없음·인증 실패·QA 캡처)에서는 기존 목업 판을 그린다.
+        val clusters = remember(courses) { courses.exploreClusterMarkers() }
+        if (clusters.isEmpty()) {
+            // 목데이터에 좌표가 없으면 실지도를 띄울 근거가 없다 — 목업 유지
+            ExploreMapMockup(selectedCourse, Modifier.matchParentSize())
+        } else {
+            KakaoMapView(
+                center = clusters.first().position,
+                modifier = Modifier.matchParentSize(),
+                markers = clusters,
+                zoomLevel = 9,
+                fallback = { fallbackModifier -> ExploreMapMockup(selectedCourse, fallbackModifier) }
+            )
+        }
+        // 화면기획 11의 내 위치 버튼 — 카드 위 우측
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 18.dp, bottom = 176.dp)
+                .size(44.dp)
+                .testTag("explore-map-my-location"),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Filled.MyLocation,
+                    contentDescription = "내 위치",
+                    modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+        SelectedMapCourse(
+            course = selectedCourse,
+            liked = selectedCourse.id in likedCourseIds,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(horizontal = 18.dp, vertical = 64.dp),
+            onClick = { onOpenCourse(selectedCourse.id) },
+            onFavoriteClick = { onToggleFavorite(selectedCourse.id) }
+        )
+    }
+}
+
+/**
+ * 화면기획 11의 지역 묶음 마커 — 같은 지역의 코스를 하나의 초록 원 + 흰 개수로 묶는다.
+ * 좌표가 없는 코스(latitude/longitude 0.0)는 지도에 올리지 않는다.
+ */
+private fun List<TripCourse>.exploreClusterMarkers(): List<MapMarker> = this
+    .filter { it.latitude != 0.0 && it.longitude != 0.0 }
+    .groupBy { it.region }
+    .map { (region, group) ->
+        MapMarker(
+            id = "explore-cluster-$region",
+            position = MoyeoLatLng(
+                latitude = group.sumOf { it.latitude } / group.size,
+                longitude = group.sumOf { it.longitude } / group.size
+            ),
+            shape = MapMarkerShape.Cluster,
+            badge = group.size.toString()
+        )
+    }
+
+/** 실지도를 쓸 수 없을 때(키 없음·인증 실패·QA 캡처) 그리는 기존 목업 지도 판. */
+@Composable
+private fun ExploreMapMockup(selectedCourse: TripCourse, modifier: Modifier = Modifier) {
+    Box(modifier = modifier) {
         MapBackground()
         MapCluster(
             text = "1",
@@ -419,35 +492,6 @@ private fun ExploreMapView(
             modifier = Modifier
                 .align(Alignment.CenterEnd)
                 .padding(end = 78.dp, bottom = 56.dp)
-        )
-        // 화면기획 11의 내 위치 버튼 — 카드 위 우측
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(end = 18.dp, bottom = 176.dp)
-                .size(44.dp)
-                .testTag("explore-map-my-location"),
-            shape = CircleShape,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    imageVector = Icons.Filled.MyLocation,
-                    contentDescription = "내 위치",
-                    modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurface
-                )
-            }
-        }
-        SelectedMapCourse(
-            course = selectedCourse,
-            liked = selectedCourse.id in likedCourseIds,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 18.dp, vertical = 64.dp),
-            onClick = { onOpenCourse(selectedCourse.id) },
-            onFavoriteClick = { onToggleFavorite(selectedCourse.id) }
         )
     }
 }
