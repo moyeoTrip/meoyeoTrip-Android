@@ -37,6 +37,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.components.InfoPill
 import kr.hanchae.moyeotrip.ui.components.SectionHeader
@@ -70,6 +72,13 @@ fun CourseDetailScreen(
     onOpenTrip: (String) -> Unit,
     onCreateRecruitment: (String) -> Unit
 ) {
+    // "srv-{id}" 는 실서버 코스다 (홈 인기 코스 서버 목록에서만 이 형태로 진입한다)
+    val server = LocalServerData.current
+    val serverCourseId = courseId.removePrefix("srv-").toLongOrNull()?.takeIf { courseId.startsWith("srv-") }
+    if (serverCourseId != null && server != null) {
+        ServerCourseDetail(courseId = serverCourseId, server = server, onBack = onBack)
+        return
+    }
     val course = remember(courseId) { MockTripRepository.findCourse(courseId) }
     val colors = MaterialTheme.colorScheme
     var isFavorite by rememberSaveable(courseId) { mutableStateOf(false) }
@@ -571,5 +580,172 @@ private fun TripCourse.courseStatusLabel(): String {
         distanceValue < 5.5 -> "느긋한 코스"
         distanceValue < 7.5 -> "알찬 코스"
         else -> "활동적인 코스"
+    }
+}
+
+/**
+ * 실서버 코스 상세 (GET travel-courses/{courseId}).
+ * 모집 만들기 플로우는 목데이터 전용이라 서버 코스에서는 진입 버튼을 두지 않는다.
+ */
+@Composable
+private fun ServerCourseDetail(
+    courseId: Long,
+    server: kr.hanchae.moyeotrip.data.ServerDataDependencies,
+    onBack: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    var course by remember(courseId) {
+        mutableStateOf<kr.hanchae.moyeotrip.data.courses.TravelCourse?>(null)
+    }
+    var loadFailed by remember(courseId) { mutableStateOf(false) }
+    LaunchedEffect(courseId, server) {
+        val loaded = runCatching { server.courses.course(courseId) }.getOrNull()
+        course = loaded
+        loadFailed = loaded == null
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(56.dp)
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "뒤로",
+                    tint = colors.onBackground
+                )
+            }
+            Text(
+                text = "코스 상세",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.onBackground,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+        val loadedCourse = course
+        if (loadedCourse == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    text = if (loadFailed) "코스 정보를 불러오지 못했어요." else "불러오는 중…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant
+                )
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 40.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                item {
+                    kr.hanchae.moyeotrip.ui.components.CachedRemoteImage(
+                        url = loadedCourse.thumbnail,
+                        contentDescription = loadedCourse.title,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(190.dp)
+                            .clip(RoundedCornerShape(14.dp)),
+                        contentScale = ContentScale.Crop
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(190.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(colors.surfaceVariant)
+                        )
+                    }
+                }
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(
+                            text = loadedCourse.title,
+                            style = MaterialTheme.typography.titleLarge,
+                            color = colors.onSurface,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        loadedCourse.description?.let { description ->
+                            Text(
+                                text = description,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
+                        val meta = listOfNotNull(
+                            loadedCourse.travelTime,
+                            loadedCourse.distanceKm?.let { "${it}km" },
+                            loadedCourse.averageRating?.let { "★ $it (${loadedCourse.ratingCount})" }
+                        ).joinToString(" · ")
+                        if (meta.isNotBlank()) {
+                            Text(
+                                text = meta,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colors.onSurfaceVariant
+                            )
+                        }
+                        if (loadedCourse.tags.isNotEmpty()) {
+                            Text(
+                                text = loadedCourse.tags.joinToString(" ") { "#${it.name}" },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colors.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+                if (loadedCourse.places.isNotEmpty()) {
+                    item {
+                        SectionHeader(title = "코스 미리보기")
+                    }
+                    items(loadedCourse.places.size) { index ->
+                        val place = loadedCourse.places[index]
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(26.dp)
+                                    .clip(CircleShape)
+                                    .background(colors.primaryContainer),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "${index + 1}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.primary,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = place.title,
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = colors.onSurface,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                val placeMeta = listOfNotNull(
+                                    "${place.dayNumber}일차",
+                                    place.visitTime?.take(5)
+                                ).joinToString(" · ")
+                                Text(
+                                    text = placeMeta,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colors.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

@@ -36,6 +36,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -55,10 +60,12 @@ import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.data.courses.TravelCourse
 import kr.hanchae.moyeotrip.domain.WeatherCoursePolicy
 import kr.hanchae.moyeotrip.domain.WeatherHero
 import kr.hanchae.moyeotrip.domain.WeatherHeroPolicy
 import kr.hanchae.moyeotrip.domain.WeatherHeroState
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -74,6 +81,20 @@ fun HomeScreen(
     val recommendedCourses = WeatherCoursePolicy.recommendedCourses(weatherSignal, MockTripRepository.courses)
     val featuredCourse = recommendedCourses.first()
     val hero = WeatherHeroPolicy.heroFor(weatherSignal, featuredCourse)
+
+    // 로그인 상태면 인기 코스 섹션을 실서버(GET travel-courses/public/popular, 비면 /public)로 대체한다.
+    // 날씨 추천 코스는 서버에 대응 API 가 없어 목데이터를 유지한다.
+    val server = LocalServerData.current
+    var serverCourses by remember(server) { mutableStateOf<List<TravelCourse>?>(null) }
+    LaunchedEffect(server) {
+        serverCourses = if (server == null) {
+            null
+        } else {
+            runCatching {
+                server.courses.popularCourses().ifEmpty { server.courses.publicCourses() }
+            }.getOrNull()
+        }
+    }
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -124,11 +145,31 @@ fun HomeScreen(
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             HomeSectionHeader(title = "인기 코스 TOP 3")
                             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                homePopularCourses().forEach { ranked ->
-                                    PopularCourseRow(
-                                        course = ranked,
-                                        onClick = { onOpenCourse(ranked.courseId) }
+                                val courses = serverCourses
+                                when {
+                                    courses == null -> homePopularCourses().forEach { ranked ->
+                                        PopularCourseRow(
+                                            course = ranked,
+                                            onClick = { onOpenCourse(ranked.courseId) }
+                                        )
+                                    }
+
+                                    courses.isEmpty() -> Text(
+                                        text = "아직 공개된 코스가 없어요.",
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 18.dp),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
+
+                                    else -> courses.take(3).forEachIndexed { index, course ->
+                                        ServerPopularCourseRow(
+                                            rank = index + 1,
+                                            course = course,
+                                            onClick = { onOpenCourse("srv-${course.courseId}") }
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -372,6 +413,77 @@ private fun PopularCourseRow(course: HomePopularCourse, onClick: () -> Unit) {
                     lineHeight = 15.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** 실서버 인기 코스 행 — 부제는 코스 소개(없으면 소요 시간·거리)다. */
+@Composable
+private fun ServerPopularCourseRow(rank: Int, course: TravelCourse, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(82.dp)
+            .testTag("home-server-course-${course.courseId}")
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(8.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(start = 12.dp, top = 14.dp, end = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(9.dp)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(30.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = rank.toString(),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = ForestGreen,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = course.title,
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1
+                )
+                val subtitle = course.description ?: listOfNotNull(
+                    course.travelTime,
+                    course.distanceKm?.let { "${it}km" }
+                ).joinToString(" · ")
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        fontSize = 11.sp,
+                        lineHeight = 15.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Icon(
                 imageVector = Icons.Filled.ChevronRight,

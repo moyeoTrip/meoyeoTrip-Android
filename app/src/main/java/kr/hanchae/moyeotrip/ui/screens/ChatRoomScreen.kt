@@ -52,6 +52,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -74,11 +75,19 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalTime
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.ChatMessage
 import kr.hanchae.moyeotrip.data.ChatThread
 import kr.hanchae.moyeotrip.data.MockTripRepository
+import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.chat.ChatOutbox
 import kr.hanchae.moyeotrip.data.chat.QueuedChatMessage
+import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
+import kr.hanchae.moyeotrip.data.rooms.RoomMember
+import kr.hanchae.moyeotrip.data.rooms.RoomMembers
+import kr.hanchae.moyeotrip.data.rooms.RoomMessage
+import kr.hanchae.moyeotrip.data.rooms.RoomNotices
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.InfoPill
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -92,6 +101,19 @@ fun ChatRoomScreen(
     onOpenMenu: () -> Unit = {},
     onOpenAttachment: () -> Unit = {}
 ) {
+    // "room-{id}" 는 실서버 모임이다 — 모임 목록(chat-rooms/my)에서만 이 형태로 진입한다
+    val server = LocalServerData.current
+    val serverRoomId = threadId.serverRoomIdOrNull()
+    if (serverRoomId != null && server != null && isOnline) {
+        ServerChatRoom(
+            roomId = serverRoomId,
+            server = server,
+            onBack = onBack,
+            onOpenNotices = onOpenNotices,
+            onOpenMenu = onOpenMenu
+        )
+        return
+    }
     val thread = MockTripRepository.findThread(threadId)
     val trip = thread.tripId?.let(MockTripRepository::findTrip)
     val messages = remember(threadId, isOnline) {
@@ -140,7 +162,8 @@ fun ChatRoomScreen(
             .background(colors.background)
     ) {
         ChatRoomTopBar(
-            thread = thread,
+            title = thread.title,
+            countText = thread.countText,
             showCount = trip == null || !isOnline,
             onBack = onBack,
             onCallClick = {
@@ -372,6 +395,251 @@ fun ChatRoomScreen(
         )
     }
 }
+
+/**
+ * 실서버 채팅방(화면기획 20) — GET chat-rooms/{id} · {id}/members · {id}/notices · {id}/messages.
+ * 방 참여자만 200이라 403이면 대화를 보여주지 않고, 그 밖의 실패는 목데이터 화면으로 되돌아간다.
+ * 메시지 전송은 POST {id}/messages (content + mentionedUserIds) 로 보낸다.
+ */
+@Composable
+private fun ServerChatRoom(
+    roomId: Long,
+    server: ServerDataDependencies,
+    onBack: () -> Unit,
+    onOpenNotices: (String) -> Unit,
+    onOpenMenu: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    var detail by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
+    var members by remember(roomId) { mutableStateOf<RoomMembers?>(null) }
+    var notices by remember(roomId) { mutableStateOf<RoomNotices?>(null) }
+    var messages by remember(roomId) { mutableStateOf<List<RoomMessage>?>(null) }
+    var accessDenied by remember(roomId) { mutableStateOf(false) }
+    var draft by rememberSaveable(roomId) { mutableStateOf("") }
+    var sending by remember(roomId) { mutableStateOf(false) }
+    var sendError by remember(roomId) { mutableStateOf<String?>(null) }
+    val messageListState = rememberLazyListState()
+    val sendScope = rememberCoroutineScope()
+
+    LaunchedEffect(roomId, server) {
+        detail = runCatching { server.chatRooms.room(roomId) }.getOrNull()
+        val loadedMessages = runCatching { server.chatRooms.messages(roomId, limit = MESSAGE_PAGE_SIZE) }
+        accessDenied = loadedMessages.isFailure
+        messages = loadedMessages.getOrNull()?.messages
+        members = runCatching { server.chatRooms.members(roomId) }.getOrNull()
+        notices = runCatching { server.chatRooms.notices(roomId) }.getOrNull()
+    }
+
+    val loadedMessages = messages
+    if (accessDenied) {
+        // 비참여 방이면 서버가 403을 준다 — 목데이터로 되돌리지 않고 그대로 알린다
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.background)
+        ) {
+            ChatRoomTopBar(
+                title = detail?.title ?: "채팅방",
+                countText = "",
+                showCount = false,
+                onBack = onBack,
+                onCallClick = {},
+                onMoreClick = onOpenMenu
+            )
+            Text(
+                text = "이 모임의 대화를 볼 수 없어요.",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(24.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = colors.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+        }
+        return
+    }
+
+    LaunchedEffect(loadedMessages?.size) {
+        val lastItemIndex = messageListState.layoutInfo.totalItemsCount - 1
+        if (lastItemIndex >= 0) messageListState.animateScrollToItem(lastItemIndex)
+    }
+
+    val myUserId = members?.members?.firstOrNull(RoomMember::me)?.userId
+    val pinnedNotice = notices?.pinned?.firstOrNull()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background)
+            .testTag("server-chat-room-$roomId")
+    ) {
+        ChatRoomTopBar(
+            title = detail?.title.orEmpty(),
+            countText = members?.let { "${it.participantCount}/${it.maxParticipants}명" }.orEmpty(),
+            showCount = members != null,
+            onBack = onBack,
+            onCallClick = {},
+            onMoreClick = onOpenMenu
+        )
+        detail?.let { room ->
+            Text(
+                text = buildAnnotatedString {
+                    append(serverRoomMetaLine(room))
+                    room.recruitmentDDay?.let { dDay ->
+                        append(" · ")
+                        withStyle(SpanStyle(color = colors.secondary, fontWeight = FontWeight.Bold)) {
+                            append("마감 D-$dDay")
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.onSurfaceVariant,
+                textAlign = TextAlign.Center
+            )
+            HorizontalDivider(color = colors.outline.copy(alpha = .45f))
+        }
+        if (pinnedNotice != null) {
+            val all = notices?.all.orEmpty()
+            ChatUtilityBar(
+                icon = Icons.Filled.Description,
+                title = pinnedNotice.content.orEmpty(),
+                subtitle = "공지 ${all.size}개 · 고정 ${notices?.pinned?.size ?: 0} · 이력 보기",
+                tinted = true,
+                tag = "chat-pinned-notice",
+                onClick = { onOpenNotices("room-$roomId") },
+                trailing = {
+                    Icon(
+                        imageVector = Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = colors.onSurfaceVariant
+                    )
+                }
+            )
+        }
+        LazyColumn(
+            state = messageListState,
+            modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(vertical = 18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (loadedMessages == null) {
+                item { ServerChatPlaceholder(text = "대화를 불러오는 중이에요.") }
+            } else if (loadedMessages.isEmpty()) {
+                item { ServerChatPlaceholder(text = "아직 대화가 없어요.") }
+            }
+            items(loadedMessages.orEmpty(), key = { it.messageId }) { message ->
+                if (message.type == "SYSTEM") {
+                    SystemPillMessage(message.content)
+                } else {
+                    MessageBubble(message = message.toChatMessage(myUserId))
+                }
+            }
+        }
+        Surface(color = colors.surface, shadowElevation = 8.dp) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .imePadding()
+                    .navigationBarsPadding()
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    OutlinedTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        modifier = Modifier.weight(1f).testTag("chat-message-input"),
+                        placeholder = { Text("메시지 입력") },
+                        singleLine = true,
+                        enabled = !sending
+                    )
+                    FilledIconButton(
+                        onClick = {
+                            val trimmed = draft.trim()
+                            if (trimmed.isEmpty() || sending) return@FilledIconButton
+                            sending = true
+                            sendScope.launch {
+                                runCatching { server.chatRooms.sendMessage(roomId, trimmed) }
+                                    .onSuccess { sent ->
+                                        messages = messages.orEmpty() + sent
+                                        draft = ""
+                                        sendError = null
+                                    }
+                                    .onFailure { error -> sendError = error.message ?: "메시지를 보내지 못했어요." }
+                                sending = false
+                            }
+                        },
+                        enabled = draft.isNotBlank() && !sending,
+                        modifier = Modifier.testTag("chat-message-send")
+                    ) {
+                        Icon(imageVector = Icons.AutoMirrored.Filled.Send, contentDescription = "보내기")
+                    }
+                }
+                sendError?.let { message ->
+                    Text(
+                        text = message,
+                        modifier = Modifier.fillMaxWidth().padding(start = 16.dp, bottom = 8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.error
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerChatPlaceholder(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 32.dp),
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        textAlign = TextAlign.Center
+    )
+}
+
+private const val MESSAGE_PAGE_SIZE = 50
+
+/** 서버 메시지 종류 라벨 — 서버가 주는 type 을 그대로 사람이 읽는 말로만 바꾼다. */
+private val serverMessageKindLabels = mapOf(
+    "IMAGE" to "사진",
+    "TOURISM_CONTENT" to "여행지 공유",
+    "LOCATION" to "장소 공유",
+    "POLL" to "투표",
+    "SETTLEMENT_MEMO" to "정산 메모"
+)
+
+private fun RoomMessage.toChatMessage(myUserId: Long?): ChatMessage {
+    val kind = serverMessageKindLabels[type]
+    return ChatMessage(
+        sender = senderNickname,
+        text = if (kind == null) content else "[$kind] $content",
+        time = createdAt.serverMessageTime(),
+        mine = myUserId != null && senderId == myUserId
+    )
+}
+
+/** "2026-08-24T01:19:16.185853" → "01:19". 형식이 다르면 표시하지 않는다. */
+private fun String.serverMessageTime(): String = Regex("""T(\d{2}:\d{2})""").find(this)?.groupValues?.get(1).orEmpty()
+
+private fun serverRoomMetaLine(room: ChatRoomDetail): String {
+    val dates = listOfNotNull(room.startDate.takeIf(String::isNotBlank), room.endDate)
+        .joinToString(" ~ ") { it.replace('-', '.') }
+    val hours = listOfNotNull(room.dayTripStartTime, room.dayTripEndTime)
+        .map { it.take(5) }
+        .takeIf { it.size == 2 }
+        ?.joinToString("–")
+    return listOfNotNull(dates.takeIf(String::isNotBlank), hours).joinToString(" · ")
+}
+
+/** "room-21" → 21. 서버 모임을 가리키는 화면 인자만 이 형태다. */
+internal fun String.serverRoomIdOrNull(): Long? =
+    if (startsWith("room-")) removePrefix("room-").toLongOrNull() else null
 
 /**
  * 오버레이 배경으로 쓰는 기본 채팅방 — 캡처 도구가 쓰는 기본 chatId와 같다.
@@ -622,7 +890,8 @@ private fun RouteChangeMessage(message: ChatMessage) {
 
 @Composable
 private fun ChatRoomTopBar(
-    thread: ChatThread,
+    title: String,
+    countText: String,
     onBack: () -> Unit,
     onCallClick: () -> Unit,
     onMoreClick: () -> Unit,
@@ -666,7 +935,7 @@ private fun ChatRoomTopBar(
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 Text(
-                    text = thread.title,
+                    text = title,
                     style = MaterialTheme.typography.titleLarge,
                     color = colors.onSurface,
                     textAlign = TextAlign.Center
@@ -674,7 +943,7 @@ private fun ChatRoomTopBar(
                 if (showCount) {
                     // 화면기획 20은 헤더 아래 메타 줄이 인원을 보여줘 헤더에는 중복 표기하지 않는다
                     Text(
-                        text = thread.countText,
+                        text = countText,
                         style = MaterialTheme.typography.labelLarge,
                         color = colors.onSurfaceVariant
                     )

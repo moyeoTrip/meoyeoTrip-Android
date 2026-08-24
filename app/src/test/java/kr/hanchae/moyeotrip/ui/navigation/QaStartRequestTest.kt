@@ -1,6 +1,7 @@
 package kr.hanchae.moyeotrip.ui.navigation
 
 import kr.hanchae.moyeotrip.data.network.OfflineExperience
+import kr.hanchae.moyeotrip.data.oss.OssLicenseCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -34,6 +35,21 @@ class QaStartRequestTest {
             QaStartRequest.parse("course").toRoute()
         )
         assertEquals(AppRoutes.HOME, QaStartRequest.parse(null).toRoute())
+    }
+
+    @Test
+    fun opensOssLicenseScreensWithHyphenStrippedCaptureKeys() {
+        assertEquals(AppRoutes.OSS_LICENSES, QaStartRequest.parse("oss-licenses").toRoute())
+        assertEquals(AppRoutes.OSS_LICENSES, QaStartRequest.parse("osslicenses").toRoute())
+        assertEquals(
+            AppRoutes.ossLicenseDetail("sentry-android"),
+            QaStartRequest.parse("oss-license-detail:sentry-android").toRoute()
+        )
+        // 인자가 없으면 목록의 첫 항목을 보여준다
+        assertEquals(
+            AppRoutes.ossLicenseDetail(OssLicenseCatalog.items.first().slug),
+            QaStartRequest.parse("oss-license-detail").toRoute()
+        )
     }
 
     @Test

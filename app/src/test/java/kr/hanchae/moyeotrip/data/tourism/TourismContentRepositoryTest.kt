@@ -11,6 +11,23 @@ import org.junit.Test
 
 class TourismContentRepositoryTest {
     @Test
+    fun typesParsesServerTypeCandidates() = runBlocking {
+        val connection = TourismJsonConnection(
+            URL("https://example.test"),
+            """[{"contentTypeId":12,"contentTypeName":"관광지"},{"contentTypeId":39,"contentTypeName":"음식점"}]"""
+        )
+        val repository = HttpTourismContentRepository("https://example.test", { "access-token" }) { url ->
+            assertEquals("/api/v1/tourism-contents/types", url.path)
+            connection
+        }
+
+        val types = repository.types()
+
+        assertEquals(listOf(12, 39), types.map(TourismContentTypeOption::contentTypeId))
+        assertEquals("음식점", types.last().contentTypeName)
+    }
+
+    @Test
     fun listUsesProtectedEndpointAndParsesSummaryContract() = runBlocking {
         val connection = TourismJsonConnection(
             URL("https://example.test"),
@@ -73,11 +90,15 @@ class TourismContentRepositoryTest {
 
             override suspend fun content(contentId: String): TourismContentDetail =
                 throw TourismContentApiException(401, "Unauthorized")
+
+            override suspend fun types(): List<TourismContentTypeOption> =
+                throw TourismContentApiException(401, "Unauthorized")
         }
         val repository = FallbackTourismContentRepository(unauthorized, SampleTourismContentRepository)
 
         assertTrue(repository.contents(null).items.isNotEmpty())
         assertEquals("달기약수터 백숙거리", repository.content("2299341").summary.title)
+        assertEquals(listOf("관광지", "식당", "숙박"), repository.types().map(TourismContentTypeOption::contentTypeName))
     }
 }
 

@@ -1,0 +1,93 @@
+{
+  "$comment": "정본: 워크스페이스 docs/oss/oss-licenses.json 의 android 배열. 의존성을 바꿀 때 함께 갱신한다(changeLog17).",
+  "updatedAt": "2026-08-24",
+  "platform": "android",
+  "items": [
+    {
+      "name": "AndroidX Core KTX",
+      "version": "1.18.0",
+      "license": "Apache-2.0",
+      "licenseTextId": "Apache-2.0",
+      "url": "https://developer.android.com/jetpack/androidx"
+    },
+    {
+      "name": "AndroidX Activity Compose",
+      "version": "1.13.0",
+      "license": "Apache-2.0",
+      "licenseTextId": "Apache-2.0",
+      "url": "https://developer.android.com/jetpack/androidx"
+    },
+    {
+      "name": "Jetpack Compose",
+      "version": "BOM 2026.05.00",
+      "license": "Apache-2.0",
+      "licenseTextId": "Apache-2.0",
+      "url": "https://developer.android.com/jetpack/compose",
+      "note": "Material3 · UI · Material Icons Extended 포함"
+    },
+    {
+      "name": "AndroidX Navigation Compose",
+      "version": "2.9.6",
+      "license": "Apache-2.0",
+      "licenseTextId": "Apache-2.0",
+      "url": "https://developer.android.com/jetpack/androidx"
+    },
+    {
+      "name": "AndroidX Credentials",
+      "version": "1.6.0",
+      "license": "Apache-2.0",
+      "licenseTextId": "Apache-2.0",
+      "url": "https://developer.android.com/jetpack/androidx",
+      "note": "credentials-play-services-auth 포함"
+    },
+    {
+      "name": "Kotlin Standard Library",
+      "version": "2.3.21",
+      "license": "Apache-2.0",
+      "licenseTextId": "Apache-2.0",
+      "url": "https://github.com/JetBrains/kotlin"
+    },
+    {
+      "name": "Firebase Cloud Messaging",
+      "version": "25.1.1",
+      "license": "Apache-2.0",
+      "licenseTextId": "Apache-2.0",
+      "url": "https://firebase.google.com"
+    },
+    {
+      "name": "Firebase Authentication",
+      "version": "24.2.0",
+      "license": "Android Software Development Kit License",
+      "url": "https://developer.android.com/studio/terms",
+      "note": "Apache-2.0 이 아니라 Google 의 Android SDK 라이선스를 따릅니다."
+    },
+    {
+      "name": "Google Identity Services",
+      "version": "1.2.0",
+      "license": "Android Software Development Kit License",
+      "url": "https://developer.android.com/studio/terms",
+      "note": "Apache-2.0 이 아니라 Google 의 Android SDK 라이선스를 따릅니다."
+    },
+    {
+      "name": "Kakao SDK for Android",
+      "version": "2.24.0",
+      "license": "Apache-2.0",
+      "licenseTextId": "Apache-2.0",
+      "url": "https://github.com/kakao/kakao-android-sdk"
+    },
+    {
+      "name": "Kakao Maps SDK for Android",
+      "version": "2.15.1",
+      "license": "카카오 지도 SDK 이용약관",
+      "url": "https://apis.map.kakao.com",
+      "note": "오픈소스 라이선스가 아닌 카카오 자체 배포 약관을 따릅니다. SDK 안에 별도의 오픈소스 고지가 포함되어 있습니다."
+    },
+    {
+      "name": "Sentry Android",
+      "version": "8.43.0",
+      "license": "MIT",
+      "licenseTextId": "MIT",
+      "url": "https://github.com/getsentry/sentry-java"
+    }
+  ]
+}

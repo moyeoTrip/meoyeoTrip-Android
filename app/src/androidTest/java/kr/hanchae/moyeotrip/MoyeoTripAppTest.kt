@@ -938,9 +938,14 @@ class MoyeoTripAppTest {
         composeRule.onNodeWithContentDescription("프로필 메뉴").performClick()
         composeRule.onNodeWithContentDescription("설정").performClick()
 
+        // 테마 행은 시트 대신 시스템 기본 → 라이트 → 다크 → 시스템 기본 순으로 값이 순환한다
+        composeRule.onNodeWithText("시스템 기본").assertIsDisplayed()
         composeRule.onNodeWithText("테마").performClick()
-        composeRule.onNodeWithText("테마 설정").assertIsDisplayed()
-        composeRule.onNodeWithText("닫기").performClick()
+        composeRule.onNodeWithText("라이트").assertIsDisplayed()
+        composeRule.onNodeWithText("테마").performClick()
+        composeRule.onNodeWithText("다크").assertIsDisplayed()
+        composeRule.onNodeWithText("테마").performClick()
+        composeRule.onNodeWithText("시스템 기본").assertIsDisplayed()
 
         composeRule
             .onNode(hasScrollAction())

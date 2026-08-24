@@ -1,5 +1,6 @@
 package kr.hanchae.moyeotrip.ui.navigation
 
+import android.content.res.Configuration
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -9,7 +10,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -73,15 +74,22 @@ import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.BuildConfig
 import kr.hanchae.moyeotrip.data.CourseSource
 import kr.hanchae.moyeotrip.data.MockTripRepository
+import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.auth.AuthDependencies
 import kr.hanchae.moyeotrip.data.network.AndroidNetworkMonitor
 import kr.hanchae.moyeotrip.data.network.OfflineCacheStore
 import kr.hanchae.moyeotrip.data.network.OfflineExperience
 import kr.hanchae.moyeotrip.data.network.offlineExperience
+import kr.hanchae.moyeotrip.data.oss.OssLicenseCatalog
+import kr.hanchae.moyeotrip.data.settings.ThemePreference
+import kr.hanchae.moyeotrip.data.settings.ThemePreferenceStore
+import kr.hanchae.moyeotrip.data.settings.resolveDarkTheme
 import kr.hanchae.moyeotrip.data.tourism.FallbackTourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.HttpTourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.SampleTourismContentRepository
 import kr.hanchae.moyeotrip.notifications.PushNavigationEvent
+import kr.hanchae.moyeotrip.ui.LocalCaptureMode
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.LocalMapCaptureMode
 import kr.hanchae.moyeotrip.ui.screens.AccountDeleteScreen
 import kr.hanchae.moyeotrip.ui.screens.AuthFlowScreen
@@ -118,6 +126,8 @@ import kr.hanchae.moyeotrip.ui.screens.NotificationCenterScreen
 import kr.hanchae.moyeotrip.ui.screens.NotificationDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.OfflineCachedBanner
 import kr.hanchae.moyeotrip.ui.screens.OfflineNoCacheScreen
+import kr.hanchae.moyeotrip.ui.screens.OssLicenseDetailScreen
+import kr.hanchae.moyeotrip.ui.screens.OssLicensesScreen
 import kr.hanchae.moyeotrip.ui.screens.PlaceDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.PlaceSearchScreen
 import kr.hanchae.moyeotrip.ui.screens.ProfileEditScreen
@@ -172,19 +182,43 @@ fun MoyeoTripApp(
     pushNavigationEvent: PushNavigationEvent? = null,
     skipStartupSplash: Boolean = false,
     skipAuthentication: Boolean = false,
-    /** 번호별 비교 캡처는 다크/라이트 두 테마를 모두 찍는다. null이면 시스템 설정을 따른다. */
+    /** 번호별 비교 캡처는 다크/라이트 두 테마를 모두 찍는다. null이면 사용자 설정·시스템 설정을 따른다. */
     forceDarkTheme: Boolean? = null,
     onAuthenticationComplete: () -> Unit = {},
-    onPushRouteHandled: (Long) -> Unit = {}
+    onPushRouteHandled: (Long) -> Unit = {},
+    /** 실제 적용된 테마를 액티비티에 알려 상태바 아이콘과 리소스 한정자(uiMode)를 맞춘다. */
+    onEffectiveDarkThemeChanged: (Boolean) -> Unit = {}
 ) {
-    MoyeoTripTheme(darkTheme = forceDarkTheme ?: isSystemInDarkTheme()) {
+    val themeContext = LocalContext.current
+    val captureMode = startScreen != null
+    val themePreferenceStore = remember(themeContext) {
+        ThemePreferenceStore(themeContext.applicationContext)
+    }
+    val storedThemePreference by themePreferenceStore.preference.collectAsState()
+    // 캡처는 강제 테마(없으면 시스템)를 쓴다 — 기기에 저장된 사용자 설정이 섞이면 비교 캡처가 깨진다
+    val themePreference = if (captureMode) ThemePreference.System else storedThemePreference
+    // 사용자 설정이 uiMode 를 덮어쓴 뒤에도 "진짜 시스템 값"을 읽어야 한다.
+    // 액티비티 리소스만 덮어쓰므로 애플리케이션 리소스가 시스템 원본이다.
+    // OS 테마가 런타임에 바뀌면 액티비티가 재생성되면서 이 값도 다시 읽힌다.
+    val systemDarkTheme = LocalConfiguration.current.let { configuration ->
+        remember(configuration) {
+            themeContext.applicationContext.resources.configuration.uiMode and
+                Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        }
+    }
+    val darkTheme = resolveDarkTheme(forceDarkTheme, themePreference, systemDarkTheme)
+    LaunchedEffect(darkTheme) { onEffectiveDarkThemeChanged(darkTheme) }
+
+    MoyeoTripTheme(darkTheme = darkTheme) {
         val currentDensity = LocalDensity.current
         val context = LocalContext.current
         CompositionLocalProvider(
             LocalDensity provides Density(currentDensity.density, fontScale = 1f),
             // QA 캡처(moyeo_screen)로 들어온 실행에서는 실지도 대신 목업 지도를 그린다 — 타일 로딩이
             // 비결정적이라 번호별 비교 캡처가 깨진다.
-            LocalMapCaptureMode provides (startScreen != null)
+            LocalMapCaptureMode provides captureMode,
+            // 저장된 최근 검색어·테마 설정·실제 빌드 버전 대신 화면기획 목데이터를 보여줘야 하는지
+            LocalCaptureMode provides captureMode
         ) {
             var showStartupSplash by remember { mutableStateOf(!skipStartupSplash) }
             val qaStartRequest = remember(startScreen) { QaStartRequest.parse(startScreen) }
@@ -218,6 +252,30 @@ fun MoyeoTripApp(
             val userProfile by authDependencies.userProfileStore.profile.collectAsState()
             val bypassAuthentication = skipAuthentication || startScreen != null
             var authenticationComplete by remember(authDependencies) { mutableStateOf(false) }
+            // 캡처 라우트(startScreen)·데모 모드에서는 아예 만들지 않는다 — 네트워크 회귀 금지
+            val serverDataDependencies = remember(authDependencies, startScreen) {
+                if (startScreen != null || skipAuthentication || BuildConfig.AUTH_DEMO_MODE) {
+                    null
+                } else {
+                    ServerDataDependencies.create(
+                        baseUrl = BuildConfig.AUTH_API_BASE_URL,
+                        accessToken = { authDependencies.sessionStore.current.accessToken },
+                        refreshAccessToken = {
+                            val session = authDependencies.sessionStore.current
+                            val refreshToken = session.refreshToken
+                            val provider = session.provider
+                            if (refreshToken == null || provider == null) {
+                                null
+                            } else {
+                                runCatching { authDependencies.authGateway.refresh(refreshToken) }
+                                    .onSuccess { authDependencies.sessionStore.saveSignup(provider, it) }
+                                    .getOrNull()
+                                    ?.accessToken
+                            }
+                        }
+                    )
+                }
+            }
             LaunchedEffect(authDependencies, authenticationComplete) {
                 if (authenticationComplete) {
                     onAuthenticationComplete()
@@ -297,591 +355,640 @@ fun MoyeoTripApp(
                 }
             }
 
-            Box(modifier = Modifier.fillMaxSize()) {
-                Scaffold(
-                    modifier = Modifier.graphicsLayer {
-                        alpha = startupContentAlpha
-                        scaleX = startupContentScale
-                        scaleY = startupContentScale
-                        translationY = with(currentDensity) { startupContentOffset.toPx() }
-                    },
-                    containerColor = MaterialTheme.colorScheme.background,
-                    contentWindowInsets = WindowInsets(0.dp),
-                    topBar = {
-                        if (networkExperience == OfflineExperience.Cached &&
-                            currentRoute?.startsWith("chat/") != true
-                        ) {
-                            // Scaffold 가 인셋을 소비하지 않으므로 배너가 상태바와 겹친다
-                            OfflineCachedBanner(modifier = Modifier.statusBarsPadding())
-                        }
-                    },
-                    bottomBar = {
-                        if (showBottomBar) {
-                            MoyeoBottomBar(
-                                currentRoute = bottomBarRoute,
-                                onDestinationClick = { destination ->
-                                    navController.navigate(destination.route) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            saveState = true
-                                        }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                }
-                            )
-                        }
-                    }
-                ) { innerPadding ->
-                    // 스플래시는 iOS처럼 상태바 뒤까지 꽉 채운다 — 상단 안전 패딩을 주지 않는다
-                    val edgeToEdgeRoute = currentRoute == AppRoutes.QA_SPLASH
-                    NavHost(
-                        navController = navController,
-                        startDestination = AppRoutes.HOME,
-                        modifier = Modifier
-                            .padding(innerPadding)
-                            .padding(top = if (edgeToEdgeRoute) 0.dp else topSafePadding)
-                    ) {
-                        composable(AppRoutes.HOME) {
-                            HomeScreen(
-                                onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
-                                onOpenExplore = { navController.navigate(AppRoutes.EXPLORE) },
-                                onOpenNotifications = { navController.navigate(AppRoutes.NOTIFICATIONS) },
-                                onCreateRecruitment = { navController.navigate(AppRoutes.createRecruitment(it)) },
-                                isOnline = isOnline
-                            )
-                        }
-                        composable(AppRoutes.EXPLORE) {
-                            ExploreScreen(
-                                onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
-                                onOpenSearch = { navController.navigate(AppRoutes.SEARCH) },
-                                onCreateRecruitment = { navController.navigate(AppRoutes.createRecruitment(it)) },
-                                startInMap = qaStartsInExploreMap
-                            )
-                        }
-                        composable(AppRoutes.MEETINGS) {
-                            MeetingsScreen(
-                                onOpenRoom = {
-                                    navController.navigate(
-                                        if (it ==
-                                            "chat-cheongsong-juwangsan"
-                                        ) {
-                                            AppRoutes.tripDay(it)
-                                        } else {
-                                            AppRoutes.chatRoom(it)
-                                        }
-                                    )
-                                },
-                                onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
-                                onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) }
-                            )
-                        }
-                        composable(AppRoutes.MEETINGS_APPLIED) {
-                            MeetingsScreen(
-                                onOpenRoom = { navController.navigate(AppRoutes.chatRoom(it)) },
-                                onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
-                                initialTab = MeetingChatTab.Applied
-                            )
-                        }
-                        composable(AppRoutes.FEED) {
-                            FeedScreen(
-                                onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) },
-                                onWritePost = { navController.navigate(AppRoutes.feedWrite()) }
-                            )
-                        }
-                        composable(AppRoutes.MY) {
-                            MyScreen(
-                                userProfile = userProfile,
-                                onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
-                                onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
-                                onOpenProfile = { navController.navigate(AppRoutes.PROFILE) },
-                                onOpenMyFeed = { navController.navigate(AppRoutes.MY_FEED) },
-                                onOpenFriendDex = { navController.navigate(AppRoutes.FRIEND_DEX) },
-                                onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) },
-                                onOpenCustomerCenter = { navController.navigate(AppRoutes.CUSTOMER_CENTER) },
-                                onOpenFriends = { navController.navigate(AppRoutes.FRIENDS) },
-                                onOpenCoursePublish = { navController.navigate(AppRoutes.COURSE_PUBLISH) }
-                            )
-                        }
-                        composable(AppRoutes.PROFILE) {
-                            ProfileScreen(
-                                userProfile = userProfile,
-                                onBack = { navController.popBackStack() },
-                                onOpenProfileEdit = { navController.navigate(AppRoutes.PROFILE_EDIT) },
-                                onOpenFriendDex = { navController.navigate(AppRoutes.FRIEND_DEX) },
-                                onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) }
-                            )
-                        }
-                        composable(AppRoutes.PROFILE_EDIT) {
-                            ProfileEditScreen(
-                                userProfile = userProfile,
-                                onBack = { navController.popBackStack() }
-                            )
-                        }
-                        composable(AppRoutes.MY_FEED) {
-                            MyFeedScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) }
-                            )
-                        }
-                        composable(AppRoutes.FRIEND_DEX) {
-                            FriendDexScreen(onBack = { navController.popBackStack() })
-                        }
-                        composable(AppRoutes.SETTINGS) {
-                            SettingsScreen(
-                                onBack = { navController.popBackStack() },
-                                accountService = authDependencies.accountService,
-                                onOpenNotificationDetail = { navController.navigate(AppRoutes.NOTIFICATION_DETAIL) },
-                                onOpenBlockedUsers = { navController.navigate(AppRoutes.BLOCKED_USERS) },
-                                onOpenAccountDelete = { navController.navigate(AppRoutes.ACCOUNT_DELETE) },
-                                onOpenTerms = { document ->
-                                    navController.navigate(AppRoutes.termsDetail(document, "settings"))
-                                },
-                                onAuthenticationCleared = {
-                                    authenticationComplete = false
-                                    navController.navigate(AppRoutes.HOME) {
-                                        popUpTo(navController.graph.findStartDestination().id) {
-                                            inclusive = false
-                                        }
-                                        launchSingleTop = true
-                                    }
-                                }
-                            )
-                        }
-                        composable(AppRoutes.CUSTOMER_CENTER) {
-                            CustomerCenterScreen(onBack = { navController.popBackStack() })
-                        }
-                        composable(AppRoutes.COURSE_DETAIL) { entry ->
-                            CourseDetailScreen(
-                                courseId = entry.arguments?.getString("courseId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
-                                onCreateRecruitment = { navController.navigate(AppRoutes.createRecruitment(it)) }
-                            )
-                        }
-                        composable(AppRoutes.TRIP_DETAIL) { entry ->
-                            TripDetailScreen(
-                                tripId = entry.arguments?.getString("tripId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenChatRoom = { navController.navigate(AppRoutes.chatRoom(it)) }
-                            )
-                        }
-                        composable(AppRoutes.FEED_DETAIL) { entry ->
-                            FeedDetailScreen(
-                                postId = entry.arguments?.getString("postId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenAllComments = {
-                                    navController.navigate(
-                                        AppRoutes.feedComments(entry.arguments?.getString("postId").orEmpty())
-                                    )
-                                }
-                            )
-                        }
-                        composable(AppRoutes.CHAT_LIST) {
-                            ChatListScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenRoom = { navController.navigate(AppRoutes.chatRoom(it)) }
-                            )
-                        }
-                        composable(AppRoutes.CHAT_ROOM) { entry ->
-                            ChatRoomScreen(
-                                threadId = entry.arguments?.getString("threadId").orEmpty(),
-                                isOnline = isOnline,
-                                onBack = { navController.popBackStack() },
-                                onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
-                                onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
-                                onOpenMenu = {
-                                    navController.navigate(
-                                        AppRoutes.chatMenu(entry.arguments?.getString("threadId").orEmpty())
-                                    )
-                                },
-                                onOpenAttachment = { navController.navigate(AppRoutes.CHAT_ATTACH) }
-                            )
-                        }
-                        composable(AppRoutes.SPECIAL_MESSAGES) {
-                            SpecialMessagesScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenTripConfirmed = { navController.navigate(AppRoutes.TRIP_CONFIRMED) }
-                            )
-                        }
-                        composable(AppRoutes.NOTIFICATIONS) {
-                            NotificationCenterScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
-                                onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) },
-                                onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
-                                onOpenTripConfirmed = { navController.navigate(AppRoutes.TRIP_CONFIRMED) },
-                                onOpenTripMessage = { navController.navigate(AppRoutes.TRIP_MESSAGE) },
-                                onOpenRemovalReason = { navController.navigate(AppRoutes.REMOVAL_REASON) }
-                            )
-                        }
-                        composable(AppRoutes.REMOVAL_REASON) {
-                            RemovalReasonScreen(onBack = { navController.popBackStack() })
-                        }
-                        composable(
-                            route = AppRoutes.CREATE_RECRUITMENT,
-                            arguments = listOf(navArgument("courseId") { type = NavType.StringType })
-                        ) { entry ->
-                            RecruitmentCourseSourceScreen(
-                                courseId = entry.arguments?.getString("courseId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenCustomCourse = { navController.navigate(AppRoutes.customCourse(it)) },
-                                onOpenSchedule = { navController.navigate(AppRoutes.createSchedule(it)) }
-                            )
-                        }
-                        composable(AppRoutes.CUSTOM_COURSE) { entry ->
-                            CustomCourseScreen(
-                                draftId = entry.arguments?.getString("draftId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenPlaceSearch = { navController.navigate(AppRoutes.placeSearch(it)) },
-                                onContinue = { navController.navigate(AppRoutes.createSchedule(it)) }
-                            )
-                        }
-                        composable(AppRoutes.PLACE_SEARCH) { entry ->
-                            PlaceSearchScreen(
-                                draftId = entry.arguments?.getString("draftId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenDetail = { draftId, contentId ->
-                                    navController.navigate(AppRoutes.placeDetail(draftId, contentId))
-                                },
-                                onDone = { draftId ->
-                                    navController.navigate(AppRoutes.customCourse(draftId)) {
-                                        popUpTo(AppRoutes.CUSTOM_COURSE) { inclusive = true }
-                                    }
-                                },
-                                repository = tourismRepository
-                            )
-                        }
-                        composable(AppRoutes.PLACE_DETAIL) { entry ->
-                            PlaceDetailScreen(
-                                draftId = entry.arguments?.getString("draftId").orEmpty(),
-                                contentId = entry.arguments?.getString("contentId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onAdd = { draftId ->
-                                    navController.navigate(AppRoutes.customCourse(draftId)) {
-                                        popUpTo(AppRoutes.PLACE_SEARCH) { inclusive = false }
-                                    }
-                                },
-                                repository = tourismRepository
-                            )
-                        }
-                        composable(AppRoutes.CREATE_SCHEDULE) { entry ->
-                            CreateScheduleScreen(
-                                draftId = entry.arguments?.getString("draftId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onContinue = { navController.navigate(AppRoutes.createMeetPoint(it)) }
-                            )
-                        }
-                        composable(AppRoutes.CREATE_PEOPLE) { entry ->
-                            CreatePeopleScreen(
-                                draftId = entry.arguments?.getString("draftId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onContinue = { navController.navigate(AppRoutes.createDetail(it)) }
-                            )
-                        }
-                        composable(AppRoutes.CREATE_MEET_POINT) { entry ->
-                            CreateMeetPointScreen(
-                                draftId = entry.arguments?.getString("draftId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onSave = { navController.navigate(AppRoutes.createPeople(it)) }
-                            )
-                        }
-                        composable(AppRoutes.CREATE_DETAIL) { entry ->
-                            CreateDetailScreen(
-                                draftId = entry.arguments?.getString("draftId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onSave = { navController.navigate(AppRoutes.createSummary(it)) }
-                            )
-                        }
-                        composable(AppRoutes.CREATE_SUMMARY) { entry ->
-                            CreateSummaryScreen(
-                                draftId = entry.arguments?.getString("draftId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onCreated = { trip ->
-                                    navController.navigate(AppRoutes.hostManage(trip.id)) {
-                                        popUpTo(AppRoutes.CREATE_RECRUITMENT) { inclusive = true }
-                                    }
-                                }
-                            )
-                        }
-                        composable(AppRoutes.COURSE_ROUTE) { entry ->
-                            CourseRouteScreen(
-                                tripId = entry.arguments?.getString("tripId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenMeetingPoint = {},
-                                onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) }
-                            )
-                        }
-                        composable(AppRoutes.NOTICE_HISTORY) { entry ->
-                            NoticeHistoryScreen(
-                                tripId = entry.arguments?.getString("tripId").orEmpty(),
-                                onBack = { navController.popBackStack() }
-                            )
-                        }
-                        composable(
-                            route = AppRoutes.HOST_MANAGE,
-                            arguments = listOf(navArgument("tripId") { type = NavType.StringType })
-                        ) { entry ->
-                            HostManageScreen(
-                                tripId = entry.arguments?.getString("tripId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenChat = { navController.navigate(AppRoutes.chatRoom(it)) },
-                                onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
-                            )
-                        }
-                        composable(
-                            route = AppRoutes.FEED_WRITE,
-                            arguments = listOf(
-                                navArgument("step") {
-                                    type = NavType.IntType
-                                    defaultValue = 1
-                                }
-                            )
-                        ) { entry ->
-                            FeedWriteScreen(
-                                initialStep = entry.arguments?.getInt("step") ?: 1,
-                                onBack = { navController.popBackStack() },
-                                onPostCreated = { postId ->
-                                    navController.navigate(AppRoutes.feedDetail(postId)) {
-                                        popUpTo(AppRoutes.FEED) {
-                                            inclusive = false
-                                        }
-                                        launchSingleTop = true
-                                    }
-                                }
-                            )
-                        }
-                        composable(AppRoutes.SEARCH) {
-                            SearchScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
-                                initialQuery = if (startScreen?.substringBefore(":") == "search") {
-                                    "경주 단풍"
-                                } else {
-                                    ""
-                                }
-                            )
-                        }
-                        composable(AppRoutes.TRIP_CONFIRMED) {
-                            TripConfirmedScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenChat = {
-                                    navController.navigate(AppRoutes.tripDay("chat-cheongsong-juwangsan"))
-                                }
-                            )
-                        }
-                        composable(AppRoutes.CHAT_MENU) { entry ->
-                            ChatMenuScreen(
-                                threadId = entry.arguments?.getString("threadId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
-                                onOpenNotificationSettings = { navController.navigate(AppRoutes.NOTIFICATION_DETAIL) },
-                                onOpenReport = { navController.navigate(AppRoutes.REPORT) },
-                                onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
-                                onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
-                            )
-                        }
-                        composable(AppRoutes.CHAT_ATTACH) {
-                            ChatAttachmentScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
-                                isOnline = isOnline
-                            )
-                        }
-                        composable(AppRoutes.FRIENDS) {
-                            FriendsScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) }
-                            )
-                        }
-                        composable(AppRoutes.TRIP_MESSAGE) {
-                            TripMessageScreen(
-                                onBack = { navController.popBackStack() },
-                                onOpenFeedWrite = { navController.navigate(AppRoutes.feedWrite()) },
-                                onOpenCoursePublish = { navController.navigate(AppRoutes.COURSE_PUBLISH) },
-                                onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) }
-                            )
-                        }
-                        composable(AppRoutes.REPORT) {
-                            ReportScreen(onBack = { navController.popBackStack() })
-                        }
-                        composable(AppRoutes.BLOCKED_USERS) {
-                            BlockedUsersScreen(onBack = { navController.popBackStack() })
-                        }
-                        composable(AppRoutes.COURSE_PUBLISH) {
-                            CoursePublishScreen(
-                                onBack = { navController.popBackStack() },
-                                onPublished = {
-                                    navController.navigate(AppRoutes.courseDetail("cheongsong-juwangsan"))
-                                }
-                            )
-                        }
-                        composable(AppRoutes.TRIP_DAY) { entry ->
-                            val threadId = entry.arguments?.getString("threadId").orEmpty()
-                            TripDayScreen(
-                                threadId = threadId,
-                                onBack = { navController.popBackStack() },
-                                onOpenMenu = { navController.navigate(AppRoutes.chatMenu(threadId)) },
-                                onOpenAttachment = { navController.navigate(AppRoutes.CHAT_ATTACH) },
-                                onOpenRoute = {
-                                    val tripId = MockTripRepository.findThread(threadId).tripId
-                                    if (tripId != null) navController.navigate(AppRoutes.courseRoute(tripId))
-                                }
-                            )
-                        }
-                        composable(AppRoutes.NOTIFICATION_DETAIL) {
-                            NotificationDetailScreen(onBack = { navController.popBackStack() })
-                        }
-                        composable(AppRoutes.ACCOUNT_DELETE) {
-                            AccountDeleteScreen(
-                                onBack = { navController.popBackStack() },
-                                onDelete = {
-                                    appScope.launch {
-                                        runCatching { authDependencies.accountService.withdraw() }
-                                            .onSuccess {
-                                                authenticationComplete = false
-                                                navController.navigate(AppRoutes.HOME) {
-                                                    popUpTo(navController.graph.findStartDestination().id)
-                                                }
+            CompositionLocalProvider(
+                LocalServerData provides serverDataDependencies?.takeIf { authenticationComplete }
+            ) {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    Scaffold(
+                        modifier = Modifier.graphicsLayer {
+                            alpha = startupContentAlpha
+                            scaleX = startupContentScale
+                            scaleY = startupContentScale
+                            translationY = with(currentDensity) { startupContentOffset.toPx() }
+                        },
+                        containerColor = MaterialTheme.colorScheme.background,
+                        contentWindowInsets = WindowInsets(0.dp),
+                        topBar = {
+                            if (networkExperience == OfflineExperience.Cached &&
+                                currentRoute?.startsWith("chat/") != true
+                            ) {
+                                // Scaffold 가 인셋을 소비하지 않으므로 배너가 상태바와 겹친다
+                                OfflineCachedBanner(modifier = Modifier.statusBarsPadding())
+                            }
+                        },
+                        bottomBar = {
+                            if (showBottomBar) {
+                                MoyeoBottomBar(
+                                    currentRoute = bottomBarRoute,
+                                    onDestinationClick = { destination ->
+                                        navController.navigate(destination.route) {
+                                            popUpTo(navController.graph.findStartDestination().id) {
+                                                saveState = true
                                             }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
                                     }
-                                }
-                            )
+                                )
+                            }
                         }
-                        composable(AppRoutes.SYSTEM_MAINTENANCE) {
-                            SystemNoticeScreen(
-                                mode = SystemNoticeMode.Maintenance,
-                                onRetry = { navController.navigate(AppRoutes.HOME) },
-                                onBack = { navController.popBackStack() }
-                            )
+                    ) { innerPadding ->
+                        // 스플래시는 iOS처럼 상태바 뒤까지 꽉 채운다 — 상단 안전 패딩을 주지 않는다
+                        val edgeToEdgeRoute = currentRoute == AppRoutes.QA_SPLASH
+                        NavHost(
+                            navController = navController,
+                            startDestination = AppRoutes.HOME,
+                            modifier = Modifier
+                                .padding(innerPadding)
+                                .padding(top = if (edgeToEdgeRoute) 0.dp else topSafePadding)
+                        ) {
+                            composable(AppRoutes.HOME) {
+                                HomeScreen(
+                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
+                                    onOpenExplore = { navController.navigate(AppRoutes.EXPLORE) },
+                                    onOpenNotifications = { navController.navigate(AppRoutes.NOTIFICATIONS) },
+                                    onCreateRecruitment = { navController.navigate(AppRoutes.createRecruitment(it)) },
+                                    isOnline = isOnline
+                                )
+                            }
+                            composable(AppRoutes.EXPLORE) {
+                                ExploreScreen(
+                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
+                                    onOpenSearch = { navController.navigate(AppRoutes.SEARCH) },
+                                    onCreateRecruitment = { navController.navigate(AppRoutes.createRecruitment(it)) },
+                                    startInMap = qaStartsInExploreMap,
+                                    onOpenRoom = { roomId ->
+                                        navController.navigate(AppRoutes.tripDetail("room-$roomId"))
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.MEETINGS) {
+                                MeetingsScreen(
+                                    onOpenRoom = {
+                                        navController.navigate(
+                                            if (it ==
+                                                "chat-cheongsong-juwangsan"
+                                            ) {
+                                                AppRoutes.tripDay(it)
+                                            } else {
+                                                AppRoutes.chatRoom(it)
+                                            }
+                                        )
+                                    },
+                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) }
+                                )
+                            }
+                            composable(AppRoutes.MEETINGS_APPLIED) {
+                                MeetingsScreen(
+                                    onOpenRoom = { navController.navigate(AppRoutes.chatRoom(it)) },
+                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
+                                    initialTab = MeetingChatTab.Applied
+                                )
+                            }
+                            composable(AppRoutes.FEED) {
+                                FeedScreen(
+                                    onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) },
+                                    onWritePost = { navController.navigate(AppRoutes.feedWrite()) }
+                                )
+                            }
+                            composable(AppRoutes.MY) {
+                                MyScreen(
+                                    userProfile = userProfile,
+                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
+                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
+                                    onOpenProfile = { navController.navigate(AppRoutes.PROFILE) },
+                                    onOpenMyFeed = { navController.navigate(AppRoutes.MY_FEED) },
+                                    onOpenFriendDex = { navController.navigate(AppRoutes.FRIEND_DEX) },
+                                    onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) },
+                                    onOpenCustomerCenter = { navController.navigate(AppRoutes.CUSTOMER_CENTER) },
+                                    onOpenFriends = { navController.navigate(AppRoutes.FRIENDS) },
+                                    onOpenCoursePublish = { navController.navigate(AppRoutes.COURSE_PUBLISH) }
+                                )
+                            }
+                            composable(AppRoutes.PROFILE) {
+                                ProfileScreen(
+                                    userProfile = userProfile,
+                                    onBack = { navController.popBackStack() },
+                                    onOpenProfileEdit = { navController.navigate(AppRoutes.PROFILE_EDIT) },
+                                    onOpenFriendDex = { navController.navigate(AppRoutes.FRIEND_DEX) },
+                                    onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) }
+                                )
+                            }
+                            composable(AppRoutes.PROFILE_EDIT) {
+                                ProfileEditScreen(
+                                    userProfile = userProfile,
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                            composable(AppRoutes.MY_FEED) {
+                                MyFeedScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) }
+                                )
+                            }
+                            composable(AppRoutes.FRIEND_DEX) {
+                                FriendDexScreen(onBack = { navController.popBackStack() })
+                            }
+                            composable(AppRoutes.SETTINGS) {
+                                SettingsScreen(
+                                    onBack = { navController.popBackStack() },
+                                    accountService = authDependencies.accountService,
+                                    themePreference = themePreference,
+                                    onCycleThemePreference = {
+                                        if (!captureMode) {
+                                            themePreferenceStore.save(themePreferenceStore.current.next())
+                                        }
+                                    },
+                                    onOpenOssLicenses = { navController.navigate(AppRoutes.OSS_LICENSES) },
+                                    onOpenNotificationDetail = {
+                                        navController.navigate(AppRoutes.NOTIFICATION_DETAIL)
+                                    },
+                                    onOpenBlockedUsers = { navController.navigate(AppRoutes.BLOCKED_USERS) },
+                                    onOpenAccountDelete = { navController.navigate(AppRoutes.ACCOUNT_DELETE) },
+                                    onOpenTerms = { document ->
+                                        navController.navigate(AppRoutes.termsDetail(document, "settings"))
+                                    },
+                                    onAuthenticationCleared = {
+                                        authenticationComplete = false
+                                        navController.navigate(AppRoutes.HOME) {
+                                            popUpTo(navController.graph.findStartDestination().id) {
+                                                inclusive = false
+                                            }
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.CUSTOMER_CENTER) {
+                                CustomerCenterScreen(onBack = { navController.popBackStack() })
+                            }
+                            composable(AppRoutes.OSS_LICENSES) {
+                                OssLicensesScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenLicense = { slug ->
+                                        navController.navigate(AppRoutes.ossLicenseDetail(slug))
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.OSS_LICENSE_DETAIL) { entry ->
+                                OssLicenseDetailScreen(
+                                    slug = entry.arguments?.getString("slug").orEmpty(),
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                            composable(AppRoutes.COURSE_DETAIL) { entry ->
+                                CourseDetailScreen(
+                                    courseId = entry.arguments?.getString("courseId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
+                                    onCreateRecruitment = { navController.navigate(AppRoutes.createRecruitment(it)) }
+                                )
+                            }
+                            composable(AppRoutes.TRIP_DETAIL) { entry ->
+                                TripDetailScreen(
+                                    tripId = entry.arguments?.getString("tripId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenChatRoom = { navController.navigate(AppRoutes.chatRoom(it)) }
+                                )
+                            }
+                            composable(AppRoutes.FEED_DETAIL) { entry ->
+                                FeedDetailScreen(
+                                    postId = entry.arguments?.getString("postId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenAllComments = {
+                                        navController.navigate(
+                                            AppRoutes.feedComments(entry.arguments?.getString("postId").orEmpty())
+                                        )
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.CHAT_LIST) {
+                                ChatListScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenRoom = { navController.navigate(AppRoutes.chatRoom(it)) }
+                                )
+                            }
+                            composable(AppRoutes.CHAT_ROOM) { entry ->
+                                ChatRoomScreen(
+                                    threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                    isOnline = isOnline,
+                                    onBack = { navController.popBackStack() },
+                                    onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
+                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                    onOpenMenu = {
+                                        navController.navigate(
+                                            AppRoutes.chatMenu(entry.arguments?.getString("threadId").orEmpty())
+                                        )
+                                    },
+                                    onOpenAttachment = { navController.navigate(AppRoutes.CHAT_ATTACH) }
+                                )
+                            }
+                            composable(AppRoutes.SPECIAL_MESSAGES) {
+                                SpecialMessagesScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenTripConfirmed = { navController.navigate(AppRoutes.TRIP_CONFIRMED) }
+                                )
+                            }
+                            composable(AppRoutes.NOTIFICATIONS) {
+                                NotificationCenterScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
+                                    onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) },
+                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
+                                    onOpenTripConfirmed = { navController.navigate(AppRoutes.TRIP_CONFIRMED) },
+                                    onOpenTripMessage = { navController.navigate(AppRoutes.TRIP_MESSAGE) },
+                                    onOpenRemovalReason = { notificationId ->
+                                        navController.navigate(AppRoutes.removalReason(notificationId))
+                                    }
+                                )
+                            }
+                            composable(
+                                route = AppRoutes.REMOVAL_REASON,
+                                arguments = listOf(
+                                    navArgument("notificationId") {
+                                        type = NavType.LongType
+                                        defaultValue = -1L
+                                    }
+                                )
+                            ) { entry ->
+                                RemovalReasonScreen(
+                                    onBack = { navController.popBackStack() },
+                                    notificationId = entry.arguments?.getLong("notificationId")?.takeIf { it >= 0 }
+                                )
+                            }
+                            composable(
+                                route = AppRoutes.CREATE_RECRUITMENT,
+                                arguments = listOf(navArgument("courseId") { type = NavType.StringType })
+                            ) { entry ->
+                                RecruitmentCourseSourceScreen(
+                                    courseId = entry.arguments?.getString("courseId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenCustomCourse = { navController.navigate(AppRoutes.customCourse(it)) },
+                                    onOpenSchedule = { navController.navigate(AppRoutes.createSchedule(it)) }
+                                )
+                            }
+                            composable(AppRoutes.CUSTOM_COURSE) { entry ->
+                                CustomCourseScreen(
+                                    draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenPlaceSearch = { navController.navigate(AppRoutes.placeSearch(it)) },
+                                    onContinue = { navController.navigate(AppRoutes.createSchedule(it)) }
+                                )
+                            }
+                            composable(AppRoutes.PLACE_SEARCH) { entry ->
+                                PlaceSearchScreen(
+                                    draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenDetail = { draftId, contentId ->
+                                        navController.navigate(AppRoutes.placeDetail(draftId, contentId))
+                                    },
+                                    onDone = { draftId ->
+                                        navController.navigate(AppRoutes.customCourse(draftId)) {
+                                            popUpTo(AppRoutes.CUSTOM_COURSE) { inclusive = true }
+                                        }
+                                    },
+                                    repository = tourismRepository
+                                )
+                            }
+                            composable(AppRoutes.PLACE_DETAIL) { entry ->
+                                PlaceDetailScreen(
+                                    draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    contentId = entry.arguments?.getString("contentId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onAdd = { draftId ->
+                                        navController.navigate(AppRoutes.customCourse(draftId)) {
+                                            popUpTo(AppRoutes.PLACE_SEARCH) { inclusive = false }
+                                        }
+                                    },
+                                    repository = tourismRepository
+                                )
+                            }
+                            composable(AppRoutes.CREATE_SCHEDULE) { entry ->
+                                CreateScheduleScreen(
+                                    draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onContinue = { navController.navigate(AppRoutes.createMeetPoint(it)) }
+                                )
+                            }
+                            composable(AppRoutes.CREATE_PEOPLE) { entry ->
+                                CreatePeopleScreen(
+                                    draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onContinue = { navController.navigate(AppRoutes.createDetail(it)) }
+                                )
+                            }
+                            composable(AppRoutes.CREATE_MEET_POINT) { entry ->
+                                CreateMeetPointScreen(
+                                    draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onSave = { navController.navigate(AppRoutes.createPeople(it)) }
+                                )
+                            }
+                            composable(AppRoutes.CREATE_DETAIL) { entry ->
+                                CreateDetailScreen(
+                                    draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onSave = { navController.navigate(AppRoutes.createSummary(it)) }
+                                )
+                            }
+                            composable(AppRoutes.CREATE_SUMMARY) { entry ->
+                                CreateSummaryScreen(
+                                    draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onCreated = { trip ->
+                                        navController.navigate(AppRoutes.hostManage(trip.id)) {
+                                            popUpTo(AppRoutes.CREATE_RECRUITMENT) { inclusive = true }
+                                        }
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.COURSE_ROUTE) { entry ->
+                                CourseRouteScreen(
+                                    tripId = entry.arguments?.getString("tripId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenMeetingPoint = {},
+                                    onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) }
+                                )
+                            }
+                            composable(AppRoutes.NOTICE_HISTORY) { entry ->
+                                NoticeHistoryScreen(
+                                    tripId = entry.arguments?.getString("tripId").orEmpty(),
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                            composable(
+                                route = AppRoutes.HOST_MANAGE,
+                                arguments = listOf(navArgument("tripId") { type = NavType.StringType })
+                            ) { entry ->
+                                HostManageScreen(
+                                    tripId = entry.arguments?.getString("tripId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenChat = { navController.navigate(AppRoutes.chatRoom(it)) },
+                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
+                                )
+                            }
+                            composable(
+                                route = AppRoutes.FEED_WRITE,
+                                arguments = listOf(
+                                    navArgument("step") {
+                                        type = NavType.IntType
+                                        defaultValue = 1
+                                    }
+                                )
+                            ) { entry ->
+                                FeedWriteScreen(
+                                    initialStep = entry.arguments?.getInt("step") ?: 1,
+                                    onBack = { navController.popBackStack() },
+                                    onPostCreated = { postId ->
+                                        navController.navigate(AppRoutes.feedDetail(postId)) {
+                                            popUpTo(AppRoutes.FEED) {
+                                                inclusive = false
+                                            }
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.SEARCH) {
+                                SearchScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
+                                    initialQuery = if (startScreen?.substringBefore(":") == "search") {
+                                        "경주 단풍"
+                                    } else {
+                                        ""
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.TRIP_CONFIRMED) {
+                                TripConfirmedScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenChat = {
+                                        navController.navigate(AppRoutes.tripDay("chat-cheongsong-juwangsan"))
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.CHAT_MENU) { entry ->
+                                ChatMenuScreen(
+                                    threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
+                                    onOpenNotificationSettings = {
+                                        navController.navigate(AppRoutes.NOTIFICATION_DETAIL)
+                                    },
+                                    onOpenReport = { navController.navigate(AppRoutes.REPORT) },
+                                    onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
+                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
+                                )
+                            }
+                            composable(AppRoutes.CHAT_ATTACH) {
+                                ChatAttachmentScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
+                                    isOnline = isOnline
+                                )
+                            }
+                            composable(AppRoutes.FRIENDS) {
+                                FriendsScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) }
+                                )
+                            }
+                            composable(AppRoutes.TRIP_MESSAGE) {
+                                TripMessageScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenFeedWrite = { navController.navigate(AppRoutes.feedWrite()) },
+                                    onOpenCoursePublish = { navController.navigate(AppRoutes.COURSE_PUBLISH) },
+                                    onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) }
+                                )
+                            }
+                            composable(AppRoutes.REPORT) {
+                                ReportScreen(onBack = { navController.popBackStack() })
+                            }
+                            composable(AppRoutes.BLOCKED_USERS) {
+                                BlockedUsersScreen(onBack = { navController.popBackStack() })
+                            }
+                            composable(AppRoutes.COURSE_PUBLISH) {
+                                CoursePublishScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onPublished = {
+                                        navController.navigate(AppRoutes.courseDetail("cheongsong-juwangsan"))
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.TRIP_DAY) { entry ->
+                                val threadId = entry.arguments?.getString("threadId").orEmpty()
+                                TripDayScreen(
+                                    threadId = threadId,
+                                    onBack = { navController.popBackStack() },
+                                    onOpenMenu = { navController.navigate(AppRoutes.chatMenu(threadId)) },
+                                    onOpenAttachment = { navController.navigate(AppRoutes.CHAT_ATTACH) },
+                                    onOpenRoute = {
+                                        val tripId = MockTripRepository.findThread(threadId).tripId
+                                        if (tripId != null) navController.navigate(AppRoutes.courseRoute(tripId))
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.NOTIFICATION_DETAIL) {
+                                NotificationDetailScreen(onBack = { navController.popBackStack() })
+                            }
+                            composable(AppRoutes.ACCOUNT_DELETE) {
+                                AccountDeleteScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onDelete = {
+                                        appScope.launch {
+                                            runCatching { authDependencies.accountService.withdraw() }
+                                                .onSuccess {
+                                                    authenticationComplete = false
+                                                    navController.navigate(AppRoutes.HOME) {
+                                                        popUpTo(navController.graph.findStartDestination().id)
+                                                    }
+                                                }
+                                        }
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.SYSTEM_MAINTENANCE) {
+                                SystemNoticeScreen(
+                                    mode = SystemNoticeMode.Maintenance,
+                                    onRetry = { navController.navigate(AppRoutes.HOME) },
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                            composable(AppRoutes.SYSTEM_ERROR) {
+                                SystemNoticeScreen(
+                                    mode = SystemNoticeMode.Error,
+                                    onRetry = { navController.navigate(AppRoutes.HOME) },
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                            composable(AppRoutes.TERMS_DETAIL) { entry ->
+                                TermsDetailScreen(
+                                    documentKey = entry.arguments?.getString("document").orEmpty(),
+                                    source = entry.arguments?.getString("source").orEmpty(),
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                            composable(AppRoutes.QA_SPLASH) { StartupSplashScreen() }
+                            composable(AppRoutes.QA_DESIGN_SYSTEM) { QaDesignSystemOverviewScreen() }
+                            composable(AppRoutes.QA_STATES) { QaComponentStatesScreen() }
+                            composable(AppRoutes.QA_LEAVE) {
+                                QaLeaveAlertScreen(onDismiss = { navController.popBackStack() })
+                            }
+                            composable(AppRoutes.QA_APPLY) { entry ->
+                                TripDetailScreen(
+                                    tripId = entry.arguments?.getString("tripId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenChatRoom = { navController.navigate(AppRoutes.chatRoom(it)) },
+                                    showApplicationSheetInitially = true
+                                )
+                            }
+                            composable(AppRoutes.QA_MEMBER_ACTIONS) { entry ->
+                                ChatMenuScreen(
+                                    threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
+                                    onOpenNotificationSettings = {
+                                        navController.navigate(AppRoutes.NOTIFICATION_DETAIL)
+                                    },
+                                    onOpenReport = { navController.navigate(AppRoutes.REPORT) },
+                                    onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
+                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                    showActionsSheetInitially = true
+                                )
+                            }
+                            composable(AppRoutes.QA_MEMBER_REMOVE) { entry ->
+                                ChatMenuScreen(
+                                    threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
+                                    onOpenNotificationSettings = {
+                                        navController.navigate(AppRoutes.NOTIFICATION_DETAIL)
+                                    },
+                                    onOpenReport = { navController.navigate(AppRoutes.REPORT) },
+                                    onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
+                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                    showRemoveSheetInitially = true
+                                )
+                            }
+                            composable(AppRoutes.QA_PROFILE_TASTE_EDIT) {
+                                ProfileEditScreen(
+                                    userProfile = userProfile,
+                                    onBack = { navController.popBackStack() },
+                                    showTasteSheetInitially = true
+                                )
+                            }
+                            composable(AppRoutes.FEED_COMMENTS) { entry ->
+                                FeedCommentsScreen(
+                                    postId = entry.arguments?.getString("postId").orEmpty(),
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                            composable(AppRoutes.MOCK_AUTH) {
+                                val mockAuthDependencies = remember { AuthDependencies.demo() }
+                                AuthFlowScreen(
+                                    providedDependencies = mockAuthDependencies,
+                                    onExit = { navController.popBackStack() },
+                                    onComplete = {
+                                        navController.navigate(AppRoutes.HOME) {
+                                            popUpTo(navController.graph.findStartDestination().id)
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
+                            }
+                            composable(AppRoutes.MOCK_AUTH_STEP) { entry ->
+                                val mockAuthDependencies = remember { AuthDependencies.demo() }
+                                AuthFlowScreen(
+                                    providedDependencies = mockAuthDependencies,
+                                    initialStepKey = entry.arguments?.getString("startStep"),
+                                    onExit = { navController.popBackStack() },
+                                    onComplete = {
+                                        navController.navigate(AppRoutes.HOME) {
+                                            popUpTo(navController.graph.findStartDestination().id)
+                                            launchSingleTop = true
+                                        }
+                                    }
+                                )
+                            }
                         }
-                        composable(AppRoutes.SYSTEM_ERROR) {
-                            SystemNoticeScreen(
-                                mode = SystemNoticeMode.Error,
-                                onRetry = { navController.navigate(AppRoutes.HOME) },
-                                onBack = { navController.popBackStack() }
-                            )
-                        }
-                        composable(AppRoutes.TERMS_DETAIL) { entry ->
-                            TermsDetailScreen(
-                                documentKey = entry.arguments?.getString("document").orEmpty(),
-                                source = entry.arguments?.getString("source").orEmpty(),
-                                onBack = { navController.popBackStack() }
-                            )
-                        }
-                        composable(AppRoutes.QA_SPLASH) { StartupSplashScreen() }
-                        composable(AppRoutes.QA_DESIGN_SYSTEM) { QaDesignSystemOverviewScreen() }
-                        composable(AppRoutes.QA_STATES) { QaComponentStatesScreen() }
-                        composable(AppRoutes.QA_LEAVE) {
-                            QaLeaveAlertScreen(onDismiss = { navController.popBackStack() })
-                        }
-                        composable(AppRoutes.QA_APPLY) { entry ->
-                            TripDetailScreen(
-                                tripId = entry.arguments?.getString("tripId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenChatRoom = { navController.navigate(AppRoutes.chatRoom(it)) },
-                                showApplicationSheetInitially = true
-                            )
-                        }
-                        composable(AppRoutes.QA_MEMBER_ACTIONS) { entry ->
-                            ChatMenuScreen(
-                                threadId = entry.arguments?.getString("threadId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
-                                onOpenNotificationSettings = { navController.navigate(AppRoutes.NOTIFICATION_DETAIL) },
-                                onOpenReport = { navController.navigate(AppRoutes.REPORT) },
-                                onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
-                                onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
-                                showActionsSheetInitially = true
-                            )
-                        }
-                        composable(AppRoutes.QA_MEMBER_REMOVE) { entry ->
-                            ChatMenuScreen(
-                                threadId = entry.arguments?.getString("threadId").orEmpty(),
-                                onBack = { navController.popBackStack() },
-                                onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
-                                onOpenNotificationSettings = { navController.navigate(AppRoutes.NOTIFICATION_DETAIL) },
-                                onOpenReport = { navController.navigate(AppRoutes.REPORT) },
-                                onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
-                                onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
-                                showRemoveSheetInitially = true
-                            )
-                        }
-                        composable(AppRoutes.QA_PROFILE_TASTE_EDIT) {
-                            ProfileEditScreen(
-                                userProfile = userProfile,
-                                onBack = { navController.popBackStack() },
-                                showTasteSheetInitially = true
-                            )
-                        }
-                        composable(AppRoutes.FEED_COMMENTS) { entry ->
-                            FeedCommentsScreen(
-                                postId = entry.arguments?.getString("postId").orEmpty(),
-                                onBack = { navController.popBackStack() }
-                            )
-                        }
-                        composable(AppRoutes.MOCK_AUTH) {
-                            val mockAuthDependencies = remember { AuthDependencies.demo() }
+                    }
+                    if (!bypassAuthentication && !authenticationComplete) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.background)
+                                .statusBarsPadding()
+                                .navigationBarsPadding()
+                        ) {
                             AuthFlowScreen(
-                                providedDependencies = mockAuthDependencies,
-                                onExit = { navController.popBackStack() },
-                                onComplete = {
-                                    navController.navigate(AppRoutes.HOME) {
-                                        popUpTo(navController.graph.findStartDestination().id)
-                                        launchSingleTop = true
-                                    }
-                                }
-                            )
-                        }
-                        composable(AppRoutes.MOCK_AUTH_STEP) { entry ->
-                            val mockAuthDependencies = remember { AuthDependencies.demo() }
-                            AuthFlowScreen(
-                                providedDependencies = mockAuthDependencies,
-                                initialStepKey = entry.arguments?.getString("startStep"),
-                                onExit = { navController.popBackStack() },
-                                onComplete = {
-                                    navController.navigate(AppRoutes.HOME) {
-                                        popUpTo(navController.graph.findStartDestination().id)
-                                        launchSingleTop = true
-                                    }
-                                }
+                                providedDependencies = authDependencies,
+                                allowExit = false,
+                                onComplete = { authenticationComplete = true }
                             )
                         }
                     }
-                }
-                if (!bypassAuthentication && !authenticationComplete) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background)
-                            .statusBarsPadding()
-                            .navigationBarsPadding()
+                    if (networkExperience == OfflineExperience.NoCache) {
+                        OfflineNoCacheScreen(onRetry = {})
+                    }
+                    AnimatedVisibility(
+                        visible = showStartupSplash,
+                        exit = fadeOut(
+                            animationSpec = tween(
+                                durationMillis = STARTUP_SPLASH_TRANSITION_MILLIS,
+                                easing = FastOutSlowInEasing
+                            )
+                        ) + scaleOut(
+                            targetScale = 1.012f,
+                            animationSpec = tween(
+                                durationMillis = STARTUP_SPLASH_TRANSITION_MILLIS,
+                                easing = FastOutSlowInEasing
+                            )
+                        )
                     ) {
-                        AuthFlowScreen(
-                            providedDependencies = authDependencies,
-                            allowExit = false,
-                            onComplete = { authenticationComplete = true }
-                        )
+                        StartupSplashScreen()
                     }
-                }
-                if (networkExperience == OfflineExperience.NoCache) {
-                    OfflineNoCacheScreen(onRetry = {})
-                }
-                AnimatedVisibility(
-                    visible = showStartupSplash,
-                    exit = fadeOut(
-                        animationSpec = tween(
-                            durationMillis = STARTUP_SPLASH_TRANSITION_MILLIS,
-                            easing = FastOutSlowInEasing
-                        )
-                    ) + scaleOut(
-                        targetScale = 1.012f,
-                        animationSpec = tween(
-                            durationMillis = STARTUP_SPLASH_TRANSITION_MILLIS,
-                            easing = FastOutSlowInEasing
-                        )
-                    )
-                ) {
-                    StartupSplashScreen()
                 }
             }
         }
@@ -940,6 +1047,13 @@ internal data class QaStartRequest(private val key: String, private val identifi
             "settings" -> AppRoutes.SETTINGS
 
             "customer", "customercenter", "customer-center" -> AppRoutes.CUSTOMER_CENTER
+
+            // 캡처 도구의 moyeo_screen="oss-licenses"/"oss-license-detail"은 하이픈이 제거되어 들어온다
+            "osslicenses" -> AppRoutes.OSS_LICENSES
+
+            "osslicensedetail" -> AppRoutes.ossLicenseDetail(
+                identifier ?: OssLicenseCatalog.items.firstOrNull()?.slug.orEmpty()
+            )
 
             "notifications", "notification", "notif" -> AppRoutes.NOTIFICATIONS
 

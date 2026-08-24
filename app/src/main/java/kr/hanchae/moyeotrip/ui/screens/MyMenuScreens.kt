@@ -59,6 +59,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -81,16 +82,23 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
+import kr.hanchae.moyeotrip.BuildConfig
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.DogamFriend
 import kr.hanchae.moyeotrip.data.FeedPost
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.Profile
 import kr.hanchae.moyeotrip.data.auth.AuthAccountService
+import kr.hanchae.moyeotrip.data.profile.ProfileOptions
+import kr.hanchae.moyeotrip.data.profile.ProfileUpdate
+import kr.hanchae.moyeotrip.data.profile.ServerUserProfile
+import kr.hanchae.moyeotrip.data.settings.ThemePreference
 import kr.hanchae.moyeotrip.domain.auth.AuthProvider
 import kr.hanchae.moyeotrip.domain.auth.EmailAuthAction
 import kr.hanchae.moyeotrip.domain.auth.EmailAuthRequest
 import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
+import kr.hanchae.moyeotrip.ui.LocalCaptureMode
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
@@ -105,6 +113,13 @@ fun ProfileScreen(
     onOpenSettings: () -> Unit
 ) {
     val profile = MockTripRepository.profile
+    // 로그인 상태면 실서버 프로필(GET users/me/profile)로 대체한다.
+    // 서버가 주지 않는 값(매너 점수·여행 횟수 등 통계)은 서버 모드에서 표시하지 않는다.
+    val server = LocalServerData.current
+    var serverProfile by remember(server) { mutableStateOf<ServerUserProfile?>(null) }
+    LaunchedEffect(server) {
+        serverProfile = if (server == null) null else runCatching { server.userProfile.profile() }.getOrNull()
+    }
 
     Column(
         modifier = Modifier
@@ -133,10 +148,14 @@ fun ProfileScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = PaddingValues(bottom = 28.dp)
         ) {
-            item { ProfileCoverHeader(profile = profile, userProfile = userProfile) }
             item {
-                Box(Modifier.padding(horizontal = 18.dp)) {
-                    ProfileStatsRow(profile = profile)
+                ProfileCoverHeader(profile = profile, userProfile = userProfile, serverProfile = serverProfile)
+            }
+            if (serverProfile == null) {
+                item {
+                    Box(Modifier.padding(horizontal = 18.dp)) {
+                        ProfileStatsRow(profile = profile)
+                    }
                 }
             }
             item {
@@ -144,7 +163,8 @@ fun ProfileScreen(
                     MenuCard {
                         Text("소개", fontWeight = FontWeight.ExtraBold)
                         Text(
-                            profile.intro.ifBlank { profile.bio },
+                            serverProfile?.let { it.introduction ?: "아직 소개가 없어요." }
+                                ?: profile.intro.ifBlank { profile.bio },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(top = 6.dp)
@@ -187,8 +207,58 @@ fun ProfileEditScreen(
     var selectedRegions by remember { mutableStateOf(DefaultInterestRegions.toSet()) }
     var showTasteSheet by remember { mutableStateOf(showTasteSheetInitially) }
     var showSavedDialog by remember { mutableStateOf(false) }
+    var saveErrorMessage by remember { mutableStateOf<String?>(null) }
     val colors = MaterialTheme.colorScheme
     val tints = MoyeoTheme.tints
+
+    // 로그인 상태면 실서버 프로필·취향 후보(GET users/me/profile · profile/options)로 대체한다.
+    // 취향 후보가 기획 목록과 다르면 서버 값을 쓴다.
+    val server = LocalServerData.current
+    var serverProfile by remember(server) { mutableStateOf<ServerUserProfile?>(null) }
+    var serverOptions by remember(server) { mutableStateOf<ProfileOptions?>(null) }
+    val saveScope = rememberCoroutineScope()
+    LaunchedEffect(server) {
+        if (server == null) {
+            serverProfile = null
+            serverOptions = null
+            return@LaunchedEffect
+        }
+        val loaded = runCatching { server.userProfile.profile() }.getOrNull() ?: return@LaunchedEffect
+        serverProfile = loaded
+        selectedStyles = loaded.travelStyles.map { it.label }.toSet()
+        selectedRegions = loaded.interestedRegions.map { it.label }.toSet()
+        serverOptions = runCatching { server.userProfile.options() }.getOrNull()
+    }
+    val styleOptions = serverOptions?.travelStyles?.map { it.label } ?: TravelStyleOptions
+    val regionOptions = serverOptions?.interestedRegions?.map { it.label } ?: InterestRegionOptions
+
+    fun saveToServer(styles: Set<String>, regions: Set<String>, onSaved: () -> Unit) {
+        val current = serverProfile
+        val options = serverOptions
+        if (server == null || current == null || options == null) {
+            onSaved()
+            return
+        }
+        val update = ProfileUpdate(
+            introduction = current.introduction,
+            travelStyleIds = options.travelStyles.filter { it.label in styles }.map { it.id },
+            interestedRegionIds = options.interestedRegions.filter { it.label in regions }.map { it.id },
+            birthDate = current.birthDate.orEmpty(),
+            gender = current.gender.ifBlank { "N" }
+        )
+        saveScope.launch {
+            runCatching { server.userProfile.updateProfile(update) }
+                .onSuccess { saved ->
+                    serverProfile = saved
+                    selectedStyles = saved.travelStyles.map { it.label }.toSet()
+                    selectedRegions = saved.interestedRegions.map { it.label }.toSet()
+                    onSaved()
+                }
+                .onFailure { error ->
+                    saveErrorMessage = error.message ?: "프로필 저장에 실패했어요."
+                }
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -202,7 +272,13 @@ fun ProfileEditScreen(
             containerColor = MoyeoTheme.cardSurface,
             trailing = {
                 TextButton(
-                    onClick = { showSavedDialog = true },
+                    onClick = {
+                        if (serverProfile != null) {
+                            saveToServer(selectedStyles, selectedRegions) { showSavedDialog = true }
+                        } else {
+                            showSavedDialog = true
+                        }
+                    },
                     modifier = Modifier.testTag("profile-edit-save")
                 ) {
                     Text(text = "저장", fontWeight = FontWeight.ExtraBold)
@@ -263,14 +339,22 @@ fun ProfileEditScreen(
             }
             item { ProfileEditGroupHeader("공개 프로필") }
             item {
-                ProfileEditRow(label = "자기소개", value = "느긋한 여행 좋아해요", showsChevron = true)
+                ProfileEditRow(
+                    label = "자기소개",
+                    value = if (serverProfile != null) {
+                        serverProfile?.introduction.orEmpty()
+                    } else {
+                        "느긋한 여행 좋아해요"
+                    },
+                    showsChevron = true
+                )
             }
             item {
                 // changeLog13 — 여행 스타일 행 + 관심 지역 블록을 여행 취향 통합 블록 하나로 합쳤다.
                 // 블록 안 인라인 편집은 없다 — 어디를 탭해도 28-1 편집 시트가 열린다.
                 ProfileEditTasteBlock(
-                    selectedStyles = TravelStyleOptions.filter { it in selectedStyles },
-                    selectedRegions = InterestRegionOptions.filter { it in selectedRegions },
+                    selectedStyles = styleOptions.filter { it in selectedStyles },
+                    selectedRegions = regionOptions.filter { it in selectedRegions },
                     onClick = { showTasteSheet = true }
                 )
             }
@@ -284,8 +368,20 @@ fun ProfileEditScreen(
                 )
             }
             item { ProfileEditRow(label = "캐릭터", value = "고정됨", locked = true) }
-            item { ProfileEditRow(label = "생년월일", value = "1998.04.12", showsChevron = true) }
-            item { ProfileEditRow(label = "성별", value = "여성", showsChevron = true) }
+            item {
+                ProfileEditRow(
+                    label = "생년월일",
+                    value = serverProfile?.let { it.birthDate?.replace('-', '.').orEmpty() } ?: "1998.04.12",
+                    showsChevron = true
+                )
+            }
+            item {
+                ProfileEditRow(
+                    label = "성별",
+                    value = serverProfile?.gender?.genderLabel() ?: "여성",
+                    showsChevron = true
+                )
+            }
             item {
                 Text(
                     "비공개 정보는 다른 여행자에게 보이지 않아요.",
@@ -312,18 +408,43 @@ fun ProfileEditScreen(
         )
     }
 
+    if (saveErrorMessage != null) {
+        AlertDialog(
+            onDismissRequest = { saveErrorMessage = null },
+            title = { Text(text = "저장하지 못했어요", fontWeight = FontWeight.ExtraBold) },
+            text = { Text(text = saveErrorMessage.orEmpty()) },
+            confirmButton = {
+                TextButton(onClick = { saveErrorMessage = null }) {
+                    Text(text = "확인", fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        )
+    }
+
     if (showTasteSheet) {
         TasteEditSheet(
             initialStyles = selectedStyles,
             initialRegions = selectedRegions,
+            styleOptions = styleOptions,
+            regionOptions = regionOptions,
             onDismiss = { showTasteSheet = false },
             onSave = { styles, regions ->
                 selectedStyles = styles
                 selectedRegions = regions
                 showTasteSheet = false
+                // 28-1 시트 저장은 PUT users/me/profile 로 즉시 반영한다
+                if (serverProfile != null) {
+                    saveToServer(styles, regions) {}
+                }
             }
         )
     }
+}
+
+private fun String.genderLabel(): String = when (this) {
+    "F" -> "여성"
+    "M" -> "남성"
+    else -> "비공개"
 }
 
 /** 28의 여행 취향 통합 블록 — 조회와 수정 진입이 한 자리에서 일어난다 (changeLog13). */
@@ -412,7 +533,10 @@ private fun TasteEditSheet(
     initialStyles: Set<String>,
     initialRegions: Set<String>,
     onDismiss: () -> Unit,
-    onSave: (Set<String>, Set<String>) -> Unit
+    onSave: (Set<String>, Set<String>) -> Unit,
+    // 로그인 상태면 서버 후보(GET users/me/profile/options)가 들어온다
+    styleOptions: List<String> = TravelStyleOptions,
+    regionOptions: List<String> = InterestRegionOptions
 ) {
     var draftStyles by remember { mutableStateOf(initialStyles) }
     var draftRegions by remember { mutableStateOf(initialRegions) }
@@ -448,7 +572,7 @@ private fun TasteEditSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    TravelStyleOptions.forEach { label ->
+                    styleOptions.forEach { label ->
                         TasteChip(
                             label = label,
                             selected = label in draftStyles,
@@ -467,7 +591,7 @@ private fun TasteEditSheet(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    InterestRegionOptions.forEach { label ->
+                    regionOptions.forEach { label ->
                         TasteChip(
                             label = label,
                             selected = label in draftRegions,
@@ -708,7 +832,28 @@ private fun MyFeedPostCard(post: FeedPost, onClick: () -> Unit) {
 
 @Composable
 fun FriendDexScreen(onBack: () -> Unit) {
-    val friends = MockTripRepository.dogamFriends
+    // 로그인 상태면 실서버 도감(GET users/me/travel-dex)으로 대체한다
+    val server = LocalServerData.current
+    var serverCompanions by remember(server) { mutableStateOf<List<DogamFriend>?>(null) }
+    LaunchedEffect(server) {
+        serverCompanions = if (server == null) {
+            null
+        } else {
+            runCatching {
+                server.social.travelDex().map { companion ->
+                    DogamFriend(
+                        id = companion.userId.toString(),
+                        nickname = companion.nickname,
+                        avatar = profileAvatarEmoji(companion.nickname),
+                        lastMetAt = companion.latestTripDate.replace('-', '.'),
+                        metCount = companion.tripCount
+                    )
+                }
+            }.getOrNull()
+        }
+    }
+    val isServerDex = serverCompanions != null
+    val friends = serverCompanions ?: MockTripRepository.dogamFriends
     var showSearch by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf(DogamFriendFilter.All) }
@@ -783,61 +928,55 @@ fun FriendDexScreen(onBack: () -> Unit) {
                     DogamSearchField(query = searchQuery, onQueryChange = { searchQuery = it })
                 }
             }
-            item {
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    DogamFriendFilter.entries.forEach { filter ->
-                        DogamFilterChip(
-                            text = filter.title,
-                            selected = selectedFilter == filter,
-                            onClick = { selectedFilter = filter },
-                            modifier = Modifier.testTag("friend-dex-filter-${filter.name}")
-                        )
+            if (!isServerDex) {
+                // 필터 칩의 갯수 라벨은 목데이터 기준이라 서버 모드에서는 보여주지 않는다
+                item {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        DogamFriendFilter.entries.forEach { filter ->
+                            DogamFilterChip(
+                                text = filter.title,
+                                selected = selectedFilter == filter,
+                                onClick = { selectedFilter = filter },
+                                modifier = Modifier.testTag("friend-dex-filter-${filter.name}")
+                            )
+                        }
                     }
                 }
             }
-            item {
-                // 화면기획 27의 안내 카드 — 한 줄 남기지 않은 친구를 알려준다
-                Card(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("friend-dex-notice"),
-                    colors = CardDefaults.cardColors(containerColor = MoyeoTheme.tints.primaryTint),
-                    shape = RoundedCornerShape(12.dp),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Text(
-                                text = "카드 뒷면이 비어 있는 친구 2명",
-                                style = MaterialTheme.typography.labelLarge,
-                                color = MoyeoTheme.tints.onPrimaryTint,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Text(
-                                text = "경주 단풍·야경에서 만난 친구들에게 한 줄 남겨볼까요?",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MoyeoTheme.tints.primaryEmphasis
-                            )
-                        }
-                        Icon(
-                            imageVector = Icons.Filled.ChevronRight,
-                            contentDescription = null,
-                            tint = MoyeoTheme.tints.primaryEmphasis,
-                            modifier = Modifier.size(18.dp)
-                        )
-                    }
+            if (!isServerDex) {
+                item {
+                    // 화면기획 27의 안내 카드 — 한 줄 남기지 않은 친구를 알려준다 (서버에는 해당 데이터가 없다)
+                    FriendDexNoticeCard()
                 }
             }
             item {
                 if (filteredFriends.isEmpty()) {
-                    DogamEmptyResult()
+                    if (isServerDex && searchQuery.isBlank() && selectedFilter == DogamFriendFilter.All) {
+                        MenuCard {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(92.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.Center
+                            ) {
+                                Text(
+                                    text = "아직 함께 여행한 친구가 없어요",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = "모임에 참여하면 도감이 채워져요.",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        }
+                    } else {
+                        DogamEmptyResult()
+                    }
                 } else {
                     DogamGrid(friends = filteredFriends)
                 }
@@ -851,6 +990,47 @@ fun FriendDexScreen(onBack: () -> Unit) {
                     fontWeight = FontWeight.SemiBold
                 )
             }
+        }
+    }
+}
+
+@Composable
+private fun FriendDexNoticeCard() {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("friend-dex-notice"),
+        colors = CardDefaults.cardColors(containerColor = MoyeoTheme.tints.primaryTint),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(3.dp)
+            ) {
+                Text(
+                    text = "카드 뒷면이 비어 있는 친구 2명",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MoyeoTheme.tints.onPrimaryTint,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    text = "경주 단풍·야경에서 만난 친구들에게 한 줄 남겨볼까요?",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MoyeoTheme.tints.primaryEmphasis
+                )
+            }
+            Icon(
+                imageVector = Icons.Filled.ChevronRight,
+                contentDescription = null,
+                tint = MoyeoTheme.tints.primaryEmphasis,
+                modifier = Modifier.size(18.dp)
+            )
         }
     }
 }
@@ -988,9 +1168,27 @@ fun SettingsScreen(
     onOpenNotificationDetail: () -> Unit = {},
     onOpenBlockedUsers: () -> Unit = {},
     onOpenAccountDelete: () -> Unit = {},
-    onOpenTerms: (String) -> Unit = {}
+    onOpenTerms: (String) -> Unit = {},
+    onOpenOssLicenses: () -> Unit = {},
+    /** 저장된 테마 설정. 캡처 모드에서는 화면기획대로 항상 `시스템 기본`이 내려온다. */
+    themePreference: ThemePreference = ThemePreference.System,
+    /** 테마 행 탭 — 화면기획에 선택 시트가 없어 시스템 기본 → 라이트 → 다크 순으로 순환한다. */
+    onCycleThemePreference: () -> Unit = {}
 ) {
     val coroutineScope = rememberCoroutineScope()
+    // 캡처에서는 실제 빌드 버전이 아니라 화면기획 목데이터(1.0.4 (최신))를 그대로 보여준다
+    val captureMode = LocalCaptureMode.current
+    val versionRowValue = if (captureMode) {
+        SettingsMockAction.Version.rowValue
+    } else {
+        BuildConfig.VERSION_NAME
+    }
+    // 최신 버전을 알려주는 서버 API가 없어 일반 실행에서는 "최신 상태" 주장을 하지 않는다
+    val versionDialogBody = if (captureMode) {
+        SettingsMockAction.Version.dialogBody
+    } else {
+        "현재 설치된 버전은 ${BuildConfig.VERSION_NAME}이에요."
+    }
     var chatEnabled by remember { mutableStateOf(true) }
     var deadlineEnabled by remember { mutableStateOf(true) }
     var friendEnabled by remember { mutableStateOf(true) }
@@ -1003,6 +1201,12 @@ fun SettingsScreen(
     var providerLoading by remember { mutableStateOf(false) }
     var linkingProvider by remember { mutableStateOf<AuthProvider?>(null) }
     var providerError by remember { mutableStateOf<String?>(null) }
+    // 로그인 상태면 차단 인원 수를 실서버(GET users/me/blocks)에서 읽는다 — 목데이터 수치를 두지 않는다
+    val server = LocalServerData.current
+    var serverBlockedCount by remember(server) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(server) {
+        serverBlockedCount = if (server == null) null else runCatching { server.social.blocks().size }.getOrNull()
+    }
 
     Column(
         modifier = Modifier
@@ -1038,9 +1242,11 @@ fun SettingsScreen(
 
             item {
                 SettingsSectionGroup("화면") {
-                    SettingsValueRow(action = SettingsMockAction.Theme) {
-                        selectedAction = it
-                    }
+                    SettingsValueRow(
+                        title = SettingsMockAction.Theme.rowTitle,
+                        value = themePreference.label,
+                        onClick = onCycleThemePreference
+                    )
                     SettingsValueRow(action = SettingsMockAction.Language) {
                         selectedAction = it
                     }
@@ -1064,7 +1270,10 @@ fun SettingsScreen(
                             }
                         }
                     )
-                    SettingsValueRow(action = SettingsMockAction.BlockedUsers) {
+                    SettingsValueRow(
+                        title = SettingsMockAction.BlockedUsers.rowTitle,
+                        value = serverBlockedCount?.let { "${it}명" } ?: SettingsMockAction.BlockedUsers.rowValue
+                    ) {
                         onOpenBlockedUsers()
                     }
                     SettingsValueRow(action = SettingsMockAction.PrivacyPolicy) {
@@ -1078,15 +1287,23 @@ fun SettingsScreen(
 
             item {
                 SettingsSectionGroup("정보") {
-                    SettingsValueRow(action = SettingsMockAction.Version) {
-                        selectedAction = it
-                    }
+                    SettingsValueRow(
+                        title = SettingsMockAction.Version.rowTitle,
+                        value = versionRowValue,
+                        onClick = { selectedAction = SettingsMockAction.Version }
+                    )
                     SettingsValueRow(action = SettingsMockAction.Contact) {
                         selectedAction = it
                     }
                     SettingsValueRow(action = SettingsMockAction.Rate) {
                         selectedAction = it
                     }
+                    // 29-4 오픈소스 라이선스 — 앱 평가하기 다음, 로그아웃 위 (changeLog17)
+                    SettingsValueRow(
+                        title = "오픈소스 라이선스",
+                        value = null,
+                        onClick = onOpenOssLicenses
+                    )
                     SettingsDangerRow(action = SettingsMockAction.Logout) {
                         selectedAction = it
                     }
@@ -1101,6 +1318,7 @@ fun SettingsScreen(
     selectedAction?.let { action ->
         SettingsActionDialog(
             action = action,
+            body = if (action == SettingsMockAction.Version) versionDialogBody else action.dialogBody,
             isPerforming = isPerformingAccountAction,
             errorMessage = accountErrorMessage,
             onDismiss = {
@@ -1159,7 +1377,7 @@ fun SettingsScreen(
 }
 
 @Composable
-private fun CompactMenuHeader(
+internal fun CompactMenuHeader(
     title: String,
     onBack: () -> Unit,
     // 화면기획에서 헤더는 페이지가 회색인 화면(28)에서만 흰 표면으로 따로 칠해진다
@@ -1199,7 +1417,12 @@ private fun CompactMenuHeader(
 }
 
 @Composable
-private fun menuContentPadding(start: Dp = 18.dp, top: Dp = 18.dp, end: Dp = 18.dp, bottom: Dp = 32.dp): PaddingValues {
+internal fun menuContentPadding(
+    start: Dp = 18.dp,
+    top: Dp = 18.dp,
+    end: Dp = 18.dp,
+    bottom: Dp = 32.dp
+): PaddingValues {
     val density = LocalDensity.current
     val navigationBottom = with(density) {
         WindowInsets.navigationBars.getBottom(density).toDp()
@@ -2096,6 +2319,7 @@ private fun SettingsRowDivider() {
 @Composable
 private fun SettingsActionDialog(
     action: SettingsMockAction,
+    body: String,
     isPerforming: Boolean,
     errorMessage: String?,
     onDismiss: () -> Unit,
@@ -2115,7 +2339,7 @@ private fun SettingsActionDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = action.dialogBody,
+                    text = body,
                     style = MaterialTheme.typography.bodyMedium
                 )
                 errorMessage?.let {
@@ -2329,7 +2553,11 @@ private fun MascotCircle(text: String, size: Int) {
  * 카드 안에 좌측 정렬로 넣으면 "내 프로필 카드"로 읽혀 공개 프로필 성격이 사라진다.
  */
 @Composable
-private fun ProfileCoverHeader(profile: Profile, userProfile: UserDisplayProfile) {
+private fun ProfileCoverHeader(
+    profile: Profile,
+    userProfile: UserDisplayProfile,
+    serverProfile: ServerUserProfile? = null
+) {
     val colors = MaterialTheme.colorScheme
     val tints = MoyeoTheme.tints
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -2349,32 +2577,44 @@ private fun ProfileCoverHeader(profile: Profile, userProfile: UserDisplayProfile
                     .background(tints.primaryTint),
                 contentAlignment = Alignment.Center
             ) {
-                AnimalAvatar(profileAvatarEmoji(profile.animalBuddy), modifier = Modifier.size(58.dp))
+                if (serverProfile != null) {
+                    UserAvatar(
+                        imageUrl = serverProfile.profileImageUrl ?: userProfile.profileImageUrl,
+                        nickname = serverProfile.nickname,
+                        modifier = Modifier.size(74.dp),
+                        fallbackFontSize = 32.sp
+                    )
+                } else {
+                    AnimalAvatar(profileAvatarEmoji(profile.animalBuddy), modifier = Modifier.size(58.dp))
+                }
             }
         }
         Spacer(Modifier.height(42.dp))
         Text(
-            userProfile.nickname ?: profile.name,
+            serverProfile?.nickname ?: userProfile.nickname ?: profile.name,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.ExtraBold
         )
-        Row(
-            modifier = Modifier.padding(top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(4.dp)
-        ) {
-            Text(
-                "매너 점수 4.7점",
-                style = MaterialTheme.typography.labelMedium,
-                color = colors.onSurfaceVariant,
-                fontWeight = FontWeight.Bold
-            )
-            Icon(
-                Icons.Filled.StarOutline,
-                contentDescription = null,
-                modifier = Modifier.size(13.dp),
-                tint = colors.onSurfaceVariant
-            )
+        // 매너 점수는 서버가 내려주지 않는다 — 서버 모드에서는 표시하지 않는다
+        if (serverProfile == null) {
+            Row(
+                modifier = Modifier.padding(top = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(
+                    "매너 점수 4.7점",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colors.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold
+                )
+                Icon(
+                    Icons.Filled.StarOutline,
+                    contentDescription = null,
+                    modifier = Modifier.size(13.dp),
+                    tint = colors.onSurfaceVariant
+                )
+            }
         }
     }
 }

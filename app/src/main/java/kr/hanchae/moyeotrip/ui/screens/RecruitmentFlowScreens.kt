@@ -63,6 +63,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -95,9 +96,14 @@ import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.RecruitmentDraft
 import kr.hanchae.moyeotrip.data.RecruitmentNotice
 import kr.hanchae.moyeotrip.data.RouteStop
+import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.data.TripScheduleType
+import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
+import kr.hanchae.moyeotrip.data.rooms.RoomNotice
+import kr.hanchae.moyeotrip.data.rooms.RoomNotices
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
 import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
@@ -1296,6 +1302,13 @@ fun CourseRouteScreen(
 
 @Composable
 fun NoticeHistoryScreen(tripId: String, onBack: () -> Unit) {
+    // "room-{id}" 는 실서버 모임이다 — GET chat-rooms/{id}/notices 를 그대로 보여준다
+    val server = LocalServerData.current
+    val serverRoomId = tripId.serverRoomIdOrNull()
+    if (serverRoomId != null && server != null) {
+        ServerNoticeHistory(roomId = serverRoomId, server = server, onBack = onBack)
+        return
+    }
     var notices by remember(tripId) { mutableStateOf(MockTripRepository.noticesForTrip(tripId)) }
     val trip = remember(tripId) { MockTripRepository.findTrip(tripId) }
     val pinned = notices.filter { it.isPinned }
@@ -1337,6 +1350,111 @@ fun NoticeHistoryScreen(tripId: String, onBack: () -> Unit) {
         item {
             Text(
                 "공지는 호스트만 올릴 수 있고, 고정은 최대 3개까지예요. 고정을 해제해도 이력에는 그대로 남아요.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/**
+ * 실서버 공지 이력(화면기획 20-3) — GET chat-rooms/{id}/notices.
+ * 공지 등록(POST notices)·고정 변경(PUT notices/{id})은 서버가 500을 돌려줘 이번 연동에서 제외했다.
+ */
+@Composable
+private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, onBack: () -> Unit) {
+    var room by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
+    var notices by remember(roomId) { mutableStateOf<RoomNotices?>(null) }
+    LaunchedEffect(roomId, server) {
+        room = runCatching { server.chatRooms.room(roomId) }.getOrNull()
+        notices = runCatching { server.chatRooms.notices(roomId) }.getOrNull()
+    }
+    val pinned = notices?.pinned.orEmpty()
+    val past = notices?.unpinned.orEmpty()
+
+    RecruitmentScaffold(title = "공지 이력", onBack = onBack) {
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    room?.title.orEmpty(),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                Text(
+                    "공지 ${pinned.size + past.size}개 · 고정 ${pinned.size}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        if (pinned.isNotEmpty()) {
+            item { NoticeSectionTitle("상단 고정 중") }
+            items(pinned, key = { it.noticeId }) { notice -> ServerNoticeCard(notice) }
+        }
+        if (past.isNotEmpty()) {
+            item { NoticeSectionTitle("지난 공지") }
+            items(past, key = { it.noticeId }) { notice -> ServerNoticeCard(notice) }
+        }
+        if (notices != null && pinned.isEmpty() && past.isEmpty()) {
+            item {
+                Text(
+                    "등록된 공지가 없어요.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerNoticeCard(notice: RoomNotice) {
+    Surface(
+        Modifier.fillMaxWidth().testTag("server-notice-${notice.noticeId}"),
+        RoundedCornerShape(10.dp),
+        MaterialTheme.colorScheme.surfaceVariant,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Description,
+                    null,
+                    Modifier.size(14.dp),
+                    tint = if (notice.pinned) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    }
+                )
+                Text(
+                    notice.content.orEmpty(),
+                    Modifier.weight(1f).padding(start = 6.dp),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (notice.pinned) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    fontWeight = FontWeight.ExtraBold
+                )
+                if (notice.pinned) {
+                    Surface(shape = RoundedCornerShape(50), color = MoyeoTheme.tints.primaryTint) {
+                        Text(
+                            "📌 고정",
+                            Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MoyeoTheme.tints.onPrimaryTint,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                    }
+                }
+            }
+            Text(
+                listOfNotNull(
+                    notice.authorNickname.takeIf(String::isNotBlank),
+                    notice.createdAt.take(10).replace('-', '.').takeIf(String::isNotBlank)
+                ).joinToString(" · "),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

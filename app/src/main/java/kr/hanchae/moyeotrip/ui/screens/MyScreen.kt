@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -38,6 +39,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -48,8 +50,12 @@ import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
+import kr.hanchae.moyeotrip.data.profile.ServerUserProfile
+import kr.hanchae.moyeotrip.data.rooms.MyChatRoom
 import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
@@ -75,6 +81,26 @@ fun MyScreen(
     val pastTrips = listOf(courses[2], courses[1], courses[4], courses[5], courses[3])
     val savedCourses = listOf(courses[4], courses[2], courses[3], courses[5], courses[6], courses[7])
 
+    // 로그인 상태면 실서버 데이터(users/me/profile · chat-rooms/my · travel-dex)로 대체한다.
+    // 서버가 주지 않는 값(매너 점수·피드 수·찜한 코스 목록)은 서버 모드에서 표시하지 않는다.
+    val server = LocalServerData.current
+    var serverProfile by remember(server) { mutableStateOf<ServerUserProfile?>(null) }
+    var serverRooms by remember(server) { mutableStateOf<List<MyChatRoom>?>(null) }
+    var serverDexCount by remember(server) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(server) {
+        if (server == null) {
+            serverProfile = null
+            serverRooms = null
+            serverDexCount = null
+            return@LaunchedEffect
+        }
+        serverProfile = runCatching { server.userProfile.profile() }.getOrNull()
+        serverRooms = runCatching { server.chatRooms.myRooms() }.getOrNull()
+        serverDexCount = runCatching { server.social.travelDex().size }.getOrNull()
+    }
+    val serverOngoing = serverRooms?.filterNot(MyChatRoom::ended)
+    val serverPast = serverRooms?.filter(MyChatRoom::ended)
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -92,13 +118,16 @@ fun MyScreen(
             MyPageHeader(onOpenSettings = onOpenSettings)
         }
         item {
-            MyProfileSummaryCard(userProfile = userProfile, onClick = onOpenProfile)
+            MyProfileSummaryCard(userProfile = userProfile, serverProfile = serverProfile, onClick = onOpenProfile)
+        }
+        if (serverProfile == null) {
+            // 매너·피드 통계는 서버가 내려주지 않는다 — 로그인 상태에서는 숨긴다
+            item {
+                MyProfileStatPills()
+            }
         }
         item {
-            MyProfileStatPills()
-        }
-        item {
-            MySectionHeader(title = "내 여행", countText = "${ongoingTrips.size}개")
+            MySectionHeader(title = "내 여행", countText = "${(serverOngoing ?: ongoingTrips).size}개")
         }
         item {
             MySegmentedControl(
@@ -108,48 +137,76 @@ fun MyScreen(
         }
         when (selectedTab) {
             MyTripTab.Ongoing -> {
-                ongoingTrips.forEach { trip ->
-                    val course = MockTripRepository.findCourseForTrip(trip)
-                    item {
-                        MyTripCard(
-                            course = course,
-                            title = trip.title,
-                            // 화면기획 26은 집합 시간이 있는 모집만 "날짜 시간"으로 적는다
-                            date = listOfNotNull(trip.scheduleDate, trip.assemblyTimeLabel).joinToString(" "),
-                            place = trip.meetingPoint,
-                            dday = trip.ddayLabel,
-                            peopleText = trip.myPeopleText(),
-                            progress = trip.myProgress(),
-                            joined = trip.joined,
-                            testTagPrefix = "my-active-trip-${trip.id}",
-                            modifier = Modifier.testTag("my-active-trip-${trip.id}"),
-                            onClick = { onOpenTrip(trip.id) }
-                        )
+                if (serverOngoing != null) {
+                    if (serverOngoing.isEmpty()) {
+                        item { MyServerEmptyState(text = "아직 참여 중인 여행이 없어요.") }
+                    }
+                    serverOngoing.forEach { room ->
+                        item {
+                            MyServerRoomCard(
+                                room = room,
+                                onClick = { onOpenTrip("room-${room.roomId}") }
+                            )
+                        }
+                    }
+                } else {
+                    ongoingTrips.forEach { trip ->
+                        val course = MockTripRepository.findCourseForTrip(trip)
+                        item {
+                            MyTripCard(
+                                course = course,
+                                title = trip.title,
+                                // 화면기획 26은 집합 시간이 있는 모집만 "날짜 시간"으로 적는다
+                                date = listOfNotNull(trip.scheduleDate, trip.assemblyTimeLabel).joinToString(" "),
+                                place = trip.meetingPoint,
+                                dday = trip.ddayLabel,
+                                peopleText = trip.myPeopleText(),
+                                progress = trip.myProgress(),
+                                joined = trip.joined,
+                                testTagPrefix = "my-active-trip-${trip.id}",
+                                modifier = Modifier.testTag("my-active-trip-${trip.id}"),
+                                onClick = { onOpenTrip(trip.id) }
+                            )
+                        }
                     }
                 }
             }
 
             MyTripTab.Past -> {
-                pastTrips.forEachIndexed { index, course ->
-                    item {
-                        Column {
-                            MySummaryCourseCard(
-                                course = course,
-                                title = pastTripTitle(course),
-                                summary = pastTripSummary(course),
-                                meta = "${pastTripDate(index)} · 여행 기록",
-                                testTagPrefix = "my-past-trip-${course.id}",
-                                modifier = Modifier.testTag("my-past-trip-${course.id}"),
-                                onClick = { onOpenCourse(course.id) }
+                if (serverPast != null) {
+                    if (serverPast.isEmpty()) {
+                        item { MyServerEmptyState(text = "아직 다녀온 여행 기록이 없어요.") }
+                    }
+                    serverPast.forEach { room ->
+                        item {
+                            MyServerRoomCard(
+                                room = room,
+                                onClick = { onOpenTrip("room-${room.roomId}") }
                             )
-                            if (index == 0) {
-                                TextButton(
-                                    onClick = onOpenCoursePublish,
-                                    modifier = Modifier
-                                        .align(Alignment.End)
-                                        .testTag("my-course-publish")
-                                ) {
-                                    Text("코스 공개하기")
+                        }
+                    }
+                } else {
+                    pastTrips.forEachIndexed { index, course ->
+                        item {
+                            Column {
+                                MySummaryCourseCard(
+                                    course = course,
+                                    title = pastTripTitle(course),
+                                    summary = pastTripSummary(course),
+                                    meta = "${pastTripDate(index)} · 여행 기록",
+                                    testTagPrefix = "my-past-trip-${course.id}",
+                                    modifier = Modifier.testTag("my-past-trip-${course.id}"),
+                                    onClick = { onOpenCourse(course.id) }
+                                )
+                                if (index == 0) {
+                                    TextButton(
+                                        onClick = onOpenCoursePublish,
+                                        modifier = Modifier
+                                            .align(Alignment.End)
+                                            .testTag("my-course-publish")
+                                    ) {
+                                        Text("코스 공개하기")
+                                    }
                                 }
                             }
                         }
@@ -158,37 +215,160 @@ fun MyScreen(
             }
 
             MyTripTab.Saved -> {
-                savedCourses.forEach { course ->
-                    item {
-                        MySummaryCourseCard(
-                            course = course,
-                            title = savedCourseTitle(course),
-                            summary = course.oneLine,
-                            meta = "${course.duration} · ${courseDistance(course.id)}",
-                            testTagPrefix = "my-saved-course-${course.id}",
-                            modifier = Modifier.testTag("my-saved-course-${course.id}"),
-                            onClick = { onOpenCourse(course.id) }
-                        )
+                if (serverRooms != null) {
+                    // 찜한 코스 목록 API 가 없어 서버 모드에서는 비어 있는 상태만 보여준다 (보고서 C)
+                    item { MyServerEmptyState(text = "찜한 코스를 불러올 수 없어요.") }
+                } else {
+                    savedCourses.forEach { course ->
+                        item {
+                            MySummaryCourseCard(
+                                course = course,
+                                title = savedCourseTitle(course),
+                                summary = course.oneLine,
+                                meta = "${course.duration} · ${courseDistance(course.id)}",
+                                testTagPrefix = "my-saved-course-${course.id}",
+                                modifier = Modifier.testTag("my-saved-course-${course.id}"),
+                                onClick = { onOpenCourse(course.id) }
+                            )
+                        }
                     }
                 }
             }
         }
         item {
-            MyDogamShortcut(onClick = onOpenFriendDex)
+            MyDogamShortcut(onClick = onOpenFriendDex, serverDexCount = serverDexCount)
         }
         item {
             MyHubMenuPanel(
                 onOpenMyFeed = onOpenMyFeed,
                 onOpenFriendDex = onOpenFriendDex,
                 onOpenFriends = onOpenFriends,
-                onOpenCustomerCenter = onOpenCustomerCenter
+                onOpenCustomerCenter = onOpenCustomerCenter,
+                serverDexCount = serverDexCount
             )
         }
     }
 }
 
 @Composable
-private fun MyDogamShortcut(onClick: () -> Unit) {
+private fun MyServerEmptyState(text: String) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(72.dp),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = text,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+/** 실서버 내 모임 카드 (GET chat-rooms/my) — 서버가 주지 않는 집합 장소는 표시하지 않는다. */
+@Composable
+private fun MyServerRoomCard(room: MyChatRoom, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("my-server-room-${room.roomId}")
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        shape = RoundedCornerShape(12.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(MyCardMetrics.gap)
+        ) {
+            CachedRemoteImage(
+                url = room.thumbnail,
+                contentDescription = room.title,
+                modifier = Modifier
+                    .width(MyCardMetrics.thumbWidth)
+                    .height(MyCardMetrics.thumbHeight)
+                    .clip(RoundedCornerShape(MyCardMetrics.thumbRadius)),
+                contentScale = ContentScale.Crop
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(MyCardMetrics.thumbWidth)
+                        .height(MyCardMetrics.thumbHeight)
+                        .clip(RoundedCornerShape(MyCardMetrics.thumbRadius))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(
+                        text = room.title,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    room.recruitmentDDay?.let { dday ->
+                        DDayChip(text = "D-$dday")
+                    }
+                }
+                Text(
+                    text = if (room.endDate != null) "${room.startDate} ~ ${room.endDate}" else room.startDate,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                room.description?.let { description ->
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                val joined = room.participantCount
+                val capacity = room.maxParticipants
+                if (joined != null && capacity != null && capacity > 0) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        MoyeoLinearProgress(
+                            progress = joined.toFloat() / capacity,
+                            modifier = Modifier.weight(1f),
+                            height = 4.dp,
+                            color = ForestGreen
+                        )
+                        Text(
+                            text = "$joined/${capacity}명",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun MyDogamShortcut(onClick: () -> Unit, serverDexCount: Int? = null) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -227,14 +407,16 @@ private fun MyDogamShortcut(onClick: () -> Unit) {
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    text = "${MockTripRepository.dogamFriends.size}마리 · 최근 동행 순",
+                    text = "${serverDexCount ?: MockTripRepository.dogamFriends.size}마리 · 최근 동행 순",
                     modifier = Modifier.testTag("my-friend-dex-preview-count"),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1
                 )
             }
-            MemberStack(joined = 3)
+            if (serverDexCount == null) {
+                MemberStack(joined = 3)
+            }
             Icon(
                 imageVector = Icons.Filled.ChevronRight,
                 contentDescription = null,
@@ -273,9 +455,13 @@ private fun MyPageHeader(onOpenSettings: () -> Unit) {
 }
 
 @Composable
-private fun MyProfileSummaryCard(userProfile: UserDisplayProfile, onClick: () -> Unit) {
+private fun MyProfileSummaryCard(
+    userProfile: UserDisplayProfile,
+    onClick: () -> Unit,
+    serverProfile: ServerUserProfile? = null
+) {
     val profile = MockTripRepository.profile
-    val displayName = userProfile.nickname ?: profile.name
+    val displayName = serverProfile?.nickname ?: userProfile.nickname ?: profile.name
 
     Card(
         modifier = Modifier
@@ -295,10 +481,10 @@ private fun MyProfileSummaryCard(userProfile: UserDisplayProfile, onClick: () ->
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            if (userProfile.profileImageUrl != null) {
+            if (serverProfile?.profileImageUrl != null || userProfile.profileImageUrl != null) {
                 UserAvatar(
-                    imageUrl = userProfile.profileImageUrl,
-                    nickname = userProfile.nickname,
+                    imageUrl = serverProfile?.profileImageUrl ?: userProfile.profileImageUrl,
+                    nickname = serverProfile?.nickname ?: userProfile.nickname,
                     modifier = Modifier.size(50.dp),
                     fallbackFontSize = 23.sp
                 )
@@ -323,16 +509,22 @@ private fun MyProfileSummaryCard(userProfile: UserDisplayProfile, onClick: () ->
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = profile.bio,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    MyMiniChip("여행 ${profile.joinedTrips}", ForestGreen)
-                    MyMiniChip("매너 4.7", Coral)
+                val bio = if (serverProfile != null) serverProfile.introduction else profile.bio
+                if (!bio.isNullOrBlank()) {
+                    Text(
+                        text = bio,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                // 여행 수·매너 점수는 서버가 내려주지 않는다 — 로그인 상태에서는 숨긴다
+                if (serverProfile == null) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        MyMiniChip("여행 ${profile.joinedTrips}", ForestGreen)
+                        MyMiniChip("매너 4.7", Coral)
+                    }
                 }
             }
             Icon(
@@ -428,7 +620,8 @@ private fun MyHubMenuPanel(
     onOpenMyFeed: () -> Unit,
     onOpenFriendDex: () -> Unit,
     onOpenFriends: () -> Unit,
-    onOpenCustomerCenter: () -> Unit
+    onOpenCustomerCenter: () -> Unit,
+    serverDexCount: Int? = null
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(
@@ -460,7 +653,7 @@ private fun MyHubMenuPanel(
             MyHubMenuDivider()
             MyHubMenuRow(
                 title = "친구 도감",
-                subtitle = "${MockTripRepository.dogamFriends.size}마리 · 최근 동행 순",
+                subtitle = "${serverDexCount ?: MockTripRepository.dogamFriends.size}마리 · 최근 동행 순",
                 onClick = onOpenFriendDex,
                 modifier = Modifier.testTag("my-friend-dex-shortcut")
             )

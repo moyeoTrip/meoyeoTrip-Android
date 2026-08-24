@@ -33,27 +33,44 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.FeedPost
 import kr.hanchae.moyeotrip.data.MockTripRepository
+import kr.hanchae.moyeotrip.data.ServerDataDependencies
+import kr.hanchae.moyeotrip.data.feed.FeedComment
+import kr.hanchae.moyeotrip.data.feed.ServerFeed
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
 fun FeedDetailScreen(postId: String, onBack: () -> Unit, onOpenAllComments: () -> Unit = {}) {
+    // "srv-{id}" 는 실서버 피드다 (서버 피드 목록·좋아요 알림에서만 이 형태로 진입한다)
+    val server = LocalServerData.current
+    val serverFeedId = postId.removePrefix("srv-").toLongOrNull()?.takeIf { postId.startsWith("srv-") }
+    if (serverFeedId != null && server != null) {
+        ServerFeedDetail(feedId = serverFeedId, server = server, onBack = onBack)
+        return
+    }
     val post = MockTripRepository.findFeedPost(postId)
     var comment by rememberSaveable { mutableStateOf("") }
     var actionMessage by rememberSaveable(postId) { mutableStateOf<String?>(null) }
@@ -535,4 +552,205 @@ private fun FeedPost.detailStats(): List<Pair<String, String>> {
         "소요 시간" to travelStat.second,
         "방문지" to "${routeStopCount}곳"
     )
+}
+
+/**
+ * 실서버 피드 상세 (GET feeds/{id} + comments). 댓글 등록은 POST comments,
+ * 좋아요는 POST like 다. 서버가 주지 않는 값(이동 거리 통계 등)은 표시하지 않는다.
+ */
+@Composable
+private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBack: () -> Unit) {
+    val colorScheme = MaterialTheme.colorScheme
+    var feed by remember(feedId) { mutableStateOf<ServerFeed?>(null) }
+    var comments by remember(feedId) { mutableStateOf<List<FeedComment>>(emptyList()) }
+    var loadFailed by remember(feedId) { mutableStateOf(false) }
+    var comment by rememberSaveable(feedId) { mutableStateOf("") }
+    val detailScope = rememberCoroutineScope()
+
+    LaunchedEffect(feedId, server) {
+        val loaded = runCatching { server.feeds.feed(feedId) }.getOrNull()
+        feed = loaded
+        loadFailed = loaded == null
+        if (loaded != null) {
+            comments = runCatching { server.feeds.comments(feedId) }.getOrNull().orEmpty()
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colorScheme.background)
+    ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            FeedDetailHeader(onBack = onBack, onOpenMore = {})
+            val loadedFeed = feed
+            if (loadedFeed == null) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
+                    Text(
+                        text = if (loadFailed) "피드를 불러오지 못했어요." else "불러오는 중…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .testTag("feed-detail-scroll"),
+                    contentPadding = PaddingValues(start = 18.dp, top = 22.dp, end = 18.dp, bottom = 108.dp)
+                ) {
+                    item {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            UserAvatar(
+                                imageUrl = loadedFeed.author.profileImageUrl,
+                                nickname = loadedFeed.author.nickname,
+                                modifier = Modifier.size(42.dp),
+                                fallbackFontSize = 19.sp
+                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(
+                                    text = loadedFeed.author.nickname,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = colorScheme.onSurface
+                                )
+                                Text(
+                                    text = loadedFeed.createdAt.take(10).replace('-', '.'),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    if (loadedFeed.imageUrls.isNotEmpty()) {
+                        item {
+                            Row(
+                                modifier = Modifier
+                                    .padding(top = 18.dp)
+                                    .fillMaxWidth()
+                                    .height(190.dp)
+                                    .clip(RoundedCornerShape(10.dp)),
+                                horizontalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                loadedFeed.imageUrls.take(2).forEach { imageUrl ->
+                                    CachedRemoteImage(
+                                        url = imageUrl,
+                                        contentDescription = null,
+                                        modifier = Modifier.weight(1f).fillMaxHeight(),
+                                        contentScale = ContentScale.Crop
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxHeight()
+                                                .background(colorScheme.surfaceVariant)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    item {
+                        Text(
+                            text = loadedFeed.content,
+                            modifier = Modifier.padding(top = 18.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colorScheme.onBackground
+                        )
+                    }
+                    loadedFeed.trip?.courseTitle?.let { courseTitle ->
+                        item {
+                            Text(
+                                text = "🗺 $courseTitle",
+                                modifier = Modifier.padding(top = 10.dp),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                    item {
+                        Row(
+                            modifier = Modifier.padding(top = 18.dp),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "좋아요 ${loadedFeed.likeCount}",
+                                modifier = Modifier
+                                    .clickable {
+                                        detailScope.launch {
+                                            runCatching { server.feeds.toggleLike(feedId) }
+                                                .onSuccess { result ->
+                                                    feed = feed?.copy(
+                                                        liked = result.liked,
+                                                        likeCount = result.likeCount
+                                                    )
+                                                }
+                                        }
+                                    }
+                                    .testTag("feed-server-like"),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = if (loadedFeed.liked) colorScheme.primary else colorScheme.onSurface,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "댓글 ${loadedFeed.commentCount}",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = colorScheme.onSurface,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    }
+                    items(comments.size) { index ->
+                        val entry = comments[index]
+                        Column(modifier = Modifier.padding(top = 16.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                UserAvatar(
+                                    imageUrl = entry.author.profileImageUrl,
+                                    nickname = entry.author.nickname,
+                                    modifier = Modifier.size(30.dp),
+                                    fallbackFontSize = 14.sp
+                                )
+                                Text(
+                                    text = entry.author.nickname,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    color = colorScheme.onSurface
+                                )
+                            }
+                            Text(
+                                text = entry.content,
+                                modifier = Modifier.padding(top = 6.dp, start = 38.dp),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurface
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        FeedCommentBar(
+            comment = comment,
+            onCommentChange = { comment = it },
+            onSend = {
+                val trimmed = comment.trim()
+                if (trimmed.isNotEmpty()) {
+                    detailScope.launch {
+                        runCatching { server.feeds.addComment(feedId, trimmed) }
+                            .onSuccess { created ->
+                                comments = comments + created
+                                feed = feed?.copy(commentCount = (feed?.commentCount ?: 0) + 1)
+                                comment = ""
+                            }
+                    }
+                }
+            },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+    }
 }

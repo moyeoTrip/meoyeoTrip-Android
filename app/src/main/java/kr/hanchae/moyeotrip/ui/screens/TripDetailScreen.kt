@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -40,8 +41,11 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -56,12 +60,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.MockTripRepository
+import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
+import kr.hanchae.moyeotrip.data.courses.TravelCourse
+import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
+import kr.hanchae.moyeotrip.data.rooms.RoomApplicationResult
 import kr.hanchae.moyeotrip.domain.ApplicationNotePolicy
 import kr.hanchae.moyeotrip.domain.recruitmentSummary
+import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -72,6 +83,13 @@ fun TripDetailScreen(
     onOpenChatRoom: (String) -> Unit,
     showApplicationSheetInitially: Boolean = false
 ) {
+    // "room-{id}" 는 실서버 모집이다 — 탐색(서버 목록)에서만 이 형태로 진입한다
+    val server = LocalServerData.current
+    val serverRoomId = tripId.removePrefix("room-").toLongOrNull()?.takeIf { tripId.startsWith("room-") }
+    if (serverRoomId != null && server != null) {
+        ServerTripDetail(roomId = serverRoomId, server = server, onBack = onBack)
+        return
+    }
     val trip = MockTripRepository.findTrip(tripId)
     val course = MockTripRepository.findCourseForTrip(trip)
     var showApplySheet by rememberSaveable(tripId) { mutableStateOf(showApplicationSheetInitially) }
@@ -134,13 +152,22 @@ fun TripDetailScreen(
         )
 
         if (showApplySheet) {
+            val isDark = MoyeoTheme.isDark
             ApplicationSheet(
-                course = course,
+                heroContent = {
+                    Image(
+                        painter = painterResource(id = course.tripHeroImageResId(isDark)),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                },
                 onDismiss = { showApplySheet = false },
                 onApplicationSubmit = {
                     if (!MockTripRepository.isAppliedToTrip(trip.id)) {
                         MockTripRepository.applyToTrip(trip.id)
                     }
+                    true
                 },
                 onDone = {
                     showApplySheet = false
@@ -149,6 +176,432 @@ fun TripDetailScreen(
             )
         }
     }
+}
+
+/**
+ * 실서버 모집 상세 (GET chat-rooms/{id} + join-eligibility + travel-courses/chat-rooms/{id}).
+ * 서버가 내려주지 않는 값(호스트 닉네임·최소 인원·매너 점수)은 표시하지 않는다.
+ */
+@Composable
+private fun ServerTripDetail(roomId: Long, server: ServerDataDependencies, onBack: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    var room by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
+    var course by remember(roomId) { mutableStateOf<TravelCourse?>(null) }
+    var canApply by remember(roomId) { mutableStateOf<Boolean?>(null) }
+    var loadFailed by remember(roomId) { mutableStateOf(false) }
+    var isFavorite by remember(roomId) { mutableStateOf(false) }
+    var isApplied by rememberSaveable(roomId) { mutableStateOf(false) }
+    var actionMessage by rememberSaveable(roomId) { mutableStateOf<String?>(null) }
+    var showApplySheet by rememberSaveable(roomId) { mutableStateOf(false) }
+    val actionScope = rememberCoroutineScope()
+
+    LaunchedEffect(roomId, server) {
+        val loaded = runCatching { server.chatRooms.room(roomId) }.getOrNull()
+        room = loaded
+        loadFailed = loaded == null
+        isFavorite = loaded?.favorite == true
+        if (loaded != null) {
+            canApply = runCatching { server.chatRooms.canApply(roomId) }.getOrNull()
+            course = runCatching { server.courses.roomCourse(roomId) }.getOrNull()
+        }
+    }
+
+    val detail = room
+    if (detail == null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colors.background)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "뒤로",
+                        tint = colors.onSurface
+                    )
+                }
+                Text(
+                    text = "모집 상세",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.onSurface,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            if (loadFailed) {
+                Text(
+                    text = "모집 정보를 불러오지 못했어요.\n네트워크 상태를 확인해 주세요.",
+                    modifier = Modifier.align(Alignment.Center),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant
+                )
+            } else {
+                CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
+            }
+        }
+        return
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colors.background)
+            .testTag("server-trip-detail-$roomId")
+    ) {
+        LazyColumn(contentPadding = PaddingValues(bottom = 118.dp)) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(284.dp)
+                ) {
+                    CachedRemoteImage(
+                        url = detail.thumbnail,
+                        contentDescription = "${detail.title} 대표 이미지",
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(colors.surfaceVariant)
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(
+                                Brush.verticalGradient(
+                                    colors = listOf(
+                                        Color.Black.copy(alpha = 0.14f),
+                                        Color.Black.copy(alpha = 0.18f),
+                                        Color.Black.copy(alpha = 0.56f)
+                                    )
+                                )
+                            )
+                    )
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 12.dp, top = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "뒤로",
+                                tint = Color.White
+                            )
+                        }
+                        Text(
+                            text = "모집 상세",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                }
+            }
+            actionMessage?.let { message ->
+                item {
+                    TripActionBanner(
+                        message = message,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)
+                    )
+                }
+            }
+            item {
+                ServerTripDetailPanel(detail = detail, course = course)
+            }
+        }
+
+        TripDetailBottomBar(
+            actionLabel = when {
+                isApplied -> "신청 상태 보기"
+                detail.status != "RECRUITING" -> "모집 종료"
+                canApply == false -> "신청 불가"
+                detail.participantCount >= detail.maxParticipants -> "대기 신청"
+                else -> "함께 가기 신청"
+            },
+            isFavorite = isFavorite,
+            onToggleFavorite = {
+                actionScope.launch {
+                    runCatching { server.chatRooms.toggleFavorite(roomId) }
+                        .onSuccess { favorite ->
+                            isFavorite = favorite
+                            actionMessage = if (favorite) "찜한 모임에 담았어요." else "찜한 모임에서 제외했어요."
+                        }
+                        .onFailure { actionMessage = "찜 처리에 실패했어요. 잠시 후 다시 시도해 주세요." }
+                }
+            },
+            onApply = {
+                when {
+                    isApplied -> actionMessage = "모임 탭의 신청중에서 승인 상태를 확인할 수 있어요."
+                    detail.status != "RECRUITING" -> actionMessage = "모집이 종료되어 신청할 수 없어요."
+                    canApply == false -> actionMessage = "지금은 이 모임에 신청할 수 없어요."
+                    else -> showApplySheet = true
+                }
+            },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+
+        if (showApplySheet) {
+            ApplicationSheet(
+                heroContent = {
+                    CachedRemoteImage(
+                        url = detail.thumbnail,
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(colors.surfaceVariant)
+                        )
+                    }
+                },
+                onDismiss = { showApplySheet = false },
+                onApplicationSubmit = { message ->
+                    runCatching { server.chatRooms.apply(roomId, message) }.fold(
+                        onSuccess = { result ->
+                            isApplied = true
+                            actionMessage = when (result) {
+                                RoomApplicationResult.JOINED -> "참여가 확정됐어요. 모임 탭에서 확인할 수 있어요."
+                                RoomApplicationResult.WAITLISTED -> "대기열에 등록됐어요. 자리가 나면 알려드릴게요."
+                                RoomApplicationResult.PENDING_APPROVAL -> "신청을 보냈어요. 호스트 승인 후 채팅방이 열려요."
+                            }
+                            true
+                        },
+                        onFailure = { error ->
+                            showApplySheet = false
+                            actionMessage = error.message ?: "신청에 실패했어요. 잠시 후 다시 시도해 주세요."
+                            false
+                        }
+                    )
+                },
+                onDone = { showApplySheet = false }
+            )
+        }
+    }
+}
+
+@Composable
+private fun ServerTripDetailPanel(detail: ChatRoomDetail, course: TravelCourse?) {
+    val colors = MaterialTheme.colorScheme
+
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp),
+        shape = RoundedCornerShape(24.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outline)
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(18.dp)
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = detail.title,
+                    style = MaterialTheme.typography.headlineSmall,
+                    color = colors.onSurface,
+                    fontWeight = FontWeight.ExtraBold
+                )
+                course?.title?.let { courseTitle ->
+                    Text(
+                        text = courseTitle,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (detail.participantImageUrls.isNotEmpty()) {
+                Row(horizontalArrangement = Arrangement.spacedBy((-8).dp)) {
+                    detail.participantImageUrls.take(5).forEach { imageUrl ->
+                        UserAvatar(
+                            imageUrl = imageUrl,
+                            nickname = null,
+                            modifier = Modifier.size(32.dp),
+                            fallbackFontSize = 15.sp
+                        )
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = "${detail.participantCount}/${detail.maxParticipants}명",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.onSurface,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    StatusChip(
+                        text = when {
+                            detail.status != "RECRUITING" -> "모집 종료"
+                            detail.participantCount < detail.maxParticipants -> "신청 가능"
+                            else -> "대기 가능"
+                        },
+                        container = colors.primaryContainer,
+                        content = colors.primary
+                    )
+                }
+                MoyeoLinearProgress(
+                    progress = if (detail.maxParticipants == 0) {
+                        0f
+                    } else {
+                        detail.participantCount.toFloat() / detail.maxParticipants
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colors.surfaceVariant)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                DetailInfoRow(label = "일정", value = detail.scheduleText())
+                detail.travelHoursText()?.let { DetailInfoRow(label = "여행 시간", value = it) }
+                detail.meetingText()?.let { DetailInfoRow(label = "집합", value = it) }
+                if (detail.meetingLatitude != null && detail.meetingLongitude != null) {
+                    HorizontalDivider(color = colors.outline.copy(alpha = .5f))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.Map,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = colors.onSurfaceVariant
+                        )
+                        Text(
+                            text = "${detail.meetingLatitude}, ${detail.meetingLongitude}",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(colors.surfaceVariant)
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    detail.participationFee?.let { fee ->
+                        DetailInfoRow("예상 비용", "1인 ${"%,d".format(fee)}원", Modifier.weight(1f))
+                    }
+                    detail.deadlineText()?.let { deadline ->
+                        DetailInfoRow("모집 마감", deadline, Modifier.weight(1f))
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    if (detail.minimumAge != null && detail.maximumAge != null) {
+                        DetailInfoRow("나이대", "${detail.minimumAge}~${detail.maximumAge}세", Modifier.weight(1f))
+                    }
+                    detail.genderText()?.let { gender ->
+                        DetailInfoRow("성별", gender, Modifier.weight(1f))
+                    }
+                }
+            }
+
+            detail.hostProfileImageUrl?.let { hostImage ->
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    UserAvatar(
+                        imageUrl = hostImage,
+                        nickname = null,
+                        modifier = Modifier.size(44.dp),
+                        fallbackFontSize = 20.sp
+                    )
+                    Text(
+                        text = "호스트",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+
+            detail.description?.let { description ->
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        text = "모임 소개",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = colors.onSurface,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = description,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+
+            val stops = course?.places?.map { it.title }.orEmpty()
+            if (stops.isNotEmpty()) {
+                RoutePreview(stops = stops)
+            }
+        }
+    }
+}
+
+private fun ChatRoomDetail.scheduleText(): String {
+    val period = if (endDate != null) "$startDate ~ $endDate" else startDate
+    val typeLabel = when {
+        tripType == "DAY_TRIP" -> "당일치기"
+        tripNights > 0 -> "${tripNights}박 ${tripDays}일"
+        else -> null
+    }
+    return listOfNotNull(period.takeIf(String::isNotBlank), typeLabel).joinToString(" · ")
+}
+
+private fun ChatRoomDetail.travelHoursText(): String? {
+    val start = dayTripStartTime?.take(5)
+    val end = dayTripEndTime?.take(5)
+    return if (start != null && end != null) "$start - $end" else null
+}
+
+private fun ChatRoomDetail.meetingText(): String? {
+    val time = meetingDateTime?.substringAfter('T')?.take(5)
+    return listOfNotNull(time, meetingDetails).joinToString(" · ").takeIf(String::isNotBlank)
+}
+
+private fun ChatRoomDetail.deadlineText(): String? {
+    val dday = recruitmentDDay?.let { "D-$it" }
+    return listOfNotNull(dday, recruitmentDeadlineDate).joinToString(" · ").takeIf(String::isNotBlank)
+}
+
+private fun ChatRoomDetail.genderText(): String? = when (genderRestriction) {
+    null -> null
+    "NONE" -> "제한 없음"
+    "MALE" -> "남성만"
+    "FEMALE" -> "여성만"
+    else -> genderRestriction
 }
 
 @Composable
@@ -571,18 +1024,20 @@ private fun TripDetailBottomBar(
 
 @Composable
 private fun ApplicationSheet(
-    course: TripCourse,
+    heroContent: @Composable () -> Unit,
     onDismiss: () -> Unit,
-    onApplicationSubmit: () -> Unit,
+    /** true 를 돌려주면 완료 카드로 전환한다 — 서버 신청 실패 시 false 로 시트를 유지한다. */
+    onApplicationSubmit: suspend (String) -> Boolean,
     onDone: () -> Unit
 ) {
     // 화면기획 16 — 진입 시 입력은 비어 있고 카운터는 0/200이다
     var message by rememberSaveable { mutableStateOf("") }
     var isSubmitted by rememberSaveable { mutableStateOf(false) }
     var submitAttempted by rememberSaveable { mutableStateOf(false) }
+    var isSubmitting by rememberSaveable { mutableStateOf(false) }
     val isMessageValid = ApplicationNotePolicy.isValid(message)
     val colors = MaterialTheme.colorScheme
-    val isDark = MoyeoTheme.isDark
+    val submitScope = rememberCoroutineScope()
 
     Box(
         modifier = Modifier
@@ -590,15 +1045,14 @@ private fun ApplicationSheet(
             .background(Color.Black)
             .testTag("application-sheet")
     ) {
-        Image(
-            painter = painterResource(id = course.tripHeroImageResId(isDark)),
-            contentDescription = null,
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(330.dp)
-                .align(Alignment.TopCenter),
-            contentScale = ContentScale.Crop
-        )
+                .align(Alignment.TopCenter)
+        ) {
+            heroContent()
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -732,17 +1186,22 @@ private fun ApplicationSheet(
                     Button(
                         onClick = {
                             submitAttempted = true
-                            if (isMessageValid) {
-                                onApplicationSubmit()
-                                isSubmitted = true
+                            if (isMessageValid && !isSubmitting) {
+                                isSubmitting = true
+                                submitScope.launch {
+                                    val accepted = onApplicationSubmit(message)
+                                    isSubmitting = false
+                                    if (accepted) isSubmitted = true
+                                }
                             }
                         },
+                        enabled = !isSubmitting,
                         modifier = Modifier.fillMaxWidth(),
                         colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
                         shape = RoundedCornerShape(9.dp)
                     ) {
                         Text(
-                            text = "신청하기",
+                            text = if (isSubmitting) "신청 중…" else "신청하기",
                             fontWeight = FontWeight.ExtraBold
                         )
                     }

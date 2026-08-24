@@ -45,8 +45,13 @@ object AppRoutes {
     const val TRIP_DAY = "trip_day/{threadId}"
     const val NOTIFICATION_DETAIL = "notification_detail"
 
+    // 29-4 / 29-4a 오픈소스 라이선스 (changeLog17) — 앱에 내장한 정적 데이터라 로그인·서버와 무관하다
+    const val OSS_LICENSES = "oss_licenses"
+    const val OSS_LICENSE_DETAIL = "oss_license_detail/{slug}"
+
     // 13-1 내보내기 안내 — 강퇴 알림 탭에서만 진입한다 (changeLog14)
-    const val REMOVAL_REASON = "removal_reason"
+    // notificationId 가 있으면 서버 강퇴 이력(GET notifications/{id}/kick-history)을 보여준다
+    const val REMOVAL_REASON = "removal_reason?notificationId={notificationId}"
     const val ACCOUNT_DELETE = "account_delete"
     const val SYSTEM_MAINTENANCE = "system_maintenance"
     const val SYSTEM_ERROR = "system_error"
@@ -70,6 +75,14 @@ object AppRoutes {
     const val QA_MEMBER_REMOVE = "qa_member_remove/{threadId}"
 
     fun feedWrite(step: Int = 1) = "feed_write?step=$step"
+
+    fun removalReason(notificationId: Long? = null) = if (notificationId != null) {
+        "removal_reason?notificationId=$notificationId"
+    } else {
+        "removal_reason"
+    }
+
+    fun ossLicenseDetail(slug: String) = "oss_license_detail/$slug"
 
     fun courseDetail(courseId: String) = "course/$courseId"
 

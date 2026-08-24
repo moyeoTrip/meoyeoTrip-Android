@@ -86,10 +86,12 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -108,7 +110,16 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.MockTripRepository
+import kr.hanchae.moyeotrip.data.ServerDataDependencies
+import kr.hanchae.moyeotrip.data.notifications.NotificationSettingsUpdate
+import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
+import kr.hanchae.moyeotrip.data.rooms.RoomMember
+import kr.hanchae.moyeotrip.data.rooms.RoomMembers
+import kr.hanchae.moyeotrip.data.rooms.RoomNotices
+import kr.hanchae.moyeotrip.data.rooms.RoomRoadmap
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.components.OverlayBackdrop
 import kr.hanchae.moyeotrip.ui.components.emphasized
@@ -122,7 +133,35 @@ private data class MenuEntry(
     val onClick: () -> Unit
 )
 
-private data class FriendEntry(val emoji: String, val name: String, val subtitle: String)
+private data class FriendEntry(
+    val emoji: String,
+    val name: String,
+    val subtitle: String,
+    // 실서버 사용자면 프로필 이미지 URL·신청 id·사용자 id 를 함께 든다
+    val imageUrl: String? = null,
+    val requestId: Long? = null,
+    val userId: Long? = null
+)
+
+/** 방해금지 요일 — 서버 enum(MONDAY…)과 화면 라벨(월…) 대응. */
+private val apiDayToKorean = mapOf(
+    "MONDAY" to "월",
+    "TUESDAY" to "화",
+    "WEDNESDAY" to "수",
+    "THURSDAY" to "목",
+    "FRIDAY" to "금",
+    "SATURDAY" to "토",
+    "SUNDAY" to "일"
+)
+
+private val koreanDayToApi = apiDayToKorean.entries.associate { (api, korean) -> korean to api }
+
+/** 실서버 친구 관리 데이터 (GET friends · friend-requests/received · /sent). */
+private data class ServerFriendLists(
+    val friends: List<kr.hanchae.moyeotrip.data.social.Friend>,
+    val received: List<kr.hanchae.moyeotrip.data.social.FriendRequest>,
+    val sent: List<kr.hanchae.moyeotrip.data.social.FriendRequest>
+)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -225,6 +264,20 @@ fun ChatMenuScreen(
     // / 20-1b 캡처용 — 사유 입력 시트를 처음부터 열어 둔다
     showRemoveSheetInitially: Boolean = false
 ) {
+    // "room-{id}" 는 실서버 모임이다 — 서버 멤버·공지·로드맵을 읽어 보여준다
+    val server = LocalServerData.current
+    val serverRoomId = threadId.serverRoomIdOrNull()
+    if (serverRoomId != null && server != null) {
+        ServerChatMenu(
+            roomId = serverRoomId,
+            server = server,
+            onBack = onBack,
+            onOpenNotices = onOpenNotices,
+            onOpenNotificationSettings = onOpenNotificationSettings,
+            onOpenReport = onOpenReport
+        )
+        return
+    }
     val thread = MockTripRepository.findThread(threadId)
     val trip = thread.tripId?.let(MockTripRepository::findTrip)
     // 화면기획 20-1은 전원 "매너 4.8 · 여행 8회"로 표기하고, 역할(호스트·나)은 우측 칩으로 둔다
@@ -427,6 +480,282 @@ fun ChatMenuScreen(
     }
     if (removeTarget != null) {
         MemberRemoveSheet(member = removeTarget, onDismiss = { removeTargetName = null })
+    }
+}
+
+/**
+ * 실서버 모임 정보(화면기획 20-1) — GET chat-rooms/{id} · {id}/members · {id}/notices · {id}/roadmap/current.
+ * 서버가 주지 않는 값(멤버 매너 점수·대기 큐 상세·공유된 항목 수)은 표시하지 않는다.
+ * 강퇴(DELETE members/{id})·나가기(DELETE members/me)는 합류가 막혀 실검증이 안 돼 연결하지 않았다.
+ */
+@Composable
+private fun ServerChatMenu(
+    roomId: Long,
+    server: ServerDataDependencies,
+    onBack: () -> Unit,
+    onOpenNotices: (String) -> Unit,
+    onOpenNotificationSettings: () -> Unit,
+    onOpenReport: () -> Unit
+) {
+    var detail by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
+    var members by remember(roomId) { mutableStateOf<RoomMembers?>(null) }
+    var notices by remember(roomId) { mutableStateOf<RoomNotices?>(null) }
+    var roadmap by remember(roomId) { mutableStateOf<RoomRoadmap?>(null) }
+    var actionTarget by remember(roomId) { mutableStateOf<RoomMember?>(null) }
+    var actionMessage by remember(roomId) { mutableStateOf<String?>(null) }
+    val actionScope = rememberCoroutineScope()
+
+    LaunchedEffect(roomId, server) {
+        detail = runCatching { server.chatRooms.room(roomId) }.getOrNull()
+        members = runCatching { server.chatRooms.members(roomId) }.getOrNull()
+        notices = runCatching { server.chatRooms.notices(roomId) }.getOrNull()
+        roadmap = runCatching { server.chatRooms.currentRoadmap(roomId) }.getOrNull()
+    }
+
+    ChangeLogScaffold(
+        title = "모임 정보",
+        onBack = onBack,
+        modifier = Modifier.testTag("chat-menu-screen")
+    ) { padding ->
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(padding),
+            contentPadding = PaddingValues(bottom = 28.dp)
+        ) {
+            item {
+                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
+                    Text(
+                        detail?.title.orEmpty(),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    detail?.let { room ->
+                        val dates = listOfNotNull(room.startDate.takeIf(String::isNotBlank), room.endDate)
+                            .joinToString(" ~ ") { it.replace('-', '.') }
+                        val hours = listOfNotNull(room.dayTripStartTime, room.dayTripEndTime)
+                            .map { it.take(5) }
+                            .takeIf { it.size == 2 }
+                            ?.joinToString(" – ")
+                        Text(
+                            listOfNotNull(dates.takeIf(String::isNotBlank), hours).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 6.dp)
+                        )
+                        val chips = buildList {
+                            room.participationFee?.let { add("1인 ${"%,d".format(it)}원") }
+                            room.recruitmentDDay?.let { add("마감 D-$it") }
+                            if (room.minimumAge != null || room.maximumAge != null) {
+                                add("${room.minimumAge ?: ""}~${room.maximumAge ?: ""}세")
+                            }
+                        }
+                        if (chips.isNotEmpty()) {
+                            Row(
+                                modifier = Modifier.padding(top = 10.dp),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                chips.forEach { label ->
+                                    Surface(
+                                        shape = RoundedCornerShape(50),
+                                        color = MaterialTheme.colorScheme.surfaceVariant
+                                    ) {
+                                        Text(
+                                            label,
+                                            Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                            style = MaterialTheme.typography.labelSmall
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                        room.meetingDetails?.let { meeting ->
+                            Text(
+                                meeting,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 8.dp)
+                            )
+                        }
+                    }
+                }
+                HorizontalDivider(thickness = 8.dp, color = MaterialTheme.colorScheme.surfaceVariant)
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text("동행자  ${members?.members?.size ?: 0}", fontWeight = FontWeight.ExtraBold)
+                    members?.let {
+                        Text(
+                            "최대 ${it.maxParticipants}명 · 대기 ${it.waitlistCount}명",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            items(members?.members.orEmpty(), key = { it.userId }) { member ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    UserAvatar(
+                        imageUrl = member.profileImageUrl,
+                        nickname = member.nickname,
+                        modifier = Modifier.size(42.dp),
+                        fallbackFontSize = 19.sp
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(member.nickname, fontWeight = FontWeight.Bold)
+                        Text(
+                            "여행 ${member.completedTripCount}회",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    val role = when {
+                        member.host -> "호스트"
+                        member.me -> "나"
+                        else -> ""
+                    }
+                    if (role.isNotBlank()) {
+                        Surface(
+                            shape = RoundedCornerShape(50),
+                            color = if (role == "호스트") {
+                                MoyeoTheme.tints.primaryTint
+                            } else {
+                                MaterialTheme.colorScheme.surfaceVariant
+                            },
+                            border = BorderStroke(
+                                1.dp,
+                                if (role == "호스트") {
+                                    MaterialTheme.colorScheme.primary.copy(alpha = .4f)
+                                } else {
+                                    MaterialTheme.colorScheme.outline
+                                }
+                            )
+                        ) {
+                            Text(
+                                role,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (role == "호스트") {
+                                    MoyeoTheme.tints.onPrimaryTint
+                                } else {
+                                    MaterialTheme.colorScheme.onSurfaceVariant
+                                },
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = { actionTarget = member },
+                            modifier = Modifier.size(48.dp)
+                        ) {
+                            Icon(Icons.Filled.MoreHoriz, contentDescription = "${member.nickname} 관리")
+                        }
+                    }
+                }
+            }
+            actionMessage?.let { message ->
+                item {
+                    Text(
+                        message,
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            val places = roadmap?.places.orEmpty()
+            if (places.isNotEmpty()) {
+                item {
+                    HorizontalDivider(thickness = 8.dp, color = MaterialTheme.colorScheme.surfaceVariant)
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("여행 경로  ${places.size}", fontWeight = FontWeight.ExtraBold)
+                        roadmap?.let { current ->
+                            val dayLabel = current.dayNumber?.let { "Day $it / ${current.totalDays}" }
+                            Text(
+                                dayLabel ?: "총 ${current.totalDays}일",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+                items(places, key = { "place-${it.sequence}-${it.contentId}" }) { place ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            "${place.sequence}",
+                            modifier = Modifier.size(22.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.ExtraBold,
+                            textAlign = TextAlign.Center
+                        )
+                        Text(place.title, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                        place.scheduledAt?.let { scheduled ->
+                            Text(
+                                scheduled.takeLast(8).take(5),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            item {
+                HorizontalDivider(thickness = 8.dp, color = MaterialTheme.colorScheme.surfaceVariant)
+                val noticeCount = notices?.all?.size ?: 0
+                val pinnedCount = notices?.pinned?.size ?: 0
+                listOf(
+                    MenuEntry(
+                        Icons.AutoMirrored.Filled.StickyNote2,
+                        "공지",
+                        "고정 ${pinnedCount}개 · 전체 ${noticeCount}개"
+                    ) { onOpenNotices("room-$roomId") },
+                    MenuEntry(
+                        Icons.Filled.Notifications,
+                        "알림 설정",
+                        "이 모임의 알림과 방해금지 시간",
+                        onClick = onOpenNotificationSettings
+                    ),
+                    MenuEntry(Icons.Filled.Flag, "신고 · 차단", "부적절한 대화나 멤버를 신고해요", onClick = onOpenReport)
+                ).forEach { ActionRow(it) }
+            }
+        }
+    }
+    val target = actionTarget
+    if (target != null) {
+        AlertDialog(
+            onDismissRequest = { actionTarget = null },
+            title = { Text(target.nickname) },
+            text = { Text("친구 신청을 보내거나 이 사용자를 차단할 수 있어요.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    actionTarget = null
+                    actionScope.launch {
+                        runCatching { server.social.sendRequest(target.userId) }
+                            .onSuccess { actionMessage = "${target.nickname}님에게 친구 신청을 보냈어요." }
+                            .onFailure { error -> actionMessage = error.message ?: "친구 신청에 실패했어요." }
+                    }
+                }) { Text("친구 신청") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    actionTarget = null
+                    actionScope.launch {
+                        runCatching { server.social.block(target.userId) }
+                            .onSuccess { actionMessage = "${target.nickname}님을 차단했어요." }
+                            .onFailure { error -> actionMessage = error.message ?: "차단에 실패했어요." }
+                    }
+                }) { Text("차단", color = MaterialTheme.colorScheme.error) }
+            }
+        )
     }
 }
 
@@ -816,8 +1145,94 @@ fun ChatAttachmentScreen(
 @Composable
 fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
     var tab by rememberSaveable { mutableStateOf(0) }
-    val tabs = listOf("내 친구 3", "받은 신청 2", "보낸 신청 1")
-    val lists = listOf(
+    var removeTarget by remember { mutableStateOf<FriendEntry?>(null) }
+    // 로그인 상태면 실서버 친구·신청 목록으로 대체한다 — 실패 시 목데이터 유지
+    val server = LocalServerData.current
+    var serverFriends by remember(server) { mutableStateOf<ServerFriendLists?>(null) }
+    val friendScope = rememberCoroutineScope()
+    LaunchedEffect(server) {
+        serverFriends = if (server == null) {
+            null
+        } else {
+            runCatching {
+                ServerFriendLists(
+                    friends = server.social.friends(),
+                    received = server.social.receivedRequests(),
+                    sent = server.social.sentRequests()
+                )
+            }.getOrNull()
+        }
+    }
+
+    suspend fun reloadFriendLists() {
+        runCatching {
+            serverFriends = server?.let {
+                ServerFriendLists(
+                    friends = it.social.friends(),
+                    received = it.social.receivedRequests(),
+                    sent = it.social.sentRequests()
+                )
+            }
+        }
+    }
+
+    fun answerRequest(requestId: Long, accept: Boolean) {
+        friendScope.launch {
+            runCatching {
+                if (accept) server?.social?.acceptRequest(requestId) else server?.social?.rejectRequest(requestId)
+            }.onSuccess { reloadFriendLists() }
+        }
+    }
+
+    /** 보낸 신청 취소 — DELETE users/me/friend-requests/{requestId}. */
+    fun cancelRequest(requestId: Long) {
+        friendScope.launch {
+            runCatching { server?.social?.cancelRequest(requestId) }.onSuccess { reloadFriendLists() }
+        }
+    }
+
+    /** 친구 삭제 — DELETE users/me/friends/{userId} (friendshipId 가 아니다). */
+    fun removeFriend(userId: Long) {
+        friendScope.launch {
+            runCatching { server?.social?.removeFriend(userId) }.onSuccess { reloadFriendLists() }
+        }
+    }
+
+    val tabs = serverFriends?.let { data ->
+        listOf("내 친구 ${data.friends.size}", "받은 신청 ${data.received.size}", "보낸 신청 ${data.sent.size}")
+    } ?: listOf("내 친구 3", "받은 신청 2", "보낸 신청 1")
+    val lists = serverFriends?.let { data ->
+        listOf(
+            data.friends.map { friend ->
+                FriendEntry(
+                    emoji = "🐻",
+                    name = friend.user.nickname,
+                    subtitle = friend.user.introduction ?: friend.lastActive.orEmpty(),
+                    imageUrl = friend.user.profileImageUrl,
+                    userId = friend.user.userId
+                )
+            },
+            data.received.map { request ->
+                FriendEntry(
+                    emoji = "🐻",
+                    name = request.user.nickname,
+                    subtitle = request.user.introduction.orEmpty(),
+                    imageUrl = request.user.profileImageUrl,
+                    requestId = request.requestId
+                )
+            },
+            data.sent.map { request ->
+                FriendEntry(
+                    emoji = "🐻",
+                    name = request.user.nickname,
+                    subtitle = request.user.introduction.orEmpty(),
+                    imageUrl = request.user.profileImageUrl,
+                    requestId = request.requestId,
+                    userId = request.user.userId
+                )
+            }
+        )
+    } ?: listOf(
         listOf(
             FriendEntry("🐻", "우직한 곰 7821", "함께 여행 3회 · 어제 접속"),
             FriendEntry("🐰", "엉뚱한 토끼 1457", "함께 여행 1회 · 3일 전 접속"),
@@ -869,30 +1284,61 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
                         )
                     }
                 }
+                if (serverFriends != null && lists[tab].isEmpty()) {
+                    item {
+                        Text(
+                            when (tab) {
+                                0 -> "아직 친구가 없어요."
+                                1 -> "받은 친구 신청이 없어요."
+                                else -> "보낸 친구 신청이 없어요."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 24.dp)
+                        )
+                    }
+                }
                 items(lists[tab]) { friend ->
                     Row(
                         modifier = Modifier.fillMaxWidth().height(68.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        AnimalAvatar(friend.emoji, modifier = Modifier.size(44.dp))
+                        if (serverFriends != null) {
+                            UserAvatar(
+                                imageUrl = friend.imageUrl,
+                                nickname = friend.name,
+                                modifier = Modifier.size(44.dp),
+                                fallbackFontSize = 20.sp
+                            )
+                        } else {
+                            AnimalAvatar(friend.emoji, modifier = Modifier.size(44.dp))
+                        }
                         Column(modifier = Modifier.weight(1f)) {
                             Text(friend.name, fontWeight = FontWeight.ExtraBold)
-                            Text(
-                                friend.subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            if (friend.subtitle.isNotBlank()) {
+                                Text(
+                                    friend.subtitle,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         when (tab) {
-                            0 -> IconButton(onClick = {}, modifier = Modifier.size(48.dp)) {
+                            0 -> IconButton(
+                                onClick = { if (serverFriends != null) removeTarget = friend },
+                                modifier = Modifier.size(48.dp)
+                            ) {
                                 Icon(Icons.Filled.MoreHoriz, contentDescription = "${friend.name} 관리")
                             }
 
                             1 -> Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                                TextButton(onClick = {}) { Text("거절") }
+                                TextButton(onClick = {
+                                    friend.requestId?.let { answerRequest(it, accept = false) }
+                                }) { Text("거절") }
                                 Button(
                                     onClick = {
+                                        friend.requestId?.let { answerRequest(it, accept = true) }
                                     },
                                     contentPadding = PaddingValues(
                                         horizontal = 12.dp
@@ -903,7 +1349,11 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
                                 }
                             }
 
-                            else -> Text("요청 중", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            else -> if (serverFriends != null && friend.requestId != null) {
+                                TextButton(onClick = { cancelRequest(friend.requestId) }) { Text("신청 취소") }
+                            } else {
+                                Text("요청 중", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -949,6 +1399,23 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
                 }
             }
         }
+    }
+    val friendToRemove = removeTarget
+    if (friendToRemove?.userId != null) {
+        AlertDialog(
+            onDismissRequest = { removeTarget = null },
+            title = { Text("${friendToRemove.name}님을 친구에서 삭제할까요?") },
+            text = { Text("친구를 삭제하면 서로의 피드 구독이 끊겨요. 함께한 여행 기록(도감)은 그대로 남아요.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    removeTarget = null
+                    removeFriend(friendToRemove.userId)
+                }) { Text("친구 삭제", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { removeTarget = null }) { Text("취소") }
+            }
+        )
     }
 }
 
@@ -1220,6 +1687,15 @@ fun ReportScreen(onBack: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP
 
 @Composable
 fun BlockedUsersScreen(onBack: () -> Unit) {
+    // 로그인 상태면 실서버 차단 목록(GET users/me/blocks)으로 대체한다
+    val server = LocalServerData.current
+    var serverBlocked by remember(server) {
+        mutableStateOf<List<kr.hanchae.moyeotrip.data.social.BlockedUser>?>(null)
+    }
+    val blockScope = rememberCoroutineScope()
+    LaunchedEffect(server) {
+        serverBlocked = if (server == null) null else runCatching { server.social.blocks() }.getOrNull()
+    }
     val blocked = remember {
         mutableStateListOf(
             FriendEntry("🦝", "말많은 너구리 7791", "2026.07.28 차단 · 채팅방에서 신고와 함께 차단"),
@@ -1247,33 +1723,99 @@ fun BlockedUsersScreen(onBack: () -> Unit) {
                     )
                 }
             }
-            items(blocked, key = { it.name }) { user ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().height(72.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    AnimalAvatar(user.emoji, modifier = Modifier.size(42.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(user.name, fontWeight = FontWeight.ExtraBold)
+            val serverList = serverBlocked
+            if (serverList != null) {
+                if (serverList.isEmpty()) {
+                    item {
                         Text(
-                            user.subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                            "차단한 사용자가 없어요.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 24.dp)
                         )
                     }
-                    OutlinedButton(
-                        onClick = { blocked.remove(user) },
-                        modifier = Modifier.height(34.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = Color.Transparent,
-                            contentColor = MaterialTheme.colorScheme.onSurface
-                        )
+                }
+                items(serverList, key = { it.userId }) { user ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(72.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text("차단 해제", style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+                        UserAvatar(
+                            imageUrl = user.profileImageUrl,
+                            nickname = user.nickname,
+                            modifier = Modifier.size(42.dp),
+                            fallbackFontSize = 19.sp
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(user.nickname, fontWeight = FontWeight.ExtraBold)
+                            if (user.blockedAt.isNotBlank()) {
+                                Text(
+                                    "${user.blockedAt.take(10).replace('-', '.')} 차단",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        OutlinedButton(
+                            onClick = {
+                                blockScope.launch {
+                                    runCatching { server?.social?.unblock(user.userId) }
+                                        .onSuccess {
+                                            serverBlocked = serverBlocked?.filterNot { it.userId == user.userId }
+                                        }
+                                }
+                            },
+                            modifier = Modifier.height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color.Transparent,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            )
+                        ) {
+                            Text(
+                                "차단 해제",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            } else {
+                items(blocked, key = { it.name }) { user ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().height(72.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        AnimalAvatar(user.emoji, modifier = Modifier.size(42.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(user.name, fontWeight = FontWeight.ExtraBold)
+                            Text(
+                                user.subtitle,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        OutlinedButton(
+                            onClick = { blocked.remove(user) },
+                            modifier = Modifier.height(34.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            shape = RoundedCornerShape(10.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color.Transparent,
+                                contentColor = MaterialTheme.colorScheme.onSurface
+                            )
+                        ) {
+                            Text(
+                                "차단 해제",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -1703,6 +2245,57 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
     var dnd by rememberSaveable { mutableStateOf(true) }
     var muted by rememberSaveable { mutableStateOf(setOf("경주 단풍·야경 1박 2일")) }
     val selectedDays = remember { mutableStateListOf("월", "화", "수", "목", "금") }
+    var dndStart by rememberSaveable { mutableStateOf("22:30") }
+    var dndEnd by rememberSaveable { mutableStateOf("07:00") }
+
+    // 로그인 상태면 실서버 설정(GET notifications/settings + users/me/profile)으로 초기화하고,
+    // 바뀔 때마다 PUT notifications/settings 로 저장한다.
+    val server = LocalServerData.current
+    var serverProfileModes by remember(server) {
+        mutableStateOf<kr.hanchae.moyeotrip.data.profile.ServerUserProfile?>(null)
+    }
+    var serverLoaded by remember(server) { mutableStateOf(false) }
+    val settingsScope = rememberCoroutineScope()
+    LaunchedEffect(server) {
+        serverLoaded = false
+        if (server == null) return@LaunchedEffect
+        val settings = runCatching { server.notifications.settings() }.getOrNull() ?: return@LaunchedEffect
+        val profile = runCatching { server.userProfile.profile() }.getOrNull() ?: return@LaunchedEffect
+        serverProfileModes = profile
+        mode = when (profile.chatNotificationMode) {
+            "MENTIONS_AND_REPLIES" -> "멘션·답글만"
+            "NONE" -> "받지 않기"
+            else -> "모든 메시지"
+        }
+        dnd = settings.doNotDisturbEnabled
+        settings.doNotDisturbStartTime?.let { dndStart = it.take(5) }
+        settings.doNotDisturbEndTime?.let { dndEnd = it.take(5) }
+        selectedDays.clear()
+        selectedDays.addAll(settings.doNotDisturbDays.mapNotNull(apiDayToKorean::get))
+        serverLoaded = true
+    }
+
+    fun pushServerSettings() {
+        val profile = serverProfileModes
+        if (server == null || profile == null || !serverLoaded) return
+        val update = NotificationSettingsUpdate(
+            chatNotificationMode = when (mode) {
+                "멘션·답글만" -> "MENTIONS_AND_REPLIES"
+                "받지 않기" -> "NONE"
+                else -> "ALL"
+            },
+            recruitmentDeadlineEnabled = profile.recruitmentDeadlineEnabled,
+            socialActivityEnabled = profile.socialActivityEnabled,
+            marketingEnabled = profile.marketingEnabled,
+            doNotDisturbEnabled = dnd,
+            doNotDisturbStartTime = if (dnd) dndStart else null,
+            doNotDisturbEndTime = if (dnd) dndEnd else null,
+            doNotDisturbDays = selectedDays.mapNotNull(koreanDayToApi::get)
+        )
+        settingsScope.launch {
+            runCatching { server.notifications.updateSettings(update) }
+        }
+    }
     ChangeLogScaffold(
         title = "채팅 알림",
         onBack = onBack,
@@ -1719,7 +2312,10 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
             items(modes) { (title, description) ->
                 val selected = mode == title
                 Surface(
-                    modifier = Modifier.fillMaxWidth().clickable { mode = title },
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        mode = title
+                        pushServerSettings()
+                    },
                     shape = RoundedCornerShape(12.dp),
                     border = BorderStroke(
                         1.dp,
@@ -1734,7 +2330,10 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
                         modifier = Modifier.padding(end = 14.dp, top = 10.dp, bottom = 10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(selected = selected, onClick = { mode = title })
+                        RadioButton(selected = selected, onClick = {
+                            mode = title
+                            pushServerSettings()
+                        })
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                             Text(title, fontWeight = FontWeight.Bold)
                             Text(
@@ -1760,15 +2359,18 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        Switch(checked = dnd, onCheckedChange = { dnd = it })
+                        Switch(checked = dnd, onCheckedChange = {
+                            dnd = it
+                            pushServerSettings()
+                        })
                     }
                     if (dnd) {
                         Row(
                             modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            QuietHourField("시작", "22:30", Modifier.weight(1f))
-                            QuietHourField("종료", "07:00", Modifier.weight(1f))
+                            QuietHourField("시작", dndStart, Modifier.weight(1f))
+                            QuietHourField("종료", dndEnd, Modifier.weight(1f))
                         }
                         Text(
                             "요일",
@@ -1788,6 +2390,7 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
                                         .height(38.dp)
                                         .clickable {
                                             if (on) selectedDays.remove(day) else selectedDays.add(day)
+                                            pushServerSettings()
                                         },
                                     shape = RoundedCornerShape(10.dp),
                                     color = if (on) tints.primaryTint else MaterialTheme.colorScheme.surface,

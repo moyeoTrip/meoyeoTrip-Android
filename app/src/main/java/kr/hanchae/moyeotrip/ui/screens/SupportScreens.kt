@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
@@ -59,9 +61,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -70,18 +75,31 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.FeedPost
 import kr.hanchae.moyeotrip.data.FeedVisibility
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
+import kr.hanchae.moyeotrip.data.notifications.ServerNotification
+import kr.hanchae.moyeotrip.data.rooms.RoomKickHistory
+import kr.hanchae.moyeotrip.data.search.InMemoryRecentSearchStore
+import kr.hanchae.moyeotrip.data.search.PLANNING_RECENT_SEARCHES
+import kr.hanchae.moyeotrip.data.search.PersistedRecentSearchStore
+import kr.hanchae.moyeotrip.ui.LocalCaptureMode
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.components.emphasized
 import kr.hanchae.moyeotrip.ui.theme.Coral
@@ -96,8 +114,25 @@ fun NotificationCenterScreen(
     onOpenCourse: (String) -> Unit,
     onOpenTripConfirmed: () -> Unit = {},
     onOpenTripMessage: () -> Unit = {},
-    onOpenRemovalReason: () -> Unit = {}
+    onOpenRemovalReason: (Long?) -> Unit = {}
 ) {
+    // 로그인 상태면 실서버 알림(GET notifications)으로 대체한다 — 실패 시 목데이터 유지
+    val server = LocalServerData.current
+    var serverItems by remember(server) { mutableStateOf<List<NotificationItem>?>(null) }
+    var serverUnreadCount by remember(server) { mutableStateOf(0) }
+    val serverScope = rememberCoroutineScope()
+    LaunchedEffect(server) {
+        if (server == null) {
+            serverItems = null
+            return@LaunchedEffect
+        }
+        runCatching { server.notifications.notifications() }
+            .onSuccess { page ->
+                serverItems = page.notifications.map { it.toNotificationItem() }
+                serverUnreadCount = page.unreadCount
+            }
+            .onFailure { serverItems = null }
+    }
     // 항목 구성은 화면기획 13 알림과 동일하다 (오늘 5 · 어제 2, 안읽음 4)
     val notifications = listOf(
         NotificationItem(
@@ -177,10 +212,26 @@ fun NotificationCenterScreen(
 
     var showsUnreadOnly by rememberSaveable { mutableStateOf(false) }
     var readAll by rememberSaveable { mutableStateOf(false) }
-    val unreadCount = notifications.count { it.unread && !readAll }
-    val visible = if (showsUnreadOnly) notifications.filter { it.unread && !readAll } else notifications
+    val isServerList = serverItems != null
+    val activeItems = serverItems ?: notifications
+    val unreadCount = if (isServerList) serverUnreadCount else notifications.count { it.unread && !readAll }
+    val visible = if (showsUnreadOnly) {
+        activeItems.filter { it.unread && (isServerList || !readAll) }
+    } else {
+        activeItems
+    }
     val grouped = visible.groupBy { it.group }
     val groupOrder = visible.map { it.group }.distinct()
+
+    fun markServerItemRead(item: NotificationItem) {
+        val serverId = item.serverId ?: return
+        if (!item.unread) return
+        serverScope.launch {
+            runCatching { server?.notifications?.markRead(serverId) }
+        }
+        serverItems = serverItems?.map { if (it.serverId == serverId) it.copy(unread = false) else it }
+        serverUnreadCount = (serverUnreadCount - 1).coerceAtLeast(0)
+    }
 
     // 알림은 항목마다 카드를 두지 않고 테이블처럼 한 줄씩 수직으로 쌓는다 (화면기획 기준).
     // 카드가 겹치면 목록을 훑을 때 어디까지 읽었는지 잡히지 않는다.
@@ -189,8 +240,31 @@ fun NotificationCenterScreen(
         onBack = onBack,
         itemSpacing = 0.dp,
         trailingTitle = "모두 읽음",
-        onTrailingClick = { readAll = true }
+        onTrailingClick = {
+            if (isServerList) {
+                serverScope.launch {
+                    runCatching { server?.notifications?.markAllRead() }
+                        .onSuccess {
+                            serverItems = serverItems?.map { it.copy(unread = false) }
+                            serverUnreadCount = 0
+                        }
+                }
+            } else {
+                readAll = true
+            }
+        }
     ) {
+        if (isServerList && activeItems.isEmpty()) {
+            item {
+                Text(
+                    text = "아직 도착한 알림이 없어요.",
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 48.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
         // 화면기획·웹과 같은 전체 / 안읽음 필터
         item {
             Row(
@@ -218,14 +292,28 @@ fun NotificationCenterScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable {
-                                when (item.type) {
-                                    "feed", "likes" -> onOpenPost(item.targetId)
-                                    "course" -> onOpenCourse(item.targetId)
-                                    "confirmed" -> onOpenTripConfirmed()
-                                    "message" -> onOpenTripMessage()
-                                    "removal" -> onOpenRemovalReason()
-                                    "friend-request" -> Unit
-                                    else -> onOpenTrip(item.targetId)
+                                if (item.serverId != null) {
+                                    markServerItemRead(item)
+                                    when (item.type) {
+                                        "removal" -> onOpenRemovalReason(item.serverId)
+
+                                        "likes" ->
+                                            if (item.targetId.isNotBlank()) onOpenPost("srv-${item.targetId}")
+
+                                        "friend-request" -> Unit
+
+                                        else -> item.chatRoomId?.let { onOpenTrip("room-$it") }
+                                    }
+                                } else {
+                                    when (item.type) {
+                                        "feed", "likes" -> onOpenPost(item.targetId)
+                                        "course" -> onOpenCourse(item.targetId)
+                                        "confirmed" -> onOpenTripConfirmed()
+                                        "message" -> onOpenTripMessage()
+                                        "removal" -> onOpenRemovalReason(null)
+                                        "friend-request" -> Unit
+                                        else -> onOpenTrip(item.targetId)
+                                    }
                                 }
                             }
                             .testTag("notification-${item.type}-${item.targetId}")
@@ -267,19 +355,35 @@ fun NotificationCenterScreen(
                             )
                             // 친구 요청은 목록 안에서 바로 처리한다 (화면기획)
                             if (item.type == "friend-request") {
+                                fun answerServerRequest(accept: Boolean) {
+                                    val requestId = item.targetId.toLongOrNull()
+                                    if (item.serverId == null || requestId == null) return
+                                    serverScope.launch {
+                                        runCatching {
+                                            if (accept) {
+                                                server?.social?.acceptRequest(requestId)
+                                            } else {
+                                                server?.social?.rejectRequest(requestId)
+                                            }
+                                        }.onSuccess {
+                                            markServerItemRead(item)
+                                            serverItems = serverItems?.filterNot { it.serverId == item.serverId }
+                                        }
+                                    }
+                                }
                                 Row(
                                     modifier = Modifier.padding(top = 5.dp),
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
                                     OutlinedButton(
-                                        onClick = {},
+                                        onClick = { answerServerRequest(accept = false) },
                                         modifier = Modifier.height(32.dp)
                                             .testTag("notification-friend-decline"),
                                         shape = RoundedCornerShape(8.dp),
                                         contentPadding = PaddingValues(horizontal = 14.dp)
                                     ) { Text("거절", style = MaterialTheme.typography.labelMedium) }
                                     Button(
-                                        onClick = {},
+                                        onClick = { answerServerRequest(accept = true) },
                                         modifier = Modifier.height(32.dp)
                                             .testTag("notification-friend-accept"),
                                         shape = RoundedCornerShape(8.dp),
@@ -307,7 +411,15 @@ fun NotificationCenterScreen(
 // / 13-1 내보내기 안내 (changeLog14) — 강퇴 알림을 탭했을 때만 진입한다.
 // / 채팅방은 이미 사라진 뒤라 사유와 이후 정책을 이 화면 하나로 전달하고, 하단 동작은 확인 하나뿐이다.
 @Composable
-fun RemovalReasonScreen(onBack: () -> Unit) {
+fun RemovalReasonScreen(onBack: () -> Unit, notificationId: Long? = null) {
+    // 강퇴 알림에서 진입하면 실서버 사유(GET notifications/{id}/kick-history)를 보여준다
+    val server = LocalServerData.current
+    var kickHistory by remember(notificationId) { mutableStateOf<RoomKickHistory?>(null) }
+    LaunchedEffect(server, notificationId) {
+        if (server != null && notificationId != null) {
+            kickHistory = runCatching { server.notifications.kickHistory(notificationId) }.getOrNull()
+        }
+    }
     val tints = MoyeoTheme.tints
     // iOS 다크 표면 위계를 기준으로 맞춘다: 페이지 < 인용 박스 < 카드(+softLine 테두리).
     // 라이트에서는 페이지·카드가 흰색으로 같아지고 테두리·회색 인용 박스만 남는다 — iOS와 동일.
@@ -369,14 +481,16 @@ fun RemovalReasonScreen(onBack: () -> Unit) {
                         }
                     }
                     Text(
-                        text = "감포 바다 일출 모임에서\n내보내졌어요",
+                        text = kickHistory?.let { "${it.roomTitle} 모임에서\n내보내졌어요" }
+                            ?: "감포 바다 일출 모임에서\n내보내졌어요",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = TextAlign.Center
                     )
                     Text(
-                        text = "2026.08.22 (토) 오후 6:02 · 호스트 결정",
+                        text = kickHistory?.kickedAt?.kickedAtLabel()
+                            ?: "2026.08.22 (토) 오후 6:02 · 호스트 결정",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center
@@ -408,7 +522,8 @@ fun RemovalReasonScreen(onBack: () -> Unit) {
                             color = quoteColor
                         ) {
                             Text(
-                                text = "“모임 컨셉과 맞지 않는 대화가 반복되어, 남은 멤버들을 위해 함께하기 어렵다고 판단했어요.”",
+                                text = kickHistory?.reason?.takeIf(String::isNotBlank)?.let { "“$it”" }
+                                    ?: "“모임 컨셉과 맞지 않는 대화가 반복되어, 남은 멤버들을 위해 함께하기 어렵다고 판단했어요.”",
                                 modifier = Modifier.padding(14.dp),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -1909,8 +2024,22 @@ private fun FeedWriteBottomActions(currentStep: Int, submitted: Boolean, onPrevi
 fun SearchScreen(onBack: () -> Unit, onOpenCourse: (String) -> Unit, initialQuery: String = "") {
     var query by rememberSaveable { mutableStateOf(initialQuery) }
     var submittedQuery by rememberSaveable { mutableStateOf("") }
-    var recentSearches by rememberSaveable {
-        mutableStateOf(listOf("경주", "단풍", "황리단길", "안동 한옥", "주왕산"))
+    // 최근 검색어는 서버 API가 없는 클라이언트 전용 기능이다 — 기기에 영구 저장한다.
+    // 캡처에서는 기기에 남은 기록이 아니라 화면기획 목데이터를 보여준다.
+    val context = LocalContext.current
+    val captureMode = LocalCaptureMode.current
+    val recentSearchStore = remember(context, captureMode) {
+        if (captureMode) {
+            InMemoryRecentSearchStore(PLANNING_RECENT_SEARCHES)
+        } else {
+            PersistedRecentSearchStore(context.applicationContext)
+        }
+    }
+    val recentSearches by recentSearchStore.keywords.collectAsState()
+    val runSearch: (String) -> Unit = { keyword ->
+        query = keyword
+        submittedQuery = keyword
+        recentSearchStore.record(keyword)
     }
     val trimmedQuery = submittedQuery.trim()
     val courses = remember(trimmedQuery) {
@@ -1949,7 +2078,10 @@ fun SearchScreen(onBack: () -> Unit, onOpenCourse: (String) -> Unit, initialQuer
                     .testTag("search-query-field"),
                 leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
                 placeholder = { Text("지역, 테마, 코스 검색") },
-                singleLine = true
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                // 검색을 실행한 순간에만 최근 검색어에 남긴다 — 글자마다 쌓으면 목록이 조각난다
+                keyboardActions = KeyboardActions(onSearch = { recentSearchStore.record(query) })
             )
             Text(
                 text = "취소",
@@ -1974,61 +2106,70 @@ fun SearchScreen(onBack: () -> Unit, onOpenCourse: (String) -> Unit, initialQuer
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             if (submittedQuery.isBlank()) {
-                item {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "최근 검색어",
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                        Text(
-                            text = "전체 삭제",
-                            modifier = Modifier.clickable { recentSearches = emptyList() },
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                // 화면기획에 빈 상태 문구가 없어서, 최근 검색어가 없으면 섹션 전체를 숨긴다
+                if (recentSearches.isNotEmpty()) {
+                    item {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("search-recent-section"),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "최근 검색어",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Text(
+                                text = "전체 삭제",
+                                modifier = Modifier
+                                    .clickable(onClick = recentSearchStore::clear)
+                                    .testTag("search-recent-clear-all"),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                }
-                item {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(7.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        recentSearches.forEach { keyword ->
-                            Surface(
-                                shape = RoundedCornerShape(50),
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                                color = MaterialTheme.colorScheme.background
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(start = 11.dp, end = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
+                    item {
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(7.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            recentSearches.forEach { keyword ->
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                                    color = MaterialTheme.colorScheme.background
                                 ) {
-                                    Text(
-                                        text = keyword,
-                                        modifier = Modifier
-                                            .clickable {
-                                                query = keyword
-                                                submittedQuery = keyword
-                                            }
-                                            .padding(vertical = 8.dp),
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.onSurface
-                                    )
-                                    IconButton(
-                                        onClick = { recentSearches = recentSearches - keyword },
-                                        modifier = Modifier.size(28.dp)
+                                    Row(
+                                        modifier = Modifier.padding(start = 11.dp, end = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Icon(
-                                            imageVector = Icons.Filled.Close,
-                                            contentDescription = "$keyword 삭제",
-                                            modifier = Modifier.size(12.dp)
+                                        Text(
+                                            text = keyword,
+                                            modifier = Modifier
+                                                // 사용자 입력은 길이가 임의라 캡슐 밖으로 넘칠 수 있다
+                                                .weight(1f, fill = false)
+                                                .clickable { runSearch(keyword) }
+                                                .testTag("search-recent-$keyword")
+                                                .padding(vertical = 8.dp),
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
                                         )
+                                        IconButton(
+                                            onClick = { recentSearchStore.remove(keyword) },
+                                            modifier = Modifier.size(28.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Filled.Close,
+                                                contentDescription = "$keyword 삭제",
+                                                modifier = Modifier.size(12.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -2056,10 +2197,7 @@ fun SearchScreen(onBack: () -> Unit, onOpenCourse: (String) -> Unit, initialQuer
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(44.dp)
-                            .clickable {
-                                query = keyword
-                                submittedQuery = keyword
-                            },
+                            .clickable { runSearch(keyword) },
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
@@ -2112,10 +2250,7 @@ fun SearchScreen(onBack: () -> Unit, onOpenCourse: (String) -> Unit, initialQuer
                                     SupportChip(
                                         text = keyword,
                                         modifier = Modifier.testTag("search-recovery-$keyword"),
-                                        onClick = {
-                                            query = keyword
-                                            submittedQuery = keyword
-                                        }
+                                        onClick = { runSearch(keyword) }
                                     )
                                 }
                             }
@@ -2346,5 +2481,52 @@ private data class NotificationItem(
     val group: String = "오늘",
     val unread: Boolean = false,
     // / 화면기획 본문의 `<b>` 구간 — 모임 이름·핵심 단어만 굵게 남긴다
-    val emphasis: List<String> = emptyList()
+    val emphasis: List<String> = emptyList(),
+    // / 실서버 알림이면 notificationId — 탭할 때 읽음 처리(PUT read)에 쓴다
+    val serverId: Long? = null,
+    val chatRoomId: Long? = null
 )
+
+private fun String.kickedAtLabel(): String = runCatching {
+    LocalDateTime.parse(this).format(DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm"))
+}.getOrDefault(this)
+
+/** 실서버 알림 → 목록 행. 서버 type 을 화면기획 13의 아이콘 종류로 대응시킨다. */
+private fun ServerNotification.toNotificationItem(): NotificationItem {
+    val itemType = when (type) {
+        "CHAT_ROOM_KICKED" -> "removal"
+        "CHAT_MESSAGE_RECEIVED" -> "chat-server"
+        "TRAVEL_COURSE_UPDATED" -> "course-server"
+        "RECRUITMENT_DEADLINE" -> "deadline"
+        "FRIEND_REQUEST" -> "friend-request"
+        "FEED_LIKE" -> "likes"
+        else -> "trip-server"
+    }
+    val createdDate = runCatching { LocalDateTime.parse(createdAt).toLocalDate() }.getOrNull()
+    val today = LocalDate.now()
+    val group = when (createdDate) {
+        null -> "이전"
+        today -> "오늘"
+        today.minusDays(1) -> "어제"
+        else -> "이전"
+    }
+    val timeLabel = runCatching {
+        val created = LocalDateTime.parse(createdAt)
+        when (group) {
+            "오늘" -> created.format(DateTimeFormatter.ofPattern("HH:mm"))
+            "어제" -> created.format(DateTimeFormatter.ofPattern("어제 HH:mm"))
+            else -> created.format(DateTimeFormatter.ofPattern("M월 d일"))
+        }
+    }.getOrDefault(createdAt)
+    return NotificationItem(
+        title = content,
+        body = "",
+        time = timeLabel,
+        type = itemType,
+        targetId = referenceId?.toString().orEmpty(),
+        group = group,
+        unread = !read,
+        serverId = notificationId,
+        chatRoomId = chatRoomId
+    )
+}

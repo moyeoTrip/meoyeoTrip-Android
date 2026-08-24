@@ -26,6 +26,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubbleOutline
+import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.HorizontalDivider
@@ -34,9 +35,11 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,16 +52,23 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.FeedPost
 import kr.hanchae.moyeotrip.data.FeedVisibility
 import kr.hanchae.moyeotrip.data.MockTripRepository
+import kr.hanchae.moyeotrip.data.feed.FeedTab
+import kr.hanchae.moyeotrip.data.feed.ServerFeed
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
@@ -66,6 +76,18 @@ fun FeedScreen(onOpenPost: (String) -> Unit, onWritePost: () -> Unit) {
     val colorScheme = MaterialTheme.colorScheme
     var selectedTab by remember { mutableStateOf(FeedTimelineTab.Discover) }
     val posts = feedTimelinePosts(selectedTab)
+
+    // 로그인 상태면 실서버 피드(GET feeds)로 대체한다 — 비어 있으면 빈 상태 UI
+    val server = LocalServerData.current
+    var serverFeeds by remember(server) { mutableStateOf<List<ServerFeed>?>(null) }
+    val feedScope = rememberCoroutineScope()
+    LaunchedEffect(server, selectedTab) {
+        serverFeeds = if (server == null) {
+            null
+        } else {
+            runCatching { server.feeds.feeds(selectedTab.serverTab).feeds }.getOrNull()
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -88,17 +110,210 @@ fun FeedScreen(onOpenPost: (String) -> Unit, onWritePost: () -> Unit) {
                 bottom = 128.dp
             )
         ) {
-            items(
-                items = posts,
-                key = { post -> post.id }
-            ) { post ->
-                FeedTimelinePost(
-                    post = post,
-                    onOpenPost = { onOpenPost(post.id) },
-                    onWritePost = onWritePost
+            val feeds = serverFeeds
+            if (feeds != null) {
+                if (feeds.isEmpty()) {
+                    item {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 72.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = "아직 올라온 피드가 없어요",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = colorScheme.onSurface
+                            )
+                            Text(
+                                text = "여행을 다녀오면 첫 피드를 남겨보세요.",
+                                fontSize = 13.sp,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else {
+                    items(items = feeds, key = { feed -> feed.feedId }) { feed ->
+                        ServerFeedPostRow(
+                            feed = feed,
+                            onOpenPost = { onOpenPost("srv-${feed.feedId}") },
+                            onToggleLike = {
+                                feedScope.launch {
+                                    runCatching { server?.feeds?.toggleLike(feed.feedId) }
+                                        .onSuccess { result ->
+                                            if (result != null) {
+                                                serverFeeds = serverFeeds?.map {
+                                                    if (it.feedId == feed.feedId) {
+                                                        it.copy(
+                                                            liked = result.liked,
+                                                            likeCount = result.likeCount
+                                                        )
+                                                    } else {
+                                                        it
+                                                    }
+                                                }
+                                            }
+                                        }
+                                }
+                            }
+                        )
+                    }
+                }
+            } else {
+                items(
+                    items = posts,
+                    key = { post -> post.id }
+                ) { post ->
+                    FeedTimelinePost(
+                        post = post,
+                        onOpenPost = { onOpenPost(post.id) },
+                        onWritePost = onWritePost
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** 실서버 피드 행 — 서버가 주지 않는 값(제목·지역 태그 줄)은 표시하지 않는다. */
+@Composable
+private fun ServerFeedPostRow(feed: ServerFeed, onOpenPost: () -> Unit, onToggleLike: () -> Unit) {
+    val colorScheme = MaterialTheme.colorScheme
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .testTag("feed-server-post-${feed.feedId}")
+            .clickable(onClick = onOpenPost)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            UserAvatar(
+                imageUrl = feed.author.profileImageUrl,
+                nickname = feed.author.nickname,
+                modifier = Modifier.size(38.dp),
+                fallbackFontSize = 17.sp
+            )
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = feed.author.nickname,
+                    fontSize = 14.sp,
+                    lineHeight = 18.sp,
+                    fontWeight = FontWeight.Black,
+                    color = colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    text = feed.createdAt.take(10).replace('-', '.'),
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurfaceVariant
                 )
             }
         }
+        Text(
+            text = feed.content,
+            modifier = Modifier.padding(top = 10.dp),
+            fontSize = 15.sp,
+            lineHeight = 21.sp,
+            color = colorScheme.onSurface,
+            maxLines = 4,
+            overflow = TextOverflow.Ellipsis
+        )
+        feed.trip?.courseTitle?.let { courseTitle ->
+            Text(
+                text = "🗺 $courseTitle",
+                modifier = Modifier.padding(top = 6.dp),
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+        if (feed.imageUrls.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .padding(top = 12.dp)
+                    .fillMaxWidth()
+                    .height(166.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                feed.imageUrls.take(2).forEach { imageUrl ->
+                    CachedRemoteImage(
+                        url = imageUrl,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight(),
+                        contentScale = ContentScale.Crop
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .background(colorScheme.surfaceVariant)
+                        )
+                    }
+                }
+            }
+        }
+        Row(
+            modifier = Modifier
+                .padding(top = 12.dp)
+                .fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.clickable(onClick = onToggleLike),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(
+                    imageVector = if (feed.liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = "좋아요",
+                    tint = if (feed.liked) Coral else colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(21.dp)
+                )
+                Text(
+                    text = feed.likeCount.toString(),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurfaceVariant
+                )
+            }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Filled.ChatBubbleOutline,
+                    contentDescription = "댓글",
+                    tint = colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(21.dp)
+                )
+                Text(
+                    text = feed.commentCount.toString(),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurfaceVariant
+                )
+            }
+        }
+        HorizontalDivider(
+            modifier = Modifier.padding(top = 12.dp, bottom = 12.dp),
+            color = colorScheme.outline.copy(alpha = 0.45f)
+        )
     }
 }
 
@@ -551,6 +766,13 @@ private enum class FeedTimelineTab(val label: String, val key: String) {
     Following("팔로잉", "following"),
     Discover("발견", "discover")
 }
+
+/** 서버 피드 탭 매핑 — 팔로잉은 FRIENDS, 발견은 DISCOVER 다. */
+private val FeedTimelineTab.serverTab: FeedTab
+    get() = when (this) {
+        FeedTimelineTab.Following -> FeedTab.FRIENDS
+        FeedTimelineTab.Discover -> FeedTab.DISCOVER
+    }
 
 private fun FeedPost.timelineSubtitle(): String = when (id) {
     // 부제는 "장소 · #해시태그" 한 줄이다 (4개 플랫폼 공통, docs/alignment/MOCKDATA-CANON.md).

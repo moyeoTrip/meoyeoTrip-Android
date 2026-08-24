@@ -36,9 +36,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,16 +51,22 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.ChatThread
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripApplication
 import kr.hanchae.moyeotrip.data.TripApplicationStatus
 import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.data.rooms.MyChatRoom
+import kr.hanchae.moyeotrip.data.rooms.MyWaitingRoom
+import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
@@ -88,17 +96,50 @@ internal fun MeetingChatList(
     val allThreads = MockTripRepository.chatThreads.sortedForMeetings()
     val threads = allThreads.filterFor(selectedTab)
     var applications by remember { mutableStateOf(MockTripRepository.applications.toList()) }
+
+    // 로그인 상태면 실서버 내 모임(GET chat-rooms/my · my-waiting)으로 대체한다
+    val server = LocalServerData.current
+    var serverRooms by remember(server) { mutableStateOf<List<MyChatRoom>?>(null) }
+    var serverWaiting by remember(server) { mutableStateOf<List<MyWaitingRoom>?>(null) }
+    val meetingScope = rememberCoroutineScope()
+    LaunchedEffect(server) {
+        if (server == null) {
+            serverRooms = null
+            serverWaiting = null
+            return@LaunchedEffect
+        }
+        serverRooms = runCatching { server.chatRooms.myRooms() }.getOrNull()
+        serverWaiting = runCatching { server.chatRooms.myWaitingRooms() }.getOrNull()
+    }
+    val isServerList = serverRooms != null
+    val serverTabRooms = serverRooms.orEmpty().filter { room ->
+        when (selectedTab) {
+            MeetingChatTab.Active -> !room.ended
+            MeetingChatTab.Confirmed -> !room.ended && room.status == "CONFIRMED"
+            MeetingChatTab.Ended -> room.ended
+            MeetingChatTab.Applied -> false
+        }
+    }
     val counts = MeetingChatTab.entries.associateWith { tab ->
-        when (tab) {
-            MeetingChatTab.Active -> allThreads.count {
-                !it.isReadOnly
+        if (isServerList) {
+            when (tab) {
+                MeetingChatTab.Active -> serverRooms.orEmpty().count { !it.ended }
+                MeetingChatTab.Applied -> serverWaiting.orEmpty().size
+                MeetingChatTab.Confirmed -> serverRooms.orEmpty().count { !it.ended && it.status == "CONFIRMED" }
+                MeetingChatTab.Ended -> serverRooms.orEmpty().count(MyChatRoom::ended)
             }
+        } else {
+            when (tab) {
+                MeetingChatTab.Active -> allThreads.count {
+                    !it.isReadOnly
+                }
 
-            MeetingChatTab.Applied -> applications.size
+                MeetingChatTab.Applied -> applications.size
 
-            MeetingChatTab.Confirmed -> allThreads.count { !it.isReadOnly && it.statusText.contains("확정") }
+                MeetingChatTab.Confirmed -> allThreads.count { !it.isReadOnly && it.statusText.contains("확정") }
 
-            MeetingChatTab.Ended -> allThreads.count { it.isReadOnly }
+                MeetingChatTab.Ended -> allThreads.count { it.isReadOnly }
+            }
         }
     }
     val colorScheme = MaterialTheme.colorScheme
@@ -135,7 +176,49 @@ internal fun MeetingChatList(
             contentPadding = PaddingValues(start = 18.dp, top = 0.dp, end = 18.dp, bottom = 132.dp),
             verticalArrangement = Arrangement.spacedBy(0.dp)
         ) {
-            if (selectedTab == MeetingChatTab.Applied && applications.isNotEmpty()) {
+            if (isServerList) {
+                if (selectedTab == MeetingChatTab.Applied) {
+                    val waiting = serverWaiting.orEmpty()
+                    if (waiting.isEmpty()) {
+                        item { EmptyMeetingChatState(tab = selectedTab) }
+                    } else {
+                        items(waiting, key = { it.roomId }) { room ->
+                            ServerWaitingRoomCard(
+                                room = room,
+                                onCancel = {
+                                    meetingScope.launch {
+                                        runCatching { server?.chatRooms?.cancelApplication(room.roomId) }
+                                            .onSuccess {
+                                                serverWaiting =
+                                                    serverWaiting?.filterNot { it.roomId == room.roomId }
+                                            }
+                                    }
+                                },
+                                onOpenDetail = { onOpenTrip("room-${room.roomId}") }
+                            )
+                        }
+                        item(key = "applied-footnote") {
+                            Text(
+                                text = "신청 상태에서는 아직 채팅방에 들어갈 수 없어요. " +
+                                    "승인되거나 자리가 나면 알림으로 알려드릴게요.",
+                                modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                } else if (serverTabRooms.isEmpty()) {
+                    item { EmptyMeetingChatState(tab = selectedTab) }
+                } else {
+                    items(serverTabRooms, key = { it.roomId }) { room ->
+                        // 목데이터와 같은 동작 — 모임 행을 누르면 그 방의 채팅방(화면기획 20)이 열린다
+                        ServerMeetingRoomRow(
+                            room = room,
+                            onClick = { onOpenRoom("room-${room.roomId}") }
+                        )
+                    }
+                }
+            } else if (selectedTab == MeetingChatTab.Applied && applications.isNotEmpty()) {
                 // 화면기획·웹처럼 상태별 섹션 머리말을 둔다
                 val waiting = applications.filter { it.status != TripApplicationStatus.Waitlisted }
                 val queued = applications.filter { it.status == TripApplicationStatus.Waitlisted }
@@ -180,6 +263,152 @@ internal fun MeetingChatList(
                 items(threads, key = { it.id }) { thread ->
                     MeetingChatThreadCard(thread = thread, onClick = { onOpenRoom(thread.id) })
                 }
+            }
+        }
+    }
+}
+
+/** 실서버 내 모임 행 (GET chat-rooms/my). 탭하면 모집 상세(서버)를 연다. */
+@Composable
+private fun ServerMeetingRoomRow(room: MyChatRoom, onClick: () -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .testTag("meeting-server-room-${room.roomId}")
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CachedRemoteImage(
+                url = room.thumbnail,
+                contentDescription = room.title,
+                modifier = Modifier
+                    .size(52.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+                contentScale = ContentScale.Crop
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(52.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+            }
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = room.title,
+                    fontWeight = FontWeight.ExtraBold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val subtitle = room.latestMessage ?: room.description
+                if (!subtitle.isNullOrBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = if (room.endDate != null) "${room.startDate} ~ ${room.endDate}" else room.startDate,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                room.recruitmentDDay?.let { dday ->
+                    Text(
+                        text = "D-$dday",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+                val unread = room.unreadMessageCount ?: 0
+                if (unread > 0) {
+                    Badge { Text(text = unread.toString()) }
+                }
+            }
+        }
+    }
+}
+
+/** 실서버 신청중 카드 (GET chat-rooms/my-waiting). 신청 취소는 DELETE applications/me 다. */
+@Composable
+private fun ServerWaitingRoomCard(room: MyWaitingRoom, onCancel: () -> Unit, onOpenDetail: () -> Unit) {
+    val tints = MoyeoTheme.tints
+    val waitlisted = room.applicationStatus == "WAITLISTED"
+    val rejected = room.applicationStatus == "REJECTED"
+    val badgeContainer = if (waitlisted) tints.primaryTint else tints.warningTint
+    val badgeContent = if (waitlisted) tints.onPrimaryTint else tints.onWarningTint
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 10.dp)
+            .testTag("meeting-server-application-${room.roomId}"),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Text(
+                        room.title,
+                        fontWeight = FontWeight.ExtraBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        if (room.endDate != null) "${room.startDate} ~ ${room.endDate}" else room.startDate,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        "${room.participantCount}/${room.maxParticipants}명",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Surface(shape = RoundedCornerShape(50), color = badgeContainer) {
+                    Text(
+                        when {
+                            rejected -> "거절됨"
+                            waitlisted -> "대기열 ${room.waitlistPosition ?: 1}번"
+                            else -> "승인 대기"
+                        },
+                        Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        color = badgeContent,
+                        fontWeight = FontWeight.ExtraBold,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (!rejected) {
+                    OutlinedButton(
+                        onClick = onCancel,
+                        modifier = Modifier.height(42.dp).testTag("server-application-cancel-${room.roomId}"),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Text("신청 취소")
+                    }
+                }
+                OutlinedButton(
+                    onClick = onOpenDetail,
+                    modifier = Modifier.height(42.dp),
+                    shape = RoundedCornerShape(10.dp)
+                ) { Text("모집 상세") }
             }
         }
     }

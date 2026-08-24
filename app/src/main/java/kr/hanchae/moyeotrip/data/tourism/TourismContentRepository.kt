@@ -42,10 +42,15 @@ data class TourismContentPage(
     val totalPages: Int
 )
 
+/** GET tourism-contents/types 의 한 항목 — 17-1a 타입 필터 칩의 후보다. */
+data class TourismContentTypeOption(val contentTypeId: Int, val contentTypeName: String)
+
 interface TourismContentRepository {
     suspend fun contents(contentTypeId: Int?, page: Int = 0, size: Int = 100): TourismContentPage
 
     suspend fun content(contentId: String): TourismContentDetail
+
+    suspend fun types(): List<TourismContentTypeOption>
 }
 
 class TourismContentApiException(val statusCode: Int, message: String) : Exception(message)
@@ -89,7 +94,17 @@ class HttpTourismContentRepository(
         )
     }
 
-    private suspend fun request(path: String): JSONObject = withContext(Dispatchers.IO) {
+    override suspend fun types(): List<TourismContentTypeOption> =
+        JSONArray(requestText("/api/v1/tourism-contents/types")).objects { type ->
+            TourismContentTypeOption(
+                contentTypeId = type.getInt("contentTypeId"),
+                contentTypeName = type.optString("contentTypeName")
+            )
+        }
+
+    private suspend fun request(path: String): JSONObject = JSONObject(requestText(path))
+
+    private suspend fun requestText(path: String): String = withContext(Dispatchers.IO) {
         val connection = connectionFactory(URL("$rootUrl$path"))
         try {
             connection.requestMethod = "GET"
@@ -105,7 +120,7 @@ class HttpTourismContentRepository(
                 val message = runCatching { JSONObject(text).optString("errorMessage") }.getOrNull()
                 throw TourismContentApiException(status, message?.takeIf(String::isNotBlank) ?: "여행지 요청 실패 ($status)")
             }
-            JSONObject(text)
+            text
         } finally {
             connection.disconnect()
         }
@@ -124,6 +139,9 @@ class FallbackTourismContentRepository(
 
     override suspend fun content(contentId: String): TourismContentDetail = runCatching { primary.content(contentId) }
         .getOrElse { fallback.content(contentId) }
+
+    override suspend fun types(): List<TourismContentTypeOption> = runCatching { primary.types() }
+        .getOrElse { fallback.types() }
 }
 
 object SampleTourismContentRepository : TourismContentRepository {
@@ -163,6 +181,13 @@ object SampleTourismContentRepository : TourismContentRepository {
 
     override suspend fun content(contentId: String): TourismContentDetail =
         details.firstOrNull { it.summary.contentId == contentId } ?: details[2]
+
+    /** 캡처·미로그인용 후보 — 목데이터 방문지가 쓰는 세 타입만 둔다(화면기획 17-1a 칩과 같은 순서). */
+    override suspend fun types(): List<TourismContentTypeOption> = listOf(
+        TourismContentTypeOption(12, "관광지"),
+        TourismContentTypeOption(39, "식당"),
+        TourismContentTypeOption(32, "숙박")
+    )
 
     private fun sample(
         contentId: String,

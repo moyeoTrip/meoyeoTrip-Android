@@ -36,6 +36,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,8 +44,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -54,6 +57,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.data.rooms.ChatRoomSearchResult
+import kr.hanchae.moyeotrip.data.rooms.RoomTag
+import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
 import kr.hanchae.moyeotrip.ui.components.MapMarker
 import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
@@ -66,7 +73,8 @@ fun ExploreScreen(
     onOpenCourse: (String) -> Unit,
     onOpenSearch: () -> Unit,
     onCreateRecruitment: (String) -> Unit,
-    startInMap: Boolean = false
+    startInMap: Boolean = false,
+    onOpenRoom: (Long) -> Unit = {}
 ) {
     val filters = listOf("전체", "자연", "역사", "체험", "힐링")
     var selectedFilter by rememberSaveable { mutableStateOf(filters.first()) }
@@ -74,6 +82,22 @@ fun ExploreScreen(
     var likedCourseIds by rememberSaveable { mutableStateOf(listOf("cheongsong-juwangsan")) }
     val courses = remember(selectedFilter) {
         webExploreCourses().filter { it.matchesExploreFilter(selectedFilter) }
+    }
+    // 로그인 상태면 실서버 모집 목록(GET chat-rooms/search)으로 대체한다.
+    // 실패·미로그인 시에는 기존 목데이터 목록을 그대로 유지한다.
+    val server = LocalServerData.current
+    var serverRooms by remember(server) { mutableStateOf<List<ChatRoomSearchResult>?>(null) }
+    // 테마 칩 후보는 서버 코스 태그(GET travel-courses/tags)를 쓴다 — 목데이터 분류를 서버 모드에 섞지 않는다
+    var serverTags by remember(server) { mutableStateOf<List<RoomTag>>(emptyList()) }
+    var selectedTagId by remember(server) { mutableStateOf<Long?>(null) }
+    LaunchedEffect(server) {
+        if (server == null) {
+            serverRooms = null
+            serverTags = emptyList()
+            return@LaunchedEffect
+        }
+        serverRooms = runCatching { server.chatRooms.search() }.getOrNull()
+        serverTags = runCatching { server.courses.tags() }.getOrElse { emptyList() }
     }
     fun toggleFavorite(courseId: String) {
         likedCourseIds = if (courseId in likedCourseIds) {
@@ -115,25 +139,68 @@ fun ExploreScreen(
                 item {
                     ExploreSearchSurface(onClick = onOpenSearch)
                 }
-                item {
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                        items(filters) { filter ->
-                            ExploreFilterChip(
-                                text = filter,
-                                selected = selectedFilter == filter,
-                                onClick = { selectedFilter = filter }
-                            )
+                val allRooms = serverRooms
+                val rooms = allRooms?.filter { room ->
+                    selectedTagId == null || room.tags.any { it.tagId == selectedTagId }
+                }
+                if (rooms != null) {
+                    if (serverTags.isNotEmpty()) {
+                        item {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                                item {
+                                    ExploreFilterChip(
+                                        text = "전체",
+                                        selected = selectedTagId == null,
+                                        onClick = { selectedTagId = null }
+                                    )
+                                }
+                                items(serverTags, key = { it.tagId }) { tag ->
+                                    ExploreFilterChip(
+                                        text = tag.name,
+                                        selected = selectedTagId == tag.tagId,
+                                        onClick = { selectedTagId = tag.tagId }
+                                    )
+                                }
+                            }
                         }
                     }
-                }
+                    if (rooms.isEmpty()) {
+                        item {
+                            Text(
+                                text = "지금 모집 중인 모임이 없어요.",
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 40.dp),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    } else {
+                        items(rooms, key = { it.roomId }) { room ->
+                            ExploreServerRoomRow(room = room, onClick = { onOpenRoom(room.roomId) })
+                        }
+                    }
+                } else {
+                    item {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                            items(filters) { filter ->
+                                ExploreFilterChip(
+                                    text = filter,
+                                    selected = selectedFilter == filter,
+                                    onClick = { selectedFilter = filter }
+                                )
+                            }
+                        }
+                    }
 
-                items(courses, key = { it.id }) { course ->
-                    ExploreCourseRow(
-                        course = course,
-                        liked = course.id in likedCourseIds,
-                        onClick = { onOpenCourse(course.id) },
-                        onFavoriteClick = { toggleFavorite(course.id) }
-                    )
+                    items(courses, key = { it.id }) { course ->
+                        ExploreCourseRow(
+                            course = course,
+                            liked = course.id in likedCourseIds,
+                            onClick = { onOpenCourse(course.id) },
+                            onFavoriteClick = { toggleFavorite(course.id) }
+                        )
+                    }
                 }
             }
         }
@@ -352,6 +419,80 @@ private fun ExploreCourseRow(course: TripCourse, liked: Boolean, onClick: () -> 
                     contentDescription = null,
                     tint = if (liked) Coral else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.size(21.dp)
+                )
+            }
+        }
+    }
+}
+
+/** 서버 모집(chat-rooms/search) 행 — 서버가 주지 않는 값(찜 상태·테마)은 표시하지 않는다. */
+@Composable
+private fun ExploreServerRoomRow(room: ChatRoomSearchResult, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(92.dp)
+            .testTag("explore-room-${room.roomId}")
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (MoyeoTheme.isDark) 0.dp else 1.dp)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 10.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CachedRemoteImage(
+                url = room.thumbnail,
+                contentDescription = room.title,
+                modifier = Modifier
+                    .size(width = 88.dp, height = 68.dp)
+                    .clip(RoundedCornerShape(8.dp)),
+                contentScale = ContentScale.Crop
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 88.dp, height = 68.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+            }
+            Column(
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)
+            ) {
+                Text(
+                    text = room.title,
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+                val subtitle = listOfNotNull(
+                    room.courseTitle,
+                    room.tags.joinToString(", ") { it.name }.takeIf(String::isNotBlank)
+                ).joinToString(" · ")
+                if (subtitle.isNotBlank()) {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = "${room.participantCount}/${room.maxParticipants}명",
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
