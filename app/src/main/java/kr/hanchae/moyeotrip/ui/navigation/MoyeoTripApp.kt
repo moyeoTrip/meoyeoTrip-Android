@@ -71,6 +71,7 @@ import androidx.navigation.navArgument
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kr.hanchae.moyeotrip.data.social.DexCompanion
 import kr.hanchae.moyeotrip.BuildConfig
 import kr.hanchae.moyeotrip.data.CourseSource
 import kr.hanchae.moyeotrip.data.MockTripRepository
@@ -87,6 +88,7 @@ import kr.hanchae.moyeotrip.data.settings.resolveDarkTheme
 import kr.hanchae.moyeotrip.data.tourism.FallbackTourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.HttpTourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.SampleTourismContentRepository
+import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
 import kr.hanchae.moyeotrip.notifications.PushNavigationEvent
 import kr.hanchae.moyeotrip.ui.LocalCaptureMode
 import kr.hanchae.moyeotrip.ui.LocalServerData
@@ -131,7 +133,7 @@ import kr.hanchae.moyeotrip.ui.screens.OssLicensesScreen
 import kr.hanchae.moyeotrip.ui.screens.PlaceDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.PlaceSearchScreen
 import kr.hanchae.moyeotrip.ui.screens.ProfileEditScreen
-import kr.hanchae.moyeotrip.ui.screens.ProfileScreen
+import kr.hanchae.moyeotrip.ui.screens.ProfileCardScreen
 import kr.hanchae.moyeotrip.ui.screens.QaComponentStatesScreen
 import kr.hanchae.moyeotrip.ui.screens.QaDesignSystemOverviewScreen
 import kr.hanchae.moyeotrip.ui.screens.QaLeaveAlertScreen
@@ -176,12 +178,54 @@ private fun bottomTabRouteFor(currentRoute: String?): String? = when (currentRou
 private const val STARTUP_SPLASH_HOLD_MILLIS = 1_150L
 private const val STARTUP_SPLASH_TRANSITION_MILLIS = 420
 
+/**
+ * 실서버 의존성(`LocalServerData`)을 만들지 판정한다.
+ *
+ * 목 캡처 라우트(`moyeo_screen` 단독)와 인증 우회 실행은 네트워크를 타지 않는다.
+ * 라이브 캡처(`moyeo_live_data`)는 **그 차단만** 푼다 — 데모 빌드는 서버가 없으니 그대로 막는다.
+ */
+internal fun injectsServerData(
+    startScreen: String?,
+    skipAuthentication: Boolean,
+    liveCapture: Boolean,
+    demoMode: Boolean
+): Boolean {
+    if (demoMode) return false
+    if (liveCapture) return true
+    return startScreen == null && !skipAuthentication
+}
+
+/**
+ * 기기 상태(최근 검색어)·실제 빌드 버전 대신 화면기획 목데이터를 그릴지.
+ * 라이브 캡처는 실데이터를 보러 찍는 것이므로 목데이터 치환을 끈다.
+ */
+internal fun usesPlanningMockData(captureMode: Boolean, liveCapture: Boolean): Boolean = captureMode && !liveCapture
+
+/**
+ * 35·36·37 의 강제 오프라인 플래그는 목 캡처용으로 남겨 두고, 라이브 캡처에서는
+ * 실제 차단(`adb shell svc wifi disable` · `svc data disable`) 결과를 그대로 그린다.
+ */
+internal fun resolveNetworkExperience(
+    forcedOverride: OfflineExperience?,
+    liveCapture: Boolean,
+    detectedOnline: Boolean,
+    hasCachedContent: Boolean
+): OfflineExperience = forcedOverride.takeIf { !liveCapture }
+    ?: offlineExperience(detectedOnline, hasCachedContent)
+
 @Composable
 fun MoyeoTripApp(
     startScreen: String? = null,
+    /**
+     * 라이브 캡처(`moyeo_live_data`, 디버그 전용). 캡처 라우팅은 그대로 두고 **데이터 차단만** 푼다.
+     * false 면 기존 목 캡처 경로와 100% 동일하다.
+     */
+    liveData: Boolean = false,
     pushNavigationEvent: PushNavigationEvent? = null,
     skipStartupSplash: Boolean = false,
     skipAuthentication: Boolean = false,
+    /** QA 세션이 주입된 실행(디버그 전용). 인증 플로우를 거치지 않고 바로 로그인 상태로 시작한다. */
+    qaSessionInjected: Boolean = false,
     /** 번호별 비교 캡처는 다크/라이트 두 테마를 모두 찍는다. null이면 사용자 설정·시스템 설정을 따른다. */
     forceDarkTheme: Boolean? = null,
     onAuthenticationComplete: () -> Unit = {},
@@ -191,6 +235,8 @@ fun MoyeoTripApp(
 ) {
     val themeContext = LocalContext.current
     val captureMode = startScreen != null
+    // 릴리스 빌드에서는 어떤 경로로도 켜지지 않게 한 번 더 잠근다.
+    val liveCapture = liveData && BuildConfig.DEBUG
     val themePreferenceStore = remember(themeContext) {
         ThemePreferenceStore(themeContext.applicationContext)
     }
@@ -216,9 +262,11 @@ fun MoyeoTripApp(
             LocalDensity provides Density(currentDensity.density, fontScale = 1f),
             // QA 캡처(moyeo_screen)로 들어온 실행에서는 실지도 대신 목업 지도를 그린다 — 타일 로딩이
             // 비결정적이라 번호별 비교 캡처가 깨진다.
+            // 라이브 캡처에서도 목업 지도를 유지한다 — 타일이 비결정적이고 x86_64 는 SDK 미지원이다.
             LocalMapCaptureMode provides captureMode,
-            // 저장된 최근 검색어·테마 설정·실제 빌드 버전 대신 화면기획 목데이터를 보여줘야 하는지
-            LocalCaptureMode provides captureMode
+            // 저장된 최근 검색어·테마 설정·실제 빌드 버전 대신 화면기획 목데이터를 보여줘야 하는지.
+            // 라이브 캡처는 실데이터를 보러 찍는 것이므로 목데이터 치환을 끈다.
+            LocalCaptureMode provides usesPlanningMockData(captureMode, liveCapture)
         ) {
             var showStartupSplash by remember { mutableStateOf(!skipStartupSplash) }
             val qaStartRequest = remember(startScreen) { QaStartRequest.parse(startScreen) }
@@ -231,12 +279,16 @@ fun MoyeoTripApp(
             LaunchedEffect(detectedOnline) {
                 if (detectedOnline) cacheStore.recordSuccessfulLoad()
             }
-            val networkExperience = qaStartRequest.offlineExperienceOverride
-                ?: offlineExperience(detectedOnline, cacheStore.hasCachedContent)
+            val networkExperience = resolveNetworkExperience(
+                forcedOverride = qaStartRequest.offlineExperienceOverride,
+                liveCapture = liveCapture,
+                detectedOnline = detectedOnline,
+                hasCachedContent = cacheStore.hasCachedContent
+            )
             val isOnline = networkExperience == OfflineExperience.Online
             val authDependencies = remember(context) { AuthDependencies.appDefault(context) }
-            val tourismRepository = remember(authDependencies, startScreen) {
-                if (startScreen != null) {
+            val tourismRepository = remember(authDependencies, startScreen, liveCapture) {
+                if (startScreen != null && !liveCapture) {
                     SampleTourismContentRepository
                 } else {
                     FallbackTourismContentRepository(
@@ -249,12 +301,29 @@ fun MoyeoTripApp(
                 }
             }
             val appScope = rememberCoroutineScope()
-            val userProfile by authDependencies.userProfileStore.profile.collectAsState()
+            val storedUserProfile by authDependencies.userProfileStore.profile.collectAsState()
+            // 프로필 카드(25)가 누구의 카드인지. 도감에서 눌러 들어오면 그 동행자 정보를 그대로 넘겨
+            // 카드 앞면의 '나와 N회 동행'과 뒷면의 '함께한 여행'을 추가 호출 없이 채운다.
+            var profileCardTarget by remember { mutableStateOf<DexCompanion?>(null) }
+            // 목 캡처는 기기에 저장된 표시용 프로필(닉네임·프로필 사진)을 읽지 않는다.
+            // 로그인 실행이나 라이브 캡처가 남긴 값이 25·26·28 번호별 비교 캡처를 오염시킨다
+            // (docs/alignment/클라이언트-전용-기능.md §5 "캡처 모드에서는 기기 상태를 쓰지 않는다").
+            val userProfile = if (usesPlanningMockData(captureMode, liveCapture)) {
+                UserDisplayProfile()
+            } else {
+                storedUserProfile
+            }
             val bypassAuthentication = skipAuthentication || startScreen != null
-            var authenticationComplete by remember(authDependencies) { mutableStateOf(false) }
-            // 캡처 라우트(startScreen)·데모 모드에서는 아예 만들지 않는다 — 네트워크 회귀 금지
-            val serverDataDependencies = remember(authDependencies, startScreen) {
-                if (startScreen != null || skipAuthentication || BuildConfig.AUTH_DEMO_MODE) {
+            var authenticationComplete by remember(authDependencies) {
+                // 라이브 캡처는 인증 UI 를 거치지 않으므로 이미 심어진 세션을 로그인 완료로 본다
+                // (`LocalServerData` 는 로그인 완료 상태에서만 내려간다).
+                val liveSessionReady = liveCapture && authDependencies.sessionStore.current.accessToken != null
+                mutableStateOf(qaSessionInjected || liveSessionReady)
+            }
+            // 목 캡처 라우트(startScreen)·데모 모드에서는 아예 만들지 않는다 — 네트워크 회귀 금지.
+            // 라이브 캡처는 이 차단만 푼다(라우팅·강제 테마·목업 지도는 캡처와 동일).
+            val serverDataDependencies = remember(authDependencies, startScreen, liveCapture) {
+                if (!injectsServerData(startScreen, skipAuthentication, liveCapture, BuildConfig.AUTH_DEMO_MODE)) {
                     null
                 } else {
                     ServerDataDependencies.create(
@@ -457,7 +526,10 @@ fun MoyeoTripApp(
                                     userProfile = userProfile,
                                     onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
                                     onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
-                                    onOpenProfile = { navController.navigate(AppRoutes.PROFILE) },
+                                    // 내 카드로는 열지 못한다 — GET /users/me/profile 응답에 userId 가 없어
+                                    // 공개 프로필 API 를 내 계정으로 호출할 수 없다(BE 에 요청함).
+                                    // 그래서 내 프로필 요약은 28 프로필 수정으로 보낸다.
+                                    onOpenProfile = { navController.navigate(AppRoutes.PROFILE_EDIT) },
                                     onOpenMyFeed = { navController.navigate(AppRoutes.MY_FEED) },
                                     onOpenFriendDex = { navController.navigate(AppRoutes.FRIEND_DEX) },
                                     onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) },
@@ -467,12 +539,22 @@ fun MoyeoTripApp(
                                 )
                             }
                             composable(AppRoutes.PROFILE) {
-                                ProfileScreen(
-                                    userProfile = userProfile,
+                                // 25 는 프로필 카드다. 카드 자체가 그 유저의 프로필이므로
+                                // 도감·피드 작성자·멤버 시트가 모두 이 화면으로 온다.
+                                // 관리 진입점(내 정보 수정·친구 관리)은 마이(26)로 옮겼다.
+                                ProfileCardScreen(
+                                    userId = profileCardTarget?.userId ?: qaStartRequest.profileUserId,
+                                    dexCompanion = profileCardTarget,
+                                    onBack = { navController.popBackStack() }
+                                )
+                            }
+                            composable(AppRoutes.PROFILE_CARD_BACK) {
+                                // 25-1 캡처 전용 — 뒤집힌 상태로 연다
+                                ProfileCardScreen(
+                                    userId = profileCardTarget?.userId ?: qaStartRequest.profileUserId,
+                                    dexCompanion = profileCardTarget,
                                     onBack = { navController.popBackStack() },
-                                    onOpenProfileEdit = { navController.navigate(AppRoutes.PROFILE_EDIT) },
-                                    onOpenFriendDex = { navController.navigate(AppRoutes.FRIEND_DEX) },
-                                    onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) }
+                                    initialFlipped = true
                                 )
                             }
                             composable(AppRoutes.PROFILE_EDIT) {
@@ -488,7 +570,13 @@ fun MoyeoTripApp(
                                 )
                             }
                             composable(AppRoutes.FRIEND_DEX) {
-                                FriendDexScreen(onBack = { navController.popBackStack() })
+                                FriendDexScreen(
+                                    onBack = { navController.popBackStack() },
+                                    onOpenCompanion = { companion ->
+                                        profileCardTarget = companion
+                                        navController.navigate(AppRoutes.PROFILE)
+                                    }
+                                )
                             }
                             composable(AppRoutes.SETTINGS) {
                                 SettingsScreen(
@@ -581,7 +669,11 @@ fun MoyeoTripApp(
                                             AppRoutes.chatMenu(entry.arguments?.getString("threadId").orEmpty())
                                         )
                                     },
-                                    onOpenAttachment = { navController.navigate(AppRoutes.CHAT_ATTACH) }
+                                    onOpenAttachment = {
+                                        navController.navigate(
+                                            AppRoutes.chatAttach(entry.arguments?.getString("threadId"))
+                                        )
+                                    }
                                 )
                             }
                             composable(AppRoutes.SPECIAL_MESSAGES) {
@@ -700,6 +792,12 @@ fun MoyeoTripApp(
                                         navController.navigate(AppRoutes.hostManage(trip.id)) {
                                             popUpTo(AppRoutes.CREATE_RECRUITMENT) { inclusive = true }
                                         }
+                                    },
+                                    // 실서버에 만든 방은 roomId 로 15 모집 상세를 연다 (18 모집 관리는 목데이터 전용 화면이다)
+                                    onCreatedRoom = { roomId ->
+                                        navController.navigate(AppRoutes.tripDetail("room-$roomId")) {
+                                            popUpTo(AppRoutes.CREATE_RECRUITMENT) { inclusive = true }
+                                        }
                                     }
                                 )
                             }
@@ -782,11 +880,23 @@ fun MoyeoTripApp(
                                     onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
                                 )
                             }
-                            composable(AppRoutes.CHAT_ATTACH) {
+                            composable(
+                                route = AppRoutes.CHAT_ATTACH,
+                                arguments = listOf(
+                                    navArgument("threadId") {
+                                        type = NavType.StringType
+                                        nullable = true
+                                        defaultValue = null
+                                    }
+                                )
+                            ) { entry ->
+                                // 캡처 라우트는 threadId 없이 들어온다 — 배경·동작 모두 기존 목데이터 방이다
+                                val attachThreadId = entry.arguments?.getString("threadId")
                                 ChatAttachmentScreen(
                                     onBack = { navController.popBackStack() },
                                     onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
-                                    isOnline = isOnline
+                                    isOnline = isOnline,
+                                    threadId = attachThreadId
                                 )
                             }
                             composable(AppRoutes.FRIENDS) {
@@ -823,7 +933,9 @@ fun MoyeoTripApp(
                                     threadId = threadId,
                                     onBack = { navController.popBackStack() },
                                     onOpenMenu = { navController.navigate(AppRoutes.chatMenu(threadId)) },
-                                    onOpenAttachment = { navController.navigate(AppRoutes.CHAT_ATTACH) },
+                                    onOpenAttachment = {
+                                        navController.navigate(AppRoutes.chatAttach(threadId))
+                                    },
                                     onOpenRoute = {
                                         val tripId = MockTripRepository.findThread(threadId).tripId
                                         if (tripId != null) navController.navigate(AppRoutes.courseRoute(tripId))
@@ -997,6 +1109,16 @@ fun MoyeoTripApp(
 
 internal data class QaStartRequest(private val key: String, private val identifier: String?) {
     val startsInExploreMap: Boolean = key in setOf("exploremap", "map")
+
+    /** `profile:62` 처럼 대상 유저를 지정해 25 로 바로 들어올 때 쓴다.
+     *  인앱 진입은 도감·피드 작성자 등에서 대상을 들고 오지만, 화면으로 바로 여는
+     *  라이브 캡처·QA 에는 그 값이 없어 목데이터로 떨어졌다. */
+    val profileUserId: Long? =
+        if (key in setOf("profile", "publicprofile", "profileback", "publicprofileback")) {
+            identifier?.toLongOrNull()
+        } else {
+            null
+        }
     val offlineExperienceOverride: OfflineExperience? = when (key) {
         "offline" -> OfflineExperience.NoCache
         "offlinecached", "offlinechat" -> OfflineExperience.Cached
@@ -1037,6 +1159,8 @@ internal data class QaStartRequest(private val key: String, private val identifi
             "my" -> AppRoutes.MY
 
             "profile", "publicprofile" -> AppRoutes.PROFILE
+            // 25-1 · 카드 뒷면 (캡처 전용)
+            "profileback", "profile-back", "publicprofileback" -> AppRoutes.PROFILE_CARD_BACK
 
             "profileedit", "profile-edit", "editprofile", "edit-profile" -> AppRoutes.PROFILE_EDIT
 
@@ -1152,7 +1276,7 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "memberremove" -> AppRoutes.qaMemberRemove(chatId)
 
-            "chatattach", "attachment" -> AppRoutes.CHAT_ATTACH
+            "chatattach", "attachment" -> AppRoutes.chatAttach()
 
             "friends" -> AppRoutes.FRIENDS
 

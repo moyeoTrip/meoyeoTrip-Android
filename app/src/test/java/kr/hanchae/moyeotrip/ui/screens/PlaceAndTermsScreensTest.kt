@@ -6,19 +6,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaceAndTermsScreensTest {
+    /** 검색은 서버(`GET tourism-contents?keyword=`)가 한다 — 목록 목데이터는 자리값으로만 남는다. */
     @Test
-    fun placeSearchFiltersByQueryAndContentType() {
-        val food = TourismPlaceCatalog.filtered("달기", TourismContentType.Food)
-
-        assertEquals(listOf("달기약수터 백숙거리"), food.map(TourismPlace::title))
-        assertTrue(TourismPlaceCatalog.filtered("청송", null).size >= 4)
-        assertTrue(TourismPlaceCatalog.filtered("없는 장소", null).isEmpty())
+    fun placeholderIsOnlyUsedForPlansMockContentIds() {
+        assertEquals("달기약수터 백숙거리", TourismPlaceCatalog.placeholder("2299341").title)
+        // 목데이터에 없는 서버 방문지는 남의 목데이터가 아니라 빈 카드로 시작한다.
+        val unknown = TourismPlaceCatalog.placeholder("2017064")
+        assertEquals("", unknown.title)
+        assertEquals("", unknown.address)
     }
 
     @Test
     fun onlyRestaurantDetailsExposeMenus() {
-        val restaurant = TourismPlaceCatalog.find("2299341")
-        val landmark = TourismPlaceCatalog.find("2864117")
+        val restaurant = TourismPlaceCatalog.placeholder("2299341")
+        val landmark = TourismPlaceCatalog.placeholder("2864117")
 
         assertEquals(TourismContentType.Food, restaurant.type)
         assertTrue(restaurant.menuNames.isNotEmpty())

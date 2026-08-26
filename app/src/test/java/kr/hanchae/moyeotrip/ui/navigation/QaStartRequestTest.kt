@@ -174,7 +174,8 @@ class QaStartRequestTest {
     fun opensChangeLogManagementSafetyAndSystemScreensDirectly() {
         val chatId = "chat-cheongsong-juwangsan"
         assertEquals(AppRoutes.chatMenu(chatId), QaStartRequest.parse("chatMenu:$chatId").toRoute())
-        assertEquals(AppRoutes.CHAT_ATTACH, QaStartRequest.parse("chatAttach").toRoute())
+        // 캡처 라우트는 방 인자 없이 목데이터 배경으로 열린다 — 20-2 시트에 threadId 가 붙어도 그대로다
+        assertEquals(AppRoutes.chatAttach(), QaStartRequest.parse("chatAttach").toRoute())
         assertEquals(AppRoutes.FRIENDS, QaStartRequest.parse("friends").toRoute())
         assertEquals(AppRoutes.TRIP_MESSAGE, QaStartRequest.parse("tripMessage").toRoute())
         assertEquals(AppRoutes.REPORT, QaStartRequest.parse("report").toRoute())

@@ -69,6 +69,9 @@ import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.data.courses.TravelCourse
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
 import kr.hanchae.moyeotrip.data.rooms.RoomApplicationResult
+import kr.hanchae.moyeotrip.data.rooms.recruitmentDDayText
+import kr.hanchae.moyeotrip.data.rooms.roomClockText
+import kr.hanchae.moyeotrip.data.rooms.roomDateTimeClockText
 import kr.hanchae.moyeotrip.domain.ApplicationNotePolicy
 import kr.hanchae.moyeotrip.domain.recruitmentSummary
 import kr.hanchae.moyeotrip.ui.LocalServerData
@@ -580,21 +583,23 @@ private fun ChatRoomDetail.scheduleText(): String {
     return listOfNotNull(period.takeIf(String::isNotBlank), typeLabel).joinToString(" · ")
 }
 
+/** 서버가 `HH:mm:ss` 를 주고 문서는 `HH:mm` 이다 — 정규화는 검색 카드와 같은 함수를 쓴다. */
 private fun ChatRoomDetail.travelHoursText(): String? {
-    val start = dayTripStartTime?.take(5)
-    val end = dayTripEndTime?.take(5)
-    return if (start != null && end != null) "$start - $end" else null
+    val start = roomClockText(dayTripStartTime) ?: return null
+    val end = roomClockText(dayTripEndTime) ?: return null
+    return "$start - $end"
 }
 
-private fun ChatRoomDetail.meetingText(): String? {
-    val time = meetingDateTime?.substringAfter('T')?.take(5)
-    return listOfNotNull(time, meetingDetails).joinToString(" · ").takeIf(String::isNotBlank)
-}
+private fun ChatRoomDetail.meetingText(): String? = listOfNotNull(
+    roomDateTimeClockText(meetingDateTime),
+    meetingDetails?.takeIf(String::isNotBlank)
+).joinToString(" · ").takeIf(String::isNotBlank)
 
-private fun ChatRoomDetail.deadlineText(): String? {
-    val dday = recruitmentDDay?.let { "D-$it" }
-    return listOfNotNull(dday, recruitmentDeadlineDate).joinToString(" · ").takeIf(String::isNotBlank)
-}
+/** 마감이 지난 방은 서버가 음수 D-day 를 주는데 화면기획에 "D--95" 같은 표기가 없어 날짜만 남긴다. */
+private fun ChatRoomDetail.deadlineText(): String? =
+    listOfNotNull(recruitmentDDayText(recruitmentDDay), recruitmentDeadlineDate)
+        .joinToString(" · ")
+        .takeIf(String::isNotBlank)
 
 private fun ChatRoomDetail.genderText(): String? = when (genderRestriction) {
     null -> null

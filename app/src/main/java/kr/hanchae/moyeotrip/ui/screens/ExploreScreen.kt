@@ -40,6 +40,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -55,10 +56,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomSearchResult
+import kr.hanchae.moyeotrip.data.rooms.RoomMeetingCluster
 import kr.hanchae.moyeotrip.data.rooms.RoomTag
+import kr.hanchae.moyeotrip.data.rooms.dayTripHoursText
+import kr.hanchae.moyeotrip.data.rooms.meetingClusters
+import kr.hanchae.moyeotrip.data.rooms.meetingText
+import kr.hanchae.moyeotrip.data.rooms.recruitmentDeadlineText
+import kr.hanchae.moyeotrip.data.rooms.statusLabel
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
@@ -90,14 +98,31 @@ fun ExploreScreen(
     // 테마 칩 후보는 서버 코스 태그(GET travel-courses/tags)를 쓴다 — 목데이터 분류를 서버 모드에 섞지 않는다
     var serverTags by remember(server) { mutableStateOf<List<RoomTag>>(emptyList()) }
     var selectedTagId by remember(server) { mutableStateOf<Long?>(null) }
+    // 찜은 검색 응답의 favorite 이 근거다. 토글 결과도 서버 응답값으로만 갱신한다.
+    var favoriteRoomIds by remember(server) { mutableStateOf<Set<Long>>(emptySet()) }
+    val favoriteScope = rememberCoroutineScope()
     LaunchedEffect(server) {
         if (server == null) {
             serverRooms = null
             serverTags = emptyList()
+            favoriteRoomIds = emptySet()
             return@LaunchedEffect
         }
-        serverRooms = runCatching { server.chatRooms.search() }.getOrNull()
+        val rooms = runCatching { server.chatRooms.search() }.getOrNull()
+        serverRooms = rooms
+        favoriteRoomIds = rooms.orEmpty()
+            .filter(ChatRoomSearchResult::favorite)
+            .map(ChatRoomSearchResult::roomId)
+            .toSet()
         serverTags = runCatching { server.courses.tags() }.getOrElse { emptyList() }
+    }
+    fun toggleRoomFavorite(roomId: Long) {
+        val rooms = server ?: return
+        favoriteScope.launch {
+            runCatching { rooms.chatRooms.toggleFavorite(roomId) }.onSuccess { favorite ->
+                favoriteRoomIds = if (favorite) favoriteRoomIds + roomId else favoriteRoomIds - roomId
+            }
+        }
     }
     fun toggleFavorite(courseId: String) {
         likedCourseIds = if (courseId in likedCourseIds) {
@@ -116,9 +141,13 @@ fun ExploreScreen(
             ExploreMapView(
                 courses = webExploreCourses(),
                 likedCourseIds = likedCourseIds,
+                serverRooms = serverRooms.orEmpty(),
+                favoriteRoomIds = favoriteRoomIds,
                 modifier = Modifier.fillMaxSize(),
                 onOpenCourse = onOpenCourse,
-                onToggleFavorite = ::toggleFavorite
+                onToggleFavorite = ::toggleFavorite,
+                onOpenRoom = onOpenRoom,
+                onToggleRoomFavorite = ::toggleRoomFavorite
             )
             ExploreMapHeader(
                 onBackClick = { showingMap = false },
@@ -177,7 +206,12 @@ fun ExploreScreen(
                         }
                     } else {
                         items(rooms, key = { it.roomId }) { room ->
-                            ExploreServerRoomRow(room = room, onClick = { onOpenRoom(room.roomId) })
+                            ExploreServerRoomRow(
+                                room = room,
+                                favorite = room.roomId in favoriteRoomIds,
+                                onClick = { onOpenRoom(room.roomId) },
+                                onFavoriteClick = { toggleRoomFavorite(room.roomId) }
+                            )
                         }
                     }
                 } else {
@@ -425,9 +459,20 @@ private fun ExploreCourseRow(course: TripCourse, liked: Boolean, onClick: () -> 
     }
 }
 
-/** 서버 모집(chat-rooms/search) 행 — 서버가 주지 않는 값(찜 상태·테마)은 표시하지 않는다. */
+/**
+ * 서버 모집(chat-rooms/search) 행 — 화면기획 10의 카드 구성을 그대로 쓴다.
+ * 찜 하트·상태 배지·모집 마감 D-day 는 2026-08-24 서버 패치로 목록 응답에 근거가 생겨 되살렸다
+ * (그 전까지는 근거가 없어 숨겨 뒀다). 값이 없으면 그 표기만 사라진다.
+ */
 @Composable
-private fun ExploreServerRoomRow(room: ChatRoomSearchResult, onClick: () -> Unit) {
+private fun ExploreServerRoomRow(
+    room: ChatRoomSearchResult,
+    favorite: Boolean,
+    onClick: () -> Unit,
+    onFavoriteClick: () -> Unit
+) {
+    val favoriteDescription = if (favorite) "찜 해제" else "찜"
+
     Card(
         modifier = Modifier
             .fillMaxWidth()
@@ -446,21 +491,7 @@ private fun ExploreServerRoomRow(room: ChatRoomSearchResult, onClick: () -> Unit
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            CachedRemoteImage(
-                url = room.thumbnail,
-                contentDescription = room.title,
-                modifier = Modifier
-                    .size(width = 88.dp, height = 68.dp)
-                    .clip(RoundedCornerShape(8.dp)),
-                contentScale = ContentScale.Crop
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(width = 88.dp, height = 68.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant)
-                )
-            }
+            ServerRoomThumbnail(room = room, modifier = Modifier.size(width = 88.dp, height = 68.dp))
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)
@@ -488,11 +519,69 @@ private fun ExploreServerRoomRow(room: ChatRoomSearchResult, onClick: () -> Unit
                     )
                 }
                 Text(
-                    text = "${room.participantCount}/${room.maxParticipants}명",
+                    text = listOfNotNull(
+                        "${room.participantCount}/${room.maxParticipants}명",
+                        room.recruitmentDeadlineText()
+                    ).joinToString(" · "),
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
                     color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(
+                onClick = onFavoriteClick,
+                modifier = Modifier
+                    .size(44.dp)
+                    .testTag("explore-room-favorite-${room.roomId}")
+                    .semantics { contentDescription = favoriteDescription }
+            ) {
+                Icon(
+                    imageVector = if (favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = null,
+                    tint = if (favorite) Coral else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
+        }
+    }
+}
+
+/** 서버 모집 썸네일 + 상태 배지. 배지 자리는 화면기획 10의 카드 썸네일 좌하단 그대로다. */
+@Composable
+private fun ServerRoomThumbnail(room: ChatRoomSearchResult, modifier: Modifier = Modifier) {
+    Box(modifier = modifier) {
+        CachedRemoteImage(
+            url = room.thumbnail,
+            contentDescription = room.title,
+            modifier = Modifier
+                .fillMaxSize()
+                .clip(RoundedCornerShape(8.dp)),
+            contentScale = ContentScale.Crop
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            )
+        }
+        room.statusLabel()?.let { status ->
+            Surface(
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 7.dp, bottom = 7.dp),
+                shape = RoundedCornerShape(6.dp),
+                color = MaterialTheme.colorScheme.primary
+            ) {
+                Text(
+                    text = status,
+                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onPrimary,
+                    fontWeight = FontWeight.ExtraBold
                 )
             }
         }
@@ -528,16 +617,29 @@ private fun CoursePreview(course: TripCourse, modifier: Modifier = Modifier, sho
 private fun ExploreMapView(
     courses: List<TripCourse>,
     likedCourseIds: List<String>,
+    serverRooms: List<ChatRoomSearchResult>,
+    favoriteRoomIds: Set<Long>,
     modifier: Modifier = Modifier,
     onOpenCourse: (String) -> Unit,
-    onToggleFavorite: (String) -> Unit
+    onToggleFavorite: (String) -> Unit,
+    onOpenRoom: (Long) -> Unit,
+    onToggleRoomFavorite: (Long) -> Unit
 ) {
     val selectedCourse = courses.first()
+    // 서버 모집의 집합 좌표(둘 다 있는 항목만)가 있으면 목데이터 코스 대신 실제 모임을 지도에 올린다.
+    val roomClusters = remember(serverRooms) { serverRooms.meetingClusters() }
+    val selectedRoom = remember(serverRooms, roomClusters) {
+        roomClusters.firstOrNull()?.roomIds?.firstOrNull()?.let { roomId ->
+            serverRooms.firstOrNull { it.roomId == roomId }
+        }
+    }
     Box(modifier = modifier) {
-        // 카카오 실지도 + 지역별 코스 묶음 마커. 폴백(키 없음·인증 실패·QA 캡처)에서는 기존 목업 판을 그린다.
-        val clusters = remember(courses) { courses.exploreClusterMarkers() }
+        // 카카오 실지도 + 지역 묶음 마커. 폴백(키 없음·인증 실패·QA 캡처)에서는 기존 목업 판을 그린다.
+        val clusters = remember(courses, roomClusters) {
+            roomClusters.takeIf { it.isNotEmpty() }?.roomClusterMarkers() ?: courses.exploreClusterMarkers()
+        }
         if (clusters.isEmpty()) {
-            // 목데이터에 좌표가 없으면 실지도를 띄울 근거가 없다 — 목업 유지
+            // 좌표가 없으면 실지도를 띄울 근거가 없다 — 목업 유지
             ExploreMapMockup(selectedCourse, Modifier.matchParentSize())
         } else {
             KakaoMapView(
@@ -568,15 +670,26 @@ private fun ExploreMapView(
                 )
             }
         }
-        SelectedMapCourse(
-            course = selectedCourse,
-            liked = selectedCourse.id in likedCourseIds,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(horizontal = 18.dp, vertical = 64.dp),
-            onClick = { onOpenCourse(selectedCourse.id) },
-            onFavoriteClick = { onToggleFavorite(selectedCourse.id) }
-        )
+        val cardModifier = Modifier
+            .align(Alignment.BottomCenter)
+            .padding(horizontal = 18.dp, vertical = 64.dp)
+        if (selectedRoom != null) {
+            SelectedMapRoom(
+                room = selectedRoom,
+                favorite = selectedRoom.roomId in favoriteRoomIds,
+                modifier = cardModifier,
+                onClick = { onOpenRoom(selectedRoom.roomId) },
+                onFavoriteClick = { onToggleRoomFavorite(selectedRoom.roomId) }
+            )
+        } else {
+            SelectedMapCourse(
+                course = selectedCourse,
+                liked = selectedCourse.id in likedCourseIds,
+                modifier = cardModifier,
+                onClick = { onOpenCourse(selectedCourse.id) },
+                onFavoriteClick = { onToggleFavorite(selectedCourse.id) }
+            )
+        }
     }
 }
 
@@ -598,6 +711,16 @@ private fun List<TripCourse>.exploreClusterMarkers(): List<MapMarker> = this
             badge = group.size.toString()
         )
     }
+
+/** 서버 모집의 집합 좌표 묶음을 화면기획 11과 같은 초록 원 + 개수 마커로 만든다. */
+private fun List<RoomMeetingCluster>.roomClusterMarkers(): List<MapMarker> = map { cluster ->
+    MapMarker(
+        id = "explore-rooms-${cluster.roomIds.joinToString("-")}",
+        position = MoyeoLatLng(cluster.point.latitude, cluster.point.longitude),
+        shape = MapMarkerShape.Cluster,
+        badge = cluster.roomIds.size.toString()
+    )
+}
 
 /** 실지도를 쓸 수 없을 때(키 없음·인증 실패·QA 캡처) 그리는 기존 목업 지도 판. */
 @Composable
@@ -697,6 +820,108 @@ private fun MapLandmark(course: TripCourse, modifier: Modifier = Modifier) {
     ) {
         Box(contentAlignment = Alignment.Center) {
             Text(text = course.imageEmoji, fontSize = 25.sp)
+        }
+    }
+}
+
+/**
+ * 화면기획 11의 지도 카드에 서버 모집을 올린 형태. 줄 구성(제목·안내·인원)은 그대로 두고
+ * 목데이터의 "지역 · 테마" 자리에는 서버가 주는 **집합 안내**를, 인원 뒤에는 **당일 여행 시간**을 쓴다.
+ * 집합 장소가 미정(null)이면 안내 줄이 사라지고, 숙박 방은 시간이 사라진다 — 문구를 지어내지 않는다.
+ */
+@Composable
+private fun SelectedMapRoom(
+    room: ChatRoomSearchResult,
+    favorite: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+    onFavoriteClick: () -> Unit
+) {
+    val favoriteDescription = if (favorite) "찜 해제" else "찜"
+
+    Card(
+        modifier = modifier
+            .fillMaxWidth()
+            .height(96.dp)
+            .testTag("explore-map-selected-room-${room.roomId}")
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = if (MoyeoTheme.isDark) 0.dp else 6.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            CachedRemoteImage(
+                url = room.thumbnail,
+                contentDescription = room.title,
+                modifier = Modifier
+                    .size(width = 84.dp, height = 76.dp)
+                    .clip(RoundedCornerShape(10.dp)),
+                contentScale = ContentScale.Crop
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(width = 84.dp, height = 76.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = room.title,
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.ExtraBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                room.meetingText()?.let { meeting ->
+                    Text(
+                        text = meeting,
+                        modifier = Modifier
+                            .padding(top = 5.dp)
+                            .testTag("explore-map-room-meeting"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+                Text(
+                    text = listOfNotNull(
+                        "${room.participantCount}/${room.maxParticipants}명",
+                        room.dayTripHoursText()
+                    ).joinToString(" · "),
+                    modifier = Modifier
+                        .padding(top = 4.dp)
+                        .testTag("explore-map-room-hours"),
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            IconButton(
+                onClick = onFavoriteClick,
+                modifier = Modifier
+                    .size(44.dp)
+                    .testTag("explore-map-room-favorite-${room.roomId}")
+                    .semantics { contentDescription = favoriteDescription }
+            ) {
+                Icon(
+                    imageVector = if (favorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                    contentDescription = null,
+                    tint = if (favorite) Coral else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(21.dp)
+                )
+            }
         }
     }
 }

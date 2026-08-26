@@ -65,6 +65,7 @@ import kr.hanchae.moyeotrip.data.TripApplicationStatus
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.rooms.MyChatRoom
 import kr.hanchae.moyeotrip.data.rooms.MyWaitingRoom
+import kr.hanchae.moyeotrip.data.rooms.recruitmentDDayText
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
@@ -326,9 +327,9 @@ private fun ServerMeetingRoomRow(room: MyChatRoom, onClick: () -> Unit) {
                 )
             }
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                room.recruitmentDDay?.let { dday ->
+                recruitmentDDayText(room.recruitmentDDay)?.let { dday ->
                     Text(
-                        text = "D-$dday",
+                        text = dday,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.ExtraBold

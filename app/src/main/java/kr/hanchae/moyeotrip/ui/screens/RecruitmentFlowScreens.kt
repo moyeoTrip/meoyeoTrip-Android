@@ -67,6 +67,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -91,6 +92,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.CourseSource
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.RecruitmentDraft
@@ -100,9 +102,11 @@ import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.data.TripScheduleType
+import kr.hanchae.moyeotrip.data.courses.TravelCourse
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
 import kr.hanchae.moyeotrip.data.rooms.RoomNotice
 import kr.hanchae.moyeotrip.data.rooms.RoomNotices
+import kr.hanchae.moyeotrip.data.rooms.toNewChatRoom
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
@@ -118,6 +122,21 @@ fun RecruitmentCourseSourceScreen(
 ) {
     var draft by remember(courseId) { mutableStateOf(MockTripRepository.beginRecruitmentDraft(courseId)) }
     val selectedCourse = MockTripRepository.findCourse(draft.selectedCourseId)
+    // 로그인 상태에서는 "등록된 코스" 후보를 서버 공개 코스로 바꾼다 — 방 생성이 서버 courseId 를 요구한다.
+    val server = LocalServerData.current
+    var serverCourses by remember(server) { mutableStateOf<List<TravelCourse>>(emptyList()) }
+    LaunchedEffect(server) {
+        serverCourses = if (server == null) {
+            emptyList()
+        } else {
+            runCatching { server.courses.publicCourses() }.getOrElse { emptyList() }
+        }
+        // 목데이터 흐름처럼 첫 후보를 미리 골라 둔다 — 고르지 않으면 방을 만들 근거가 없다
+        val first = serverCourses.firstOrNull()
+        if (first != null && draft.serverCourseId == null) {
+            draft = draft.copy(serverCourseId = first.courseId, serverCourseTitle = first.title)
+        }
+    }
 
     RecruitmentScaffold(
         title = "모집 만들기 (1/5)",
@@ -178,26 +197,55 @@ fun RecruitmentCourseSourceScreen(
             item {
                 SearchLikeField("등록된 코스 검색")
             }
-            items(MockTripRepository.courses.take(3), key = { it.id }) { course ->
-                val selected = course.id == draft.selectedCourseId
-                CompactCourseChoice(
-                    title = course.title,
-                    subtitle = "${course.region} · ${course.duration} ${course.distance} · 방문지 ${course.stops.size}",
-                    // 화면기획은 코스 출처(여행자 코스/모여트립 추천)를 함께 보여준다
-                    sourceLabel = if (course.publisher != null) "여행자 코스" else "모여트립 추천",
-                    selected = selected,
-                    course = course,
-                    onClick = {
-                        draft = draft.copy(
-                            selectedCourseId = course.id,
-                            travelDate = course.startLabel,
-                            meetingLocation = draft.meetingLocation.copy(name = course.meetingPoint),
-                            routeStops = course.stops.toRouteStops(course.id),
-                            capacity = course.capacity,
-                            note = course.recruitmentNote
-                        )
-                    }
-                )
+            if (serverCourses.isNotEmpty()) {
+                items(serverCourses, key = { it.courseId }) { course ->
+                    CompactCourseChoice(
+                        title = course.title,
+                        subtitle = listOfNotNull(
+                            course.travelTime,
+                            course.distanceKm?.let { "${it}km" },
+                            "방문지 ${course.places.size}"
+                        ).joinToString(" · "),
+                        // 서버가 코스 작성자를 주면 화면기획의 "여행자 코스"에 해당한다
+                        sourceLabel = if (course.creatorNickname != null) "여행자 코스" else "모여트립 추천",
+                        selected = course.courseId == draft.serverCourseId,
+                        onClick = {
+                            draft = draft.copy(
+                                serverCourseId = course.courseId,
+                                serverCourseTitle = course.title,
+                                // 방문지 2개 미만이면 초안 검증(2~20)에 걸리므로 기존 값을 유지한다
+                                routeStops = course.places
+                                    .map { it.title }
+                                    .toRouteStops("srv-${course.courseId}")
+                                    .takeIf { it.size >= 2 }
+                                    ?: draft.routeStops
+                            )
+                        }
+                    )
+                }
+            } else {
+                items(MockTripRepository.courses.take(3), key = { it.id }) { course ->
+                    val selected = course.id == draft.selectedCourseId
+                    CompactCourseChoice(
+                        title = course.title,
+                        subtitle = "${course.region} · ${course.duration} ${course.distance} · " +
+                            "방문지 ${course.stops.size}",
+                        // 화면기획은 코스 출처(여행자 코스/모여트립 추천)를 함께 보여준다
+                        sourceLabel = if (course.publisher != null) "여행자 코스" else "모여트립 추천",
+                        selected = selected,
+                        course = course,
+                        onClick = {
+                            draft = draft.copy(
+                                selectedCourseId = course.id,
+                                travelDate = course.startLabel,
+                                meetingLocation = draft.meetingLocation.copy(name = course.meetingPoint),
+                                routeStops = course.stops.toRouteStops(course.id),
+                                capacity = course.capacity,
+                                note = course.recruitmentNote
+                            )
+                        }
+                    )
+                }
             }
             item {
                 InfoBanner(
@@ -899,7 +947,7 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
     var recruitmentName by rememberSaveable { mutableStateOf(draft.recruitmentName) }
     var introduction by rememberSaveable { mutableStateOf(draft.note) }
     var costText by rememberSaveable { mutableStateOf(draft.estimatedCostPerPerson.toString()) }
-    var approvalMode by rememberSaveable { mutableStateOf("auto") }
+    var approvalMode by rememberSaveable { mutableStateOf(if (draft.autoApproval) "auto" else "manual") }
 
     RecruitmentScaffold(
         title = "모집 만들기 (4/5)",
@@ -915,7 +963,8 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
                             draft.copy(
                                 recruitmentName = recruitmentName.trim(),
                                 note = introduction.trim(),
-                                estimatedCostPerPerson = costText.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                                estimatedCostPerPerson = costText.toIntOrNull()?.coerceAtLeast(0) ?: 0,
+                                autoApproval = approvalMode == "auto"
                             )
                         MockTripRepository.updateRecruitmentDraft(draft)
                         onSave(draft.id)
@@ -931,7 +980,7 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
         item {
             LabeledValue(
                 label = "코스",
-                value = MockTripRepository.findCourse(draft.selectedCourseId).title,
+                value = draft.serverCourseTitle ?: MockTripRepository.findCourse(draft.selectedCourseId).title,
                 icon = Icons.Filled.Lock,
                 tag = "create-detail-course"
             )
@@ -1033,10 +1082,27 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
     }
 }
 
+/**
+ * 17-7 모집 만들기 마지막 단계.
+ *
+ * 로그인 상태에서 서버 공개 코스를 고른 초안이면 **실제로 방을 만든다**(POST chat-rooms, multipart).
+ * 2026-08-24 패치로 201 응답이 `roomId` 를 주기 때문에 그 값으로 15 모집 상세([onCreatedRoom])까지
+ * 이어진다. 미로그인·캡처·서버 코스 없음이면 기존 목데이터 흐름([onCreated])을 그대로 쓴다.
+ */
 @Composable
-fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRecruitment) -> Unit) {
+fun CreateSummaryScreen(
+    draftId: String,
+    onBack: () -> Unit,
+    onCreated: (TripRecruitment) -> Unit,
+    onCreatedRoom: (Long) -> Unit = {}
+) {
     val draft = remember(draftId) { MockTripRepository.findRecruitmentDraft(draftId) }
     val course = MockTripRepository.findCourse(draft.selectedCourseId)
+    val server = LocalServerData.current
+    val newRoom = remember(draft, server) { if (server == null) null else draft.toNewChatRoom() }
+    val submitScope = rememberCoroutineScope()
+    var submitting by remember(draftId) { mutableStateOf(false) }
+    var submitError by remember(draftId) { mutableStateOf<String?>(null) }
 
     RecruitmentScaffold(
         title = "모집 만들기 (5/5)",
@@ -1047,13 +1113,38 @@ fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRec
                     Text("이전")
                 }
                 Button(
-                    onClick = { onCreated(MockTripRepository.createRecruitmentFromDraft(draft.id)) },
+                    onClick = {
+                        if (server == null || newRoom == null) {
+                            onCreated(MockTripRepository.createRecruitmentFromDraft(draft.id))
+                            return@Button
+                        }
+                        submitting = true
+                        submitError = null
+                        submitScope.launch {
+                            runCatching { server.chatRooms.createRoom(newRoom) }.fold(
+                                onSuccess = { roomId ->
+                                    submitting = false
+                                    onCreatedRoom(roomId)
+                                },
+                                onFailure = { error ->
+                                    submitting = false
+                                    submitError = error.message ?: "모집을 열지 못했어요. 잠시 후 다시 시도해 주세요."
+                                }
+                            )
+                        }
+                    },
+                    enabled = !submitting,
                     modifier = Modifier.weight(1f).height(48.dp).testTag("create-summary-submit"),
                     shape = RoundedCornerShape(8.dp)
                 ) { Text("모집 열기") }
             }
         }
     ) {
+        submitError?.let { message ->
+            item {
+                InfoBanner(icon = Icons.Filled.Notifications, text = message, warning = true)
+            }
+        }
         item { RecruitmentStepIndicator(activeStep = 4) }
         item { SectionIntro("이대로 모집을 열까요?", "등록 후에도 마감 전까지는 대부분 고칠 수 있어요.") }
         item {
@@ -1070,7 +1161,12 @@ fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreated: (TripRec
                         fontWeight = FontWeight.ExtraBold
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(course.title, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                        // 서버 코스를 골랐다면 실제로 방에 연결되는 코스 이름을 보여준다
+                        Text(
+                            text = draft.serverCourseTitle ?: course.title,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.weight(1f)
+                        )
                         SourceBadge(draft.courseSource)
                     }
                     SummaryRow(Icons.Filled.CalendarMonth, "일정", scheduleSummary(draft))
@@ -1359,18 +1455,41 @@ fun NoticeHistoryScreen(tripId: String, onBack: () -> Unit) {
 
 /**
  * 실서버 공지 이력(화면기획 20-3) — GET chat-rooms/{id}/notices.
- * 공지 등록(POST notices)·고정 변경(PUT notices/{id})은 서버가 500을 돌려줘 이번 연동에서 제외했다.
+ *
+ * 고정 토글은 PUT chat-rooms/{id}/notices/{noticeId} 다. 호스트만 보이는 동작이라
+ * GET {id}/members 의 `me && host` 로 판정하고, 본문(`notice`)은 보내지 않아 고정 상태만 바뀐다.
+ * 공지 등록(POST notices)은 화면기획 20-3 하단 CTA 자리는 있지만 이번 범위가 아니라 그대로 뒀다.
  */
 @Composable
 private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, onBack: () -> Unit) {
     var room by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
     var notices by remember(roomId) { mutableStateOf<RoomNotices?>(null) }
+    var isHost by remember(roomId) { mutableStateOf(false) }
+    var pinBusy by remember(roomId) { mutableStateOf(false) }
+    var pinError by remember(roomId) { mutableStateOf<String?>(null) }
+    val pinScope = rememberCoroutineScope()
+
     LaunchedEffect(roomId, server) {
         room = runCatching { server.chatRooms.room(roomId) }.getOrNull()
         notices = runCatching { server.chatRooms.notices(roomId) }.getOrNull()
+        isHost = runCatching { server.chatRooms.members(roomId) }.getOrNull()
+            ?.members
+            ?.any { it.me && it.host } == true
     }
     val pinned = notices?.pinned.orEmpty()
     val past = notices?.unpinned.orEmpty()
+
+    fun togglePinned(notice: RoomNotice) {
+        if (pinBusy) return
+        pinBusy = true
+        pinError = null
+        pinScope.launch {
+            runCatching { server.chatRooms.updateNotice(roomId, notice.noticeId, pinned = !notice.pinned) }
+                .onSuccess { notices = runCatching { server.chatRooms.notices(roomId) }.getOrNull() ?: notices }
+                .onFailure { error -> pinError = error.message ?: "고정 상태를 바꾸지 못했어요." }
+            pinBusy = false
+        }
+    }
 
     RecruitmentScaffold(title = "공지 이력", onBack = onBack) {
         item {
@@ -1387,13 +1506,37 @@ private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, on
                 )
             }
         }
+        pinError?.let { message ->
+            item {
+                Text(
+                    message,
+                    modifier = Modifier.testTag("server-notice-pin-error"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+        }
         if (pinned.isNotEmpty()) {
             item { NoticeSectionTitle("상단 고정 중") }
-            items(pinned, key = { it.noticeId }) { notice -> ServerNoticeCard(notice) }
+            items(pinned, key = { it.noticeId }) { notice ->
+                ServerNoticeCard(
+                    notice = notice,
+                    canPin = isHost,
+                    pinBusy = pinBusy,
+                    onTogglePinned = { togglePinned(notice) }
+                )
+            }
         }
         if (past.isNotEmpty()) {
             item { NoticeSectionTitle("지난 공지") }
-            items(past, key = { it.noticeId }) { notice -> ServerNoticeCard(notice) }
+            items(past, key = { it.noticeId }) { notice ->
+                ServerNoticeCard(
+                    notice = notice,
+                    canPin = isHost,
+                    pinBusy = pinBusy,
+                    onTogglePinned = { togglePinned(notice) }
+                )
+            }
         }
         if (notices != null && pinned.isEmpty() && past.isEmpty()) {
             item {
@@ -1408,7 +1551,12 @@ private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, on
 }
 
 @Composable
-private fun ServerNoticeCard(notice: RoomNotice) {
+private fun ServerNoticeCard(
+    notice: RoomNotice,
+    canPin: Boolean = false,
+    pinBusy: Boolean = false,
+    onTogglePinned: () -> Unit = {}
+) {
     Surface(
         Modifier.fillMaxWidth().testTag("server-notice-${notice.noticeId}"),
         RoundedCornerShape(10.dp),
@@ -1450,14 +1598,29 @@ private fun ServerNoticeCard(notice: RoomNotice) {
                     }
                 }
             }
-            Text(
-                listOfNotNull(
-                    notice.authorNickname.takeIf(String::isNotBlank),
-                    notice.createdAt.take(10).replace('-', '.').takeIf(String::isNotBlank)
-                ).joinToString(" · "),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    listOfNotNull(
+                        notice.authorNickname.takeIf(String::isNotBlank),
+                        notice.createdAt.take(10).replace('-', '.').takeIf(String::isNotBlank)
+                    ).joinToString(" · "),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                // 화면기획 20-3 카드 우측 동작 자리 — 호스트에게만 고정 토글로 쓴다
+                if (canPin) {
+                    Text(
+                        if (notice.pinned) "고정 해제" else "다시 고정",
+                        modifier = Modifier
+                            .clickable(enabled = !pinBusy, onClick = onTogglePinned)
+                            .testTag("server-notice-pin-${notice.noticeId}"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
         }
     }
 }

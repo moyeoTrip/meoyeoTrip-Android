@@ -563,16 +563,9 @@ private fun HomeHero(hero: WeatherHero) {
                         .padding(12.dp)
                 )
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                items(hero.tags) { tag ->
-                    WeatherTagBubble(
-                        text = tag,
-                        selected = tag == hero.weatherLabel,
-                        state = hero.state,
-                        isDark = isDark
-                    )
-                }
-            }
+            // 9가지 날씨를 늘어놓던 칩 줄은 뺐다. 화면기획의 그 줄은 시안을 넘겨보기 위한
+            // 프로토타입 조작 장치이고 제품 기능이 아니다.
+            // 현재 날씨는 히어로 이미지 위의 라벨이 이미 보여준다.
         }
     }
 }
@@ -591,22 +584,6 @@ private fun TextBubble(text: String, state: WeatherHeroState, isDark: Boolean, m
     )
 }
 
-@Composable
-private fun WeatherTagBubble(text: String, selected: Boolean, state: WeatherHeroState, isDark: Boolean) {
-    Text(
-        text = text,
-        modifier = Modifier
-            .background(
-                if (selected) state.selectedPillBackground(isDark) else Color.White.copy(alpha = 0.14f),
-                RoundedCornerShape(50)
-            )
-            .padding(horizontal = 10.dp, vertical = 6.dp),
-        color = if (selected) state.selectedPillForeground(isDark) else MaterialTheme.colorScheme.onPrimary,
-        fontWeight = FontWeight.Bold,
-        fontSize = 11.sp,
-        lineHeight = 14.sp
-    )
-}
 
 private fun WeatherHeroState.cardColor(isDark: Boolean): Color = when (this) {
     WeatherHeroState.Good -> if (isDark) Color(0xFF174C37) else ForestGreen

@@ -328,13 +328,24 @@ fun NotificationCenterScreen(
                             Icon(
                                 imageVector = when (item.type) {
                                     "confirmed" -> Icons.Filled.Celebration
-                                    "feed" -> Icons.Filled.ChatBubbleOutline
-                                    "course" -> Icons.Filled.WbSunny
+
+                                    // 서버 알림도 같은 종류면 같은 아이콘이다 —
+                                    // CHAT_MESSAGE_RECEIVED / TRAVEL_COURSE_UPDATED 가 목데이터의
+                                    // 메시지·코스 행과 어긋나면 목록에서 종류를 구분할 수 없다.
+                                    "feed", "chat-server" -> Icons.Filled.ChatBubbleOutline
+
+                                    "course", "course-server" -> Icons.Filled.WbSunny
+
                                     "message" -> Icons.Filled.Description
+
                                     "friend-request" -> Icons.Filled.PersonAdd
+
                                     "removal" -> Icons.Filled.WarningAmber
+
                                     "likes" -> Icons.Filled.FavoriteBorder
+
                                     "deadline" -> Icons.Filled.Schedule
+
                                     else -> Icons.Filled.Groups
                                 },
                                 contentDescription = null,
@@ -2457,7 +2468,8 @@ private fun notificationTone(type: String): NotificationTone {
     val tints = MoyeoTheme.tints
     return when (type) {
         // 메시지·좋아요는 코랄 계열, 좋아요만 한 단 밝은 코랄이다 (화면기획 13)
-        "feed" -> NotificationTone(tints.accentTint, tints.onAccentTint)
+        // 서버 알림(chat-server)도 같은 메시지 종류이므로 같은 색을 쓴다
+        "feed", "chat-server" -> NotificationTone(tints.accentTint, tints.onAccentTint)
 
         "likes" -> NotificationTone(tints.accentTint, Coral)
 

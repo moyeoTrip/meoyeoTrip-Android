@@ -140,7 +140,16 @@ data class RecruitmentDraft(
     val routeStops: List<RouteStop>,
     val capacity: Int,
     val minParticipants: Int,
-    val note: String
+    val note: String,
+    /**
+     * 로그인 상태에서 서버 공개 코스(GET travel-courses/public)를 고른 경우에만 채워진다.
+     * POST chat-rooms 가 `courseType=PUBLIC` + `courseId` 를 요구하기 때문이다.
+     * 미로그인·캡처에서는 null 이라 기존 목데이터 흐름이 그대로 동작한다.
+     */
+    val serverCourseId: Long? = null,
+    val serverCourseTitle: String? = null,
+    /** 17-5 신청 승인 방식. 서버 `joinApprovalMode`(AUTO·MANUAL)로 그대로 전달된다. */
+    val autoApproval: Boolean = true
 )
 
 data class ChatThread(

@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.FeedPost
+import kr.hanchae.moyeotrip.data.FeedVisibility
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.feed.FeedComment
@@ -243,6 +244,15 @@ private fun FeedDetailAuthorRow(post: FeedPost) {
 
 @Composable
 private fun FeedVisibilityPill(post: FeedPost) {
+    FeedVisibilityPill(label = post.visibility.label)
+}
+
+/**
+ * 화면기획 23의 공개범위 필. 실서버 피드는 `visibility`(PUBLIC·FRIENDS·PRIVATE)를 주는데
+ * 라이브에서 이 자리가 비어 있었다 — 같은 필을 서버값으로도 그린다.
+ */
+@Composable
+private fun FeedVisibilityPill(label: String) {
     val colorScheme = MaterialTheme.colorScheme
     Surface(
         shape = RoundedCornerShape(50),
@@ -261,7 +271,7 @@ private fun FeedVisibilityPill(post: FeedPost) {
                 tint = colorScheme.onSurfaceVariant
             )
             Text(
-                text = post.visibility.label,
+                text = label,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = colorScheme.onSurfaceVariant
@@ -602,6 +612,7 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
                 ) {
                     item {
                         Row(
+                            modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
@@ -611,7 +622,10 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
                                 modifier = Modifier.size(42.dp),
                                 fallbackFontSize = 19.sp
                             )
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
                                 Text(
                                     text = loadedFeed.author.nickname,
                                     fontWeight = FontWeight.ExtraBold,
@@ -622,6 +636,10 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colorScheme.onSurfaceVariant
                                 )
+                            }
+                            // 서버 visibility 를 화면기획 23의 공개범위 필로 그린다
+                            serverFeedVisibilityLabel(loadedFeed.visibility)?.let { label ->
+                                FeedVisibilityPill(label = label)
                             }
                         }
                     }
@@ -753,4 +771,15 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
             modifier = Modifier.align(Alignment.BottomCenter)
         )
     }
+}
+
+/**
+ * 서버 피드 공개범위(PUBLIC·FRIENDS·PRIVATE)를 화면기획 문구로 바꾼다.
+ * 모르는 값은 null 이다 — 지어낸 문구를 필에 넣지 않는다.
+ */
+private fun serverFeedVisibilityLabel(visibility: String): String? = when (visibility) {
+    "PUBLIC" -> FeedVisibility.Public.label
+    "FRIENDS" -> FeedVisibility.Friends.label
+    "PRIVATE" -> FeedVisibility.Private.label
+    else -> null
 }

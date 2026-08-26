@@ -46,6 +46,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -60,12 +61,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import kr.hanchae.moyeotrip.data.terms.TermDetail
 import kr.hanchae.moyeotrip.data.tourism.SampleTourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.TourismContentDetail
 import kr.hanchae.moyeotrip.data.tourism.TourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.TourismContentSummary
 import kr.hanchae.moyeotrip.data.tourism.TourismContentTypeOption
+import kr.hanchae.moyeotrip.ui.LocalCaptureMode
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
@@ -73,6 +76,9 @@ import kr.hanchae.moyeotrip.ui.components.MapMarker
 import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
+
+/** 한 글자 칠 때마다 서버를 부르지 않도록 두는 최소 간격. */
+private const val SEARCH_DEBOUNCE_MILLIS = 250L
 
 internal enum class TourismContentType(val label: String, val icon: ImageVector) {
     Spot("관광지", Icons.Filled.LocationOn),
@@ -142,12 +148,9 @@ internal object TourismPlaceCatalog {
         TourismPlace("2510773", TourismContentType.Spot, "청송 객주문학관", "경상북도 청송군 진보면 청송로 6359", 36.4739, 129.0093)
     )
 
-    fun filtered(query: String, type: TourismContentType?): List<TourismPlace> = places.filter { place ->
-        (type == null || place.type == type) &&
-            (query.isBlank() || place.title.contains(query, true) || place.address.contains(query, true))
-    }
-
-    fun find(contentId: String): TourismPlace = places.firstOrNull { it.contentId == contentId } ?: places[2]
+    /** 상세를 받아오기 전 자리값. 목데이터에 없는 서버 방문지면 빈 카드다. */
+    fun placeholder(contentId: String): TourismPlace = places.firstOrNull { it.contentId == contentId }
+        ?: TourismPlace(contentId, TourismContentType.Spot, "", "", 0.0, 0.0)
 }
 
 @Composable
@@ -162,19 +165,19 @@ fun PlaceSearchScreen(
     var selectedTypeId by rememberSaveable { mutableStateOf<Int?>(null) }
     var addedIds by rememberSaveable { mutableStateOf(setOf("2864117", "2871004", "2299341")) }
     var showsMap by rememberSaveable { mutableStateOf(false) }
-    var places by remember { mutableStateOf(TourismPlaceCatalog.places) }
+    var results by remember { mutableStateOf(TourismPlaceCatalog.places) }
+    var totalCount by remember { mutableIntStateOf(TourismPlaceCatalog.places.size) }
     // 타입 칩 후보는 서버(GET tourism-contents/types)에서 받는다 — 실패하면 목데이터 후보를 쓴다
     var typeOptions by remember(repository) { mutableStateOf<List<TourismContentTypeOption>>(emptyList()) }
     LaunchedEffect(repository) {
         typeOptions = runCatching { repository.types() }.getOrElse { emptyList() }
     }
-    LaunchedEffect(repository, selectedTypeId, typeOptions) {
-        places = repository.contents(selectedTypeId).items.map { summary ->
-            summary.toPlace().withServerTypeLabel(typeOptions)
-        }
-    }
-    val results = places.filter { place ->
-        query.isBlank() || place.title.contains(query, true) || place.address.contains(query, true)
+    // 검색은 서버가 한다(GET tourism-contents?keyword=&contentTypeId=) — 클라이언트에서 다시 거르지 않는다.
+    LaunchedEffect(repository, selectedTypeId, typeOptions, query) {
+        delay(SEARCH_DEBOUNCE_MILLIS)
+        val page = repository.contents(keyword = query, contentTypeId = selectedTypeId)
+        results = page.items.map { summary -> summary.toPlace().withServerTypeLabel(typeOptions) }
+        totalCount = page.totalElements.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
     }
 
     Scaffold(
@@ -261,7 +264,8 @@ fun PlaceSearchScreen(
                         )
                     }
                     Text(
-                        "${results.size}곳 · 주왕산 코스 근처순",
+                        // 개수는 서버 totalElements 다 — 화면에 그려진 페이지 크기가 아니다.
+                        "${totalCount}곳 · 주왕산 코스 근처순",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -339,12 +343,16 @@ fun PlaceDetailScreen(
     onAdd: (String) -> Unit,
     repository: TourismContentRepository = SampleTourismContentRepository
 ) {
-    var place by remember(contentId) { mutableStateOf(TourismPlaceCatalog.find(contentId)) }
+    // 로딩 전 자리값은 화면기획 목데이터에 같은 contentId 가 있을 때만 쓴다 —
+    // 서버 방문지에 남의 목데이터를 잠깐이라도 그리지 않는다.
+    var place by remember(contentId) { mutableStateOf(TourismPlaceCatalog.placeholder(contentId)) }
     LaunchedEffect(repository, contentId) {
         val types = runCatching { repository.types() }.getOrElse { emptyList() }
         place = repository.content(contentId).toPlace().withServerTypeLabel(types)
     }
     var menuSelected by rememberSaveable { mutableStateOf(false) }
+    // 캡처 라우트에서만 화면기획 목데이터의 사진 수 표기를 유지한다(네트워크를 타지 않는 경로다).
+    val captureMode = LocalCaptureMode.current
     Scaffold(
         topBar = {
             ChangeLogTopBar("방문지 상세", onBack) {
@@ -410,41 +418,47 @@ fun PlaceDetailScreen(
                         shape = RoundedCornerShape(12.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
                     ) {
+                        // 서버가 주지 않는 값(우편번호·전화·홈페이지가 null)은 지어내지 않고 줄째로 숨긴다.
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            DetailInfo(
-                                Icons.Filled.LocationOn,
-                                place.address,
-                                "우편번호 ${place.postalCode.ifBlank {
-                                    "37411"
-                                }}"
-                            )
-                            DetailInfo(
-                                Icons.Filled.Phone,
-                                place.phone.ifBlank {
-                                    "054-873-7777"
-                                },
-                                place.phoneLabel.ifBlank { "관광 안내" }
-                            )
-                            DetailInfo(Icons.Filled.Map, "${place.latitude}, ${place.longitude}", "지도에서 열기")
-                            DetailInfo(Icons.Filled.Share, place.homepage.ifBlank { "visitkorea.or.kr" }, "홈페이지")
+                            if (place.address.isNotBlank()) {
+                                DetailInfo(
+                                    Icons.Filled.LocationOn,
+                                    place.address,
+                                    place.postalCode.takeIf(String::isNotBlank)?.let { "우편번호 $it" }
+                                )
+                            }
+                            if (place.phone.isNotBlank()) {
+                                DetailInfo(
+                                    Icons.Filled.Phone,
+                                    place.phone,
+                                    place.phoneLabel.takeIf(String::isNotBlank)
+                                )
+                            }
+                            if (place.latitude != 0.0 || place.longitude != 0.0) {
+                                DetailInfo(Icons.Filled.Map, "${place.latitude}, ${place.longitude}", "지도에서 열기")
+                            }
+                            if (place.homepage.isNotBlank()) {
+                                DetailInfo(Icons.Filled.Share, place.homepage, "홈페이지")
+                            }
                         }
                     }
-                    Text("소개", fontWeight = FontWeight.ExtraBold)
-                    Text(
-                        place.description.ifBlank {
-                            "경북의 풍경과 이야기를 천천히 즐길 수 있는 방문지예요."
-                        },
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    // overview 가 null 이면 소개 자체를 숨긴다 — 대체 문구를 지어내지 않는다.
+                    if (place.description.isNotBlank()) {
+                        Text("소개", fontWeight = FontWeight.ExtraBold)
+                        Text(place.description, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    // 서버 상세는 메뉴 이름을 주지 않는다 — 음식점 메뉴판은 menuImages 로 온다.
+                    val menuCount = place.menuNames.size.takeIf { it > 0 } ?: place.menuImageUrls.size
+                    val showsMenu = place.type == TourismContentType.Food && menuCount > 0
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PlaceTypeChip("사진 ${place.photoCount.coerceAtLeast(6)}", !menuSelected) {
+                        PlaceTypeChip("사진 ${place.photoLabelCount(captureMode)}", !menuSelected || !showsMenu) {
                             menuSelected = false
                         }
-                        if (place.type == TourismContentType.Food) {
-                            PlaceTypeChip("메뉴판 ${place.menuNames.size}", menuSelected) { menuSelected = true }
+                        if (showsMenu) {
+                            PlaceTypeChip("메뉴판 $menuCount", menuSelected) { menuSelected = true }
                         }
                     }
-                    if (menuSelected) {
+                    if (menuSelected && showsMenu) {
                         place.menuNames.forEach { name ->
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
@@ -453,21 +467,11 @@ fun PlaceDetailScreen(
                                 Text(name, Modifier.fillMaxWidth().padding(16.dp), fontWeight = FontWeight.Bold)
                             }
                         }
-                    } else {
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            val photos = place.photoUrls.take(3)
-                            repeat(3) { index ->
-                                val photo = photos.getOrNull(index)
-                                CachedRemoteImage(
-                                    url = photo,
-                                    contentDescription = null,
-                                    modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(10.dp)),
-                                    contentScale = ContentScale.Crop
-                                ) {
-                                    ScenicPlaceholder(Modifier.weight(1f).aspectRatio(1f), place.type)
-                                }
-                            }
+                        if (place.menuNames.isEmpty()) {
+                            PlacePhotoRow(place, place.menuImageUrls, captureMode)
                         }
+                    } else {
+                        PlacePhotoRow(place, place.photoUrls, captureMode)
                     }
                 }
             }
@@ -810,6 +814,41 @@ private fun PlaceImage(modifier: Modifier, place: TourismPlace) {
     }
 }
 
+/**
+ * 사진 개수 표기. 서버 모드에서는 `contentImages` 장수를 그대로 쓴다(없으면 0).
+ * 캡처 라우트에서만 화면기획 목데이터의 사진 수를 유지한다.
+ */
+private fun TourismPlace.photoLabelCount(captureMode: Boolean): Int =
+    if (captureMode) photoCount.coerceAtLeast(6) else photoUrls.size
+
+/**
+ * 사진·메뉴판 타일. 사진 자리표시자는 캡처 라우트(화면기획 목데이터)에서만 채운다 —
+ * 서버가 사진을 주지 않은 방문지를 가짜 풍경으로 채우지 않는다.
+ */
+@Composable
+private fun PlacePhotoRow(place: TourismPlace, urls: List<String>, captureMode: Boolean) {
+    if (urls.isEmpty() && !captureMode) return
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val photos = urls.take(3)
+        repeat(3) { index ->
+            val photo = photos.getOrNull(index)
+            if (photo == null && !captureMode) {
+                // 서버가 준 장수만큼만 채우고 남는 칸은 비운다(3열 배치는 유지한다).
+                Spacer(Modifier.weight(1f))
+            } else {
+                CachedRemoteImage(
+                    url = photo,
+                    contentDescription = null,
+                    modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop
+                ) {
+                    ScenicPlaceholder(Modifier.weight(1f).aspectRatio(1f), place.type)
+                }
+            }
+        }
+    }
+}
+
 private fun TourismContentSummary.toPlace() = TourismPlace(
     contentId = contentId,
     type = TourismContentType.fromApiId(contentTypeId),
@@ -818,36 +857,39 @@ private fun TourismContentSummary.toPlace() = TourismPlace(
     address = listOfNotNull(address1, address2).joinToString(" ").ifBlank { "주소 정보 없음" },
     latitude = latitude ?: 0.0,
     longitude = longitude ?: 0.0,
-    thumbnailUrl = firstThumbnailUrl ?: firstImageUrl,
-    photoUrls = listOfNotNull(firstImageUrl).distinct()
+    thumbnailUrl = thumbnailUrl,
+    photoUrls = listOfNotNull(thumbnailUrl)
 )
 
 private fun TourismContentDetail.toPlace(): TourismPlace {
     val base = summary.toPlace()
+    val photos = (contentImageUrls + listOfNotNull(summary.thumbnailUrl)).distinct()
     return base.copy(
         postalCode = zipcode.orEmpty(),
         phone = telephone.orEmpty(),
         phoneLabel = telephoneName.orEmpty(),
         homepage = homepage.orEmpty(),
         description = overview.orEmpty(),
-        photoCount = contentImageUrls.size,
+        photoCount = photos.size,
         menuNames = menuNames,
-        photoUrls = (contentImageUrls + listOfNotNull(summary.firstImageUrl)).distinct(),
+        photoUrls = photos,
         menuImageUrls = menuImageUrls
     )
 }
 
 @Composable
-private fun DetailInfo(icon: ImageVector, value: String, caption: String) {
+private fun DetailInfo(icon: ImageVector, value: String, caption: String?) {
     Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         Icon(icon, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Column {
             Text(value, fontWeight = FontWeight.Bold)
-            Text(
-                caption,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            if (!caption.isNullOrBlank()) {
+                Text(
+                    caption,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
         }
     }
 }

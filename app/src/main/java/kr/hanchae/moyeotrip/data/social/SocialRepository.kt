@@ -14,6 +14,14 @@ data class FriendRequest(val requestId: Long, val user: SocialUser, val requeste
 
 data class BlockedUser(val userId: Long, val nickname: String, val profileImageUrl: String?, val blockedAt: String)
 
+/** 도감의 한 여행 기록. `oneLineReview` 는 "내가 그 사람에게 남긴" 메시지다(27-1). */
+data class DexMemory(
+    val chatRoomId: Long,
+    val tripTitle: String,
+    val tripDate: String,
+    val oneLineReview: String?
+)
+
 data class DexCompanion(
     val userId: Long,
     val nickname: String,
@@ -21,7 +29,9 @@ data class DexCompanion(
     val mannerRating: Double?,
     val tripCount: Int,
     val latestTripDate: String,
-    val latestTripTitle: String
+    val latestTripTitle: String,
+    /** 프로필 카드 뒷면에서 쓴다. 응답에 이미 들어 있어 추가 호출이 필요 없다. */
+    val memories: List<DexMemory> = emptyList()
 )
 
 interface SocialRepository {
@@ -113,7 +123,15 @@ class HttpSocialRepository(private val client: MoyeoApiClient) : SocialRepositor
                 mannerRating = companion.doubleOrNull("mannerRating"),
                 tripCount = companion.optInt("tripCount"),
                 latestTripDate = companion.optString("latestTripDate"),
-                latestTripTitle = companion.optString("latestTripTitle")
+                latestTripTitle = companion.optString("latestTripTitle"),
+                memories = companion.optJSONArray("memories")?.mapObjects { memory ->
+                    DexMemory(
+                        chatRoomId = memory.optLong("chatRoomId"),
+                        tripTitle = memory.optString("tripTitle"),
+                        tripDate = memory.optString("tripDate"),
+                        oneLineReview = memory.stringOrNull("oneLineReview")
+                    )
+                }.orEmpty()
             )
         }
 

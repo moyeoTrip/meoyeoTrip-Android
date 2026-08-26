@@ -14,6 +14,9 @@ object AppRoutes {
     const val CHAT_ROOM = "chat/{threadId}"
     const val SPECIAL_MESSAGES = "special_messages"
     const val PROFILE = "profile"
+
+    /** 25-1 · 프로필 카드 뒷면. 캡처 전용 진입이고, 실사용에서는 25 에서 뒤집는다. */
+    const val PROFILE_CARD_BACK = "profile_card_back"
     const val PROFILE_EDIT = "profile_edit"
     const val MY_FEED = "my_feed"
     const val FRIEND_DEX = "friend_dex"
@@ -36,7 +39,10 @@ object AppRoutes {
     const val MOCK_AUTH_STEP = "mock_auth/{startStep}"
     const val TRIP_CONFIRMED = "trip_confirmed"
     const val CHAT_MENU = "chat_menu/{threadId}"
-    const val CHAT_ATTACH = "chat_attach"
+
+    // 20-2 첨부 시트. threadId 는 어느 방에 공유하는지다 — 캡처 라우트(`chatattach`)는 인자 없이 들어와
+    // 기존 목데이터 배경을 그대로 쓴다.
+    const val CHAT_ATTACH = "chat_attach?threadId={threadId}"
     const val FRIENDS = "friends"
     const val TRIP_MESSAGE = "trip_message"
     const val REPORT = "report"
@@ -93,6 +99,9 @@ object AppRoutes {
     fun chatRoom(threadId: String) = "chat/$threadId"
 
     fun chatMenu(threadId: String) = "chat_menu/$threadId"
+
+    fun chatAttach(threadId: String? = null) =
+        if (threadId.isNullOrBlank()) "chat_attach" else "chat_attach?threadId=$threadId"
 
     fun tripDay(threadId: String) = "trip_day/$threadId"
 

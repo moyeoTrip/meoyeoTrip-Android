@@ -1,5 +1,10 @@
 package kr.hanchae.moyeotrip.ui.screens
 
+import android.content.Context
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -100,6 +105,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -110,7 +116,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.notifications.NotificationSettingsUpdate
@@ -119,6 +127,7 @@ import kr.hanchae.moyeotrip.data.rooms.RoomMember
 import kr.hanchae.moyeotrip.data.rooms.RoomMembers
 import kr.hanchae.moyeotrip.data.rooms.RoomNotices
 import kr.hanchae.moyeotrip.data.rooms.RoomRoadmap
+import kr.hanchae.moyeotrip.data.rooms.recruitmentDDayText
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.components.OverlayBackdrop
@@ -130,6 +139,8 @@ private data class MenuEntry(
     val title: String,
     val subtitle: String,
     val danger: Boolean = false,
+    /** 화면기획 20-1 알림 설정 행처럼 우측에 토글이 붙는 행만 채운다. 없으면 셰브런이다. */
+    val trailing: (@Composable () -> Unit)? = null,
     val onClick: () -> Unit
 )
 
@@ -246,7 +257,12 @@ private fun ActionRow(entry: MenuEntry) {
                 overflow = TextOverflow.Ellipsis
             )
         }
-        Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = tint)
+        val trailing = entry.trailing
+        if (trailing == null) {
+            Icon(Icons.Filled.ChevronRight, contentDescription = null, tint = tint)
+        } else {
+            trailing()
+        }
     }
 }
 
@@ -486,7 +502,10 @@ fun ChatMenuScreen(
 /**
  * 실서버 모임 정보(화면기획 20-1) — GET chat-rooms/{id} · {id}/members · {id}/notices · {id}/roadmap/current.
  * 서버가 주지 않는 값(멤버 매너 점수·대기 큐 상세·공유된 항목 수)은 표시하지 않는다.
- * 강퇴(DELETE members/{id})·나가기(DELETE members/me)는 합류가 막혀 실검증이 안 돼 연결하지 않았다.
+ *
+ * 이 모임 알림은 GET·PUT notifications/settings/chat-rooms/{roomId} 로 토글한다(화면기획 20-1 우측 토글).
+ * 나가기는 DELETE {id}/members/me, 내보내기는 DELETE {id}/members/{memberId} 로 보낸다 —
+ * 둘 다 되돌릴 수 없어 확인 단계(화면기획 31 · 20-1b)를 지난 뒤에만 호출한다.
  */
 @Composable
 private fun ServerChatMenu(
@@ -502,14 +521,21 @@ private fun ServerChatMenu(
     var notices by remember(roomId) { mutableStateOf<RoomNotices?>(null) }
     var roadmap by remember(roomId) { mutableStateOf<RoomRoadmap?>(null) }
     var actionTarget by remember(roomId) { mutableStateOf<RoomMember?>(null) }
+    var removeTarget by remember(roomId) { mutableStateOf<RoomMember?>(null) }
     var actionMessage by remember(roomId) { mutableStateOf<String?>(null) }
+    var roomAlertsEnabled by remember(roomId) { mutableStateOf<Boolean?>(null) }
+    var showLeaveConfirm by remember(roomId) { mutableStateOf(false) }
+    var leaveBusy by remember(roomId) { mutableStateOf(false) }
     val actionScope = rememberCoroutineScope()
+    val me = members?.members?.firstOrNull(RoomMember::me)
+    val amHost = me?.host == true
 
     LaunchedEffect(roomId, server) {
         detail = runCatching { server.chatRooms.room(roomId) }.getOrNull()
         members = runCatching { server.chatRooms.members(roomId) }.getOrNull()
         notices = runCatching { server.chatRooms.notices(roomId) }.getOrNull()
         roadmap = runCatching { server.chatRooms.currentRoadmap(roomId) }.getOrNull()
+        roomAlertsEnabled = runCatching { server.notifications.roomSetting(roomId) }.getOrNull()?.enabled
     }
 
     ChangeLogScaffold(
@@ -543,7 +569,7 @@ private fun ServerChatMenu(
                         )
                         val chips = buildList {
                             room.participationFee?.let { add("1인 ${"%,d".format(it)}원") }
-                            room.recruitmentDDay?.let { add("마감 D-$it") }
+                            recruitmentDDayText(room.recruitmentDDay)?.let { add("마감 $it") }
                             if (room.minimumAge != null || room.maximumAge != null) {
                                 add("${room.minimumAge ?: ""}~${room.maximumAge ?: ""}세")
                             }
@@ -712,6 +738,7 @@ private fun ServerChatMenu(
                 HorizontalDivider(thickness = 8.dp, color = MaterialTheme.colorScheme.surfaceVariant)
                 val noticeCount = notices?.all?.size ?: 0
                 val pinnedCount = notices?.pinned?.size ?: 0
+                val alerts = roomAlertsEnabled
                 listOf(
                     MenuEntry(
                         Icons.AutoMirrored.Filled.StickyNote2,
@@ -721,11 +748,40 @@ private fun ServerChatMenu(
                     MenuEntry(
                         Icons.Filled.Notifications,
                         "알림 설정",
-                        "이 모임의 알림과 방해금지 시간",
+                        "이 모임의 알림만 끄기",
+                        // 서버 설정을 못 읽었으면 토글을 만들지 않고 기존 셰브런(세부 설정 진입)으로 둔다
+                        trailing = alerts?.let { enabled ->
+                            {
+                                Switch(
+                                    checked = enabled,
+                                    onCheckedChange = { next ->
+                                        roomAlertsEnabled = next
+                                        actionScope.launch {
+                                            runCatching { server.notifications.updateRoomSetting(roomId, next) }
+                                                .onSuccess { saved -> roomAlertsEnabled = saved.enabled }
+                                                .onFailure { error ->
+                                                    roomAlertsEnabled = !next
+                                                    actionMessage = error.message ?: "알림 설정을 바꾸지 못했어요."
+                                                }
+                                        }
+                                    },
+                                    modifier = Modifier.testTag("server-room-alerts-toggle")
+                                )
+                            }
+                        },
                         onClick = onOpenNotificationSettings
                     ),
                     MenuEntry(Icons.Filled.Flag, "신고 · 차단", "부적절한 대화나 멤버를 신고해요", onClick = onOpenReport)
                 ).forEach { ActionRow(it) }
+                HorizontalDivider(thickness = 8.dp, color = MaterialTheme.colorScheme.surfaceVariant)
+                ActionRow(
+                    MenuEntry(
+                        Icons.Filled.Close,
+                        "채팅방 나가기",
+                        if (amHost) "호스트가 나가면 이 모임은 종료돼요" else "나가면 대기 중인 다음 신청자가 자동으로 합류해요",
+                        danger = true
+                    ) { showLeaveConfirm = true }
+                )
             }
         }
     }
@@ -734,7 +790,15 @@ private fun ServerChatMenu(
         AlertDialog(
             onDismissRequest = { actionTarget = null },
             title = { Text(target.nickname) },
-            text = { Text("친구 신청을 보내거나 이 사용자를 차단할 수 있어요.") },
+            text = {
+                Text(
+                    if (amHost) {
+                        "친구 신청을 보내거나 이 사용자를 차단하거나, 모임에서 내보낼 수 있어요."
+                    } else {
+                        "친구 신청을 보내거나 이 사용자를 차단할 수 있어요."
+                    }
+                )
+            },
             confirmButton = {
                 TextButton(onClick = {
                     actionTarget = null
@@ -746,14 +810,88 @@ private fun ServerChatMenu(
                 }) { Text("친구 신청") }
             },
             dismissButton = {
-                TextButton(onClick = {
-                    actionTarget = null
-                    actionScope.launch {
-                        runCatching { server.social.block(target.userId) }
-                            .onSuccess { actionMessage = "${target.nickname}님을 차단했어요." }
-                            .onFailure { error -> actionMessage = error.message ?: "차단에 실패했어요." }
+                Row {
+                    // 내보내기는 호스트에게만 보인다 (화면기획 20-1a)
+                    if (amHost) {
+                        TextButton(
+                            onClick = {
+                                removeTarget = target
+                                actionTarget = null
+                            },
+                            modifier = Modifier.testTag("server-member-remove")
+                        ) {
+                            Text("내보내기", color = MaterialTheme.colorScheme.error)
+                        }
                     }
-                }) { Text("차단", color = MaterialTheme.colorScheme.error) }
+                    TextButton(onClick = {
+                        actionTarget = null
+                        actionScope.launch {
+                            runCatching { server.social.block(target.userId) }
+                                .onSuccess { actionMessage = "${target.nickname}님을 차단했어요." }
+                                .onFailure { error -> actionMessage = error.message ?: "차단에 실패했어요." }
+                        }
+                    }) { Text("차단", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+        )
+    }
+    // 20-1b 사유 입력 시트 — 목데이터 화면과 같은 시트를 재사용하고 확인에서만 서버를 부른다
+    removeTarget?.let { member ->
+        MemberRemoveSheet(
+            member = FriendEntry(emoji = "🙂", name = member.nickname, subtitle = "여행 ${member.completedTripCount}회"),
+            onDismiss = { removeTarget = null },
+            onConfirm = { reason ->
+                removeTarget = null
+                actionScope.launch {
+                    runCatching { server.chatRooms.kickMember(roomId, member.userId, reason) }
+                        .onSuccess {
+                            actionMessage = "${member.nickname}님을 내보냈어요."
+                            members = runCatching { server.chatRooms.members(roomId) }.getOrNull() ?: members
+                        }
+                        .onFailure { error -> actionMessage = error.message ?: "내보내기에 실패했어요." }
+                }
+            }
+        )
+    }
+    if (showLeaveConfirm) {
+        // 화면기획 31 — 호스트가 나가면 모임이 종료된다는 경고를 먼저 보여준다
+        AlertDialog(
+            onDismissRequest = { showLeaveConfirm = false },
+            title = { Text(if (amHost) "호스트가 나가면 이 모임은 종료돼요" else "이 모임에서 나갈까요?") },
+            text = {
+                Text(
+                    if (amHost) {
+                        "참여한 멤버 모두에게 알림이 가고, 채팅방은 읽기 전용으로 남아요."
+                    } else {
+                        "나가면 대기 중인 다음 신청자가 자동으로 합류해요."
+                    }
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = !leaveBusy,
+                    onClick = {
+                        leaveBusy = true
+                        actionScope.launch {
+                            runCatching { server.chatRooms.leaveRoom(roomId) }
+                                .onSuccess {
+                                    showLeaveConfirm = false
+                                    onBack()
+                                }
+                                .onFailure { error ->
+                                    showLeaveConfirm = false
+                                    actionMessage = error.message ?: "나가기에 실패했어요."
+                                }
+                            leaveBusy = false
+                        }
+                    },
+                    modifier = Modifier.testTag("server-room-leave-confirm")
+                ) {
+                    Text(if (amHost) "모임 종료" else "나가기", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLeaveConfirm = false }) { Text("취소") }
             }
         )
     }
@@ -889,7 +1027,12 @@ private fun MemberActionRow(
 // / 입력 전에는 내보내기가 비활성이다. 이 사유가 그대로 상대의 13-1 내보내기 안내에 보인다.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MemberRemoveSheet(member: FriendEntry, onDismiss: () -> Unit) {
+private fun MemberRemoveSheet(
+    member: FriendEntry,
+    onDismiss: () -> Unit,
+    /** 실서버 방에서만 채운다 — 목데이터·캡처 경로는 닫기만 한다. */
+    onConfirm: ((String) -> Unit)? = null
+) {
     var reason by rememberSaveable { mutableStateOf("") }
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -1023,7 +1166,7 @@ private fun MemberRemoveSheet(member: FriendEntry, onDismiss: () -> Unit) {
                     Text("취소", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurface)
                 }
                 Button(
-                    onClick = onDismiss,
+                    onClick = { onConfirm?.invoke(reason.trim()) ?: onDismiss() },
                     enabled = reason.trim().length >= 10,
                     modifier = Modifier
                         .weight(1f)
@@ -1039,14 +1182,56 @@ private fun MemberRemoveSheet(member: FriendEntry, onDismiss: () -> Unit) {
     }
 }
 
+/** 사진 선택기에서 고른 파일 한 건 — multipart 파트에 그대로 넣을 값만 담는다. */
+internal data class PickedImage(val fileName: String, val mimeType: String, val bytes: ByteArray) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is PickedImage) return false
+        return fileName == other.fileName && mimeType == other.mimeType && bytes.contentEquals(other.bytes)
+    }
+
+    override fun hashCode(): Int = 31 * (31 * fileName.hashCode() + mimeType.hashCode()) + bytes.contentHashCode()
+}
+
+/**
+ * 서버가 받는 사진 상한은 20MB 다(화면기획 20-2 "최대 20MB · 1장씩").
+ * 그보다 큰 파일은 올려도 거절되므로 읽지 않고 null 을 준다.
+ */
+internal const val CHAT_IMAGE_MAX_BYTES = 20 * 1024 * 1024
+
+/** 선택기가 준 content:// URI 를 바이트로 읽는다. 읽기 실패·용량 초과는 null 이다. */
+internal suspend fun readPickedImage(context: Context, uri: Uri): PickedImage? = withContext(Dispatchers.IO) {
+    runCatching {
+        val mimeType = context.contentResolver.getType(uri) ?: "image/*"
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@runCatching null
+        if (bytes.isEmpty() || bytes.size > CHAT_IMAGE_MAX_BYTES) return@runCatching null
+        PickedImage(
+            fileName = uri.lastPathSegment?.substringAfterLast('/')?.takeIf(String::isNotBlank) ?: "image",
+            mimeType = mimeType,
+            bytes = bytes
+        )
+    }.getOrNull()
+}
+
+/**
+ * 20-2 첨부 시트.
+ *
+ * 실서버 방(`room-{id}`)에서는 기획에 이미 자리가 있는 두 타일이 바로 서버를 부른다 —
+ * "지도"는 POST chat-rooms/{id}/messages/locations(본문 없음), "사진"은 시스템 사진 선택기로 고른 파일을
+ * POST chat-rooms/{id}/messages/images(multipart)로 보낸다.
+ * "장소"·"투표"·"정산"은 서버 API 는 있지만 기획에 입력 화면(장소 고르기·질문/선택지·메모)이 없어
+ * 기존 진입(특수 메시지 6종)을 그대로 두고 저장소 배선만 해뒀다.
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChatAttachmentScreen(
     onBack: () -> Unit,
     onOpenSpecialMessages: () -> Unit,
     isOnline: Boolean,
-    backdropThreadId: String = OVERLAY_BACKDROP_THREAD_ID
+    /** 공유 대상 방. "room-{id}" 면 실서버로 보낸다. 캡처 라우트는 null 로 들어와 목데이터 방을 쓴다. */
+    threadId: String? = null
 ) {
+    val backdropThreadId = threadId ?: OVERLAY_BACKDROP_THREAD_ID
     val items = listOf(
         Triple(Icons.Filled.CameraAlt, "사진", "최대 20MB · 1장씩"),
         Triple(Icons.Filled.LocationOn, "장소", "TourAPI 장소 카드"),
@@ -1055,6 +1240,61 @@ fun ChatAttachmentScreen(
         Triple(Icons.Filled.Payments, "정산", "메모용 · 송금 아님"),
         Triple(Icons.AutoMirrored.Filled.StickyNote2, "메모", "상단 고정 공지")
     )
+    val server = LocalServerData.current
+    val serverRoomId = threadId?.serverRoomIdOrNull()
+    val context = LocalContext.current
+    val shareScope = rememberCoroutineScope()
+    var shareBusy by remember(serverRoomId) { mutableStateOf(false) }
+    var shareMessage by remember(serverRoomId) { mutableStateOf<String?>(null) }
+
+    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null || serverRoomId == null || server == null) return@rememberLauncherForActivityResult
+        shareBusy = true
+        shareScope.launch {
+            val picked = readPickedImage(context, uri)
+            if (picked == null) {
+                shareMessage = "사진을 읽지 못했어요."
+                shareBusy = false
+                return@launch
+            }
+            runCatching {
+                server.chatRooms.shareImage(
+                    roomId = serverRoomId,
+                    fileName = picked.fileName,
+                    mimeType = picked.mimeType,
+                    bytes = picked.bytes
+                )
+            }
+                .onSuccess { onBack() }
+                .onFailure { error -> shareMessage = error.message ?: "사진을 보내지 못했어요." }
+            shareBusy = false
+        }
+    }
+
+    fun shareMeetingLocation() {
+        if (serverRoomId == null || server == null || shareBusy) return
+        shareBusy = true
+        shareScope.launch {
+            runCatching { server.chatRooms.shareMeetingLocation(serverRoomId) }
+                .onSuccess { onBack() }
+                .onFailure { error -> shareMessage = error.message ?: "만날 위치를 보내지 못했어요." }
+            shareBusy = false
+        }
+    }
+
+    val serverActions: Map<String, () -> Unit> = if (serverRoomId != null && server != null) {
+        mapOf(
+            "지도" to ::shareMeetingLocation,
+            "사진" to {
+                photoPicker.launch(
+                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                )
+            }
+        )
+    } else {
+        emptyMap()
+    }
+
     // changeLog14 "오버레이 배경 일괄" — 채팅 버블 실루엣 대신 실제 채팅방 본문을 깐다.
     OverlayBackdrop(
         modifier = Modifier.testTag("chat-attach-screen"),
@@ -1089,11 +1329,15 @@ fun ChatAttachmentScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items.forEach { item ->
+                        val serverAction = serverActions[item.second]
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(116.dp)
-                                .clickable(enabled = isOnline, onClick = onOpenSpecialMessages)
+                                .clickable(enabled = isOnline && !shareBusy) {
+                                    serverAction?.invoke() ?: onOpenSpecialMessages()
+                                }
+                                .testTag("chat-attach-${item.second}")
                                 .semantics {
                                     role = Role.Button
                                     contentDescription = if (isOnline) item.second else "${item.second}, 오프라인에서 사용 불가"
@@ -1129,6 +1373,14 @@ fun ChatAttachmentScreen(
                             }
                         }
                     }
+                }
+                shareMessage?.let { message ->
+                    Text(
+                        message,
+                        modifier = Modifier.padding(top = 10.dp).testTag("chat-attach-error"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error
+                    )
                 }
                 TextButton(
                     onClick = onBack,

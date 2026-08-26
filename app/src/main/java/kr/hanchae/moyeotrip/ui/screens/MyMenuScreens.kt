@@ -82,6 +82,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
+import kr.hanchae.moyeotrip.data.social.DexCompanion
 import kr.hanchae.moyeotrip.BuildConfig
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.DogamFriend
@@ -103,97 +104,6 @@ import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
-
-@Composable
-fun ProfileScreen(
-    userProfile: UserDisplayProfile,
-    onBack: () -> Unit,
-    onOpenProfileEdit: () -> Unit,
-    onOpenFriendDex: () -> Unit,
-    onOpenSettings: () -> Unit
-) {
-    val profile = MockTripRepository.profile
-    // 로그인 상태면 실서버 프로필(GET users/me/profile)로 대체한다.
-    // 서버가 주지 않는 값(매너 점수·여행 횟수 등 통계)은 서버 모드에서 표시하지 않는다.
-    val server = LocalServerData.current
-    var serverProfile by remember(server) { mutableStateOf<ServerUserProfile?>(null) }
-    LaunchedEffect(server) {
-        serverProfile = if (server == null) null else runCatching { server.userProfile.profile() }.getOrNull()
-    }
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-    ) {
-        CompactMenuHeader(
-            title = "프로필",
-            onBack = onBack,
-            trailing = {
-                IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
-                    Icon(
-                        imageVector = Icons.Filled.Settings,
-                        contentDescription = "설정",
-                        tint = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-        )
-
-        // 화면기획 구조: 커버 + 중앙 아바타 → 이름·매너 점수 → 통계 4칸 → 소개 → 메뉴 3줄.
-        // 선호 지역·이번 달 추천·만난 친구는 이 화면의 요소가 아니다(마이/도감에서 다룬다).
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            contentPadding = PaddingValues(bottom = 28.dp)
-        ) {
-            item {
-                ProfileCoverHeader(profile = profile, userProfile = userProfile, serverProfile = serverProfile)
-            }
-            if (serverProfile == null) {
-                item {
-                    Box(Modifier.padding(horizontal = 18.dp)) {
-                        ProfileStatsRow(profile = profile)
-                    }
-                }
-            }
-            item {
-                Box(Modifier.padding(horizontal = 18.dp)) {
-                    MenuCard {
-                        Text("소개", fontWeight = FontWeight.ExtraBold)
-                        Text(
-                            serverProfile?.let { it.introduction ?: "아직 소개가 없어요." }
-                                ?: profile.intro.ifBlank { profile.bio },
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 6.dp)
-                        )
-                    }
-                }
-            }
-            item {
-                Column {
-                    ProfileMenuRow(
-                        icon = Icons.AutoMirrored.Filled.Article,
-                        label = "내 정보 수정",
-                        onClick = onOpenProfileEdit
-                    )
-                    ProfileMenuRow(
-                        icon = Icons.Filled.People,
-                        label = "친구 관리",
-                        onClick = onOpenFriendDex
-                    )
-                    ProfileMenuRow(
-                        icon = Icons.Filled.Close,
-                        label = "차단한 사용자",
-                        onClick = onOpenSettings
-                    )
-                }
-            }
-        }
-    }
-}
 
 @Composable
 fun ProfileEditScreen(
@@ -831,16 +741,22 @@ private fun MyFeedPostCard(post: FeedPost, onClick: () -> Unit) {
 }
 
 @Composable
-fun FriendDexScreen(onBack: () -> Unit) {
+fun FriendDexScreen(onBack: () -> Unit, onOpenCompanion: (DexCompanion?) -> Unit = {}) {
     // 로그인 상태면 실서버 도감(GET users/me/travel-dex)으로 대체한다
     val server = LocalServerData.current
     var serverCompanions by remember(server) { mutableStateOf<List<DogamFriend>?>(null) }
+    // 프로필 카드(25)에 나와 함께한 여행과 내가 남긴 메시지를 넘기려면 원본이 필요하다.
+    // 도감 응답에 이미 들어 있어 카드에서 다시 조회하지 않는다.
+    var serverRaw by remember(server) { mutableStateOf<List<DexCompanion>>(emptyList()) }
     LaunchedEffect(server) {
         serverCompanions = if (server == null) {
+            serverRaw = emptyList()
             null
         } else {
             runCatching {
-                server.social.travelDex().map { companion ->
+                val loaded = server.social.travelDex()
+                serverRaw = loaded
+                loaded.map { companion ->
                     DogamFriend(
                         id = companion.userId.toString(),
                         nickname = companion.nickname,
@@ -978,7 +894,11 @@ fun FriendDexScreen(onBack: () -> Unit) {
                         DogamEmptyResult()
                     }
                 } else {
-                    DogamGrid(friends = filteredFriends)
+                    DogamGrid(
+                        friends = filteredFriends,
+                        // 목데이터 모드에서는 서버 원본이 없다. 카드가 기획 목데이터로 떨어진다.
+                        onOpenFriend = { friend -> onOpenCompanion(serverRaw.firstOrNull { it.userId.toString() == friend.id }) }
+                    )
                 }
             }
             item {
@@ -1672,12 +1592,17 @@ private fun DogamPreviewRow(friend: DogamFriend, onClick: () -> Unit) {
 }
 
 @Composable
-private fun DogamGrid(friends: List<DogamFriend>) {
+private fun DogamGrid(friends: List<DogamFriend>, onOpenFriend: (DogamFriend) -> Unit = {}) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         friends.chunked(3).forEach { rowFriends ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 rowFriends.forEach { friend ->
-                    DogamFriendCard(friend = friend, modifier = Modifier.weight(1f))
+                    DogamFriendCard(
+                        friend = friend,
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { onOpenFriend(friend) }
+                    )
                 }
                 repeat(3 - rowFriends.size) {
                     Spacer(modifier = Modifier.weight(1f))

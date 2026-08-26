@@ -52,6 +52,7 @@ import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.data.profile.ServerUserProfile
 import kr.hanchae.moyeotrip.data.rooms.MyChatRoom
+import kr.hanchae.moyeotrip.data.rooms.recruitmentDDayText
 import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
@@ -320,8 +321,8 @@ private fun MyServerRoomCard(room: MyChatRoom, onClick: () -> Unit) {
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
-                    room.recruitmentDDay?.let { dday ->
-                        DDayChip(text = "D-$dday")
+                    recruitmentDDayText(room.recruitmentDDay)?.let { dday ->
+                        DDayChip(text = dday)
                     }
                 }
                 Text(

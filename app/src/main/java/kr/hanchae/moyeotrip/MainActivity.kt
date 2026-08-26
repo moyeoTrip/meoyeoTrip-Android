@@ -19,9 +19,13 @@ import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import java.util.Locale
+import kr.hanchae.moyeotrip.data.auth.AuthDependencies
 import kr.hanchae.moyeotrip.data.settings.ThemePreference
 import kr.hanchae.moyeotrip.data.settings.ThemePreferenceStore
 import kr.hanchae.moyeotrip.data.settings.resolveDarkTheme
+import kr.hanchae.moyeotrip.domain.auth.AuthProvider
+import kr.hanchae.moyeotrip.domain.auth.ServiceSession
+import kr.hanchae.moyeotrip.domain.auth.SignupState
 import kr.hanchae.moyeotrip.notifications.PUSH_ROUTE_EXTRA
 import kr.hanchae.moyeotrip.notifications.PushNavigationEvent
 import kr.hanchae.moyeotrip.notifications.consumePushNavigationEvent
@@ -46,6 +50,30 @@ class MainActivity : ComponentActivity() {
             intent.getStringExtra("moyeo_screen")
         } else {
             null
+        }
+        // 라이브 캡처 (디버그 빌드 전용).
+        // 캡처 라우팅(화면 직접 진입·강제 테마·스플래시 스킵)은 그대로 두고 데이터 차단만 푼다.
+        //   adb shell am start -n … --es moyeo_screen 10 --ez moyeo_live_data true --es moyeo_access_token <jwt>
+        // 이 플래그가 없으면 기존 목 캡처 경로와 100% 동일하게 동작해야 한다 — PDF 4열 대조가 깨진다.
+        val liveData = BuildConfig.DEBUG && intent.getBooleanExtra("moyeo_live_data", false)
+        // QA 세션 주입 (디버그 빌드 전용).
+        // 로그인 폼에 비밀번호를 입력하지 않고도 서버 데이터를 검증할 수 있게 발급된 토큰을 바로 심는다.
+        //   adb shell am start -n … --es moyeo_access_token <token> [--es moyeo_refresh_token <token>]
+        // 목 캡처 라우트(moyeo_screen 단독)에서는 주입하지 않는다 — 번호별 비교 캡처가 서버 데이터로
+        // 오염되면 안 된다. 라이브 캡처(moyeo_live_data)에서는 같은 엑스트라를 그대로 재사용한다.
+        var qaSessionInjected = false
+        if (BuildConfig.DEBUG && (startScreen == null || liveData)) {
+            intent.getStringExtra("moyeo_access_token")?.takeIf { it.isNotBlank() }?.let { accessToken ->
+                AuthDependencies.appDefault(applicationContext).sessionStore.saveSignup(
+                    AuthProvider.EMAIL,
+                    ServiceSession(
+                        accessToken = accessToken,
+                        refreshToken = intent.getStringExtra("moyeo_refresh_token").orEmpty(),
+                        signupState = SignupState.SIGNUP_COMPLETE
+                    )
+                )
+                qaSessionInjected = true
+            }
         }
         val skipStartupSplash = BuildConfig.DEBUG && intent.getBooleanExtra("moyeo_skip_splash", false)
         val skipAuthentication = BuildConfig.DEBUG && intent.getBooleanExtra("moyeo_skip_auth", false)
@@ -85,10 +113,12 @@ class MainActivity : ComponentActivity() {
         setContent {
             MoyeoTripApp(
                 startScreen = startScreen,
+                liveData = liveData,
                 pushNavigationEvent = pushNavigationEvent,
                 onPushRouteHandled = ::consumePushNavigationEvent,
                 skipStartupSplash = skipStartupSplash,
                 skipAuthentication = skipAuthentication,
+                qaSessionInjected = qaSessionInjected,
                 forceDarkTheme = forceDarkTheme,
                 onAuthenticationComplete = ::requestNotificationPermissionIfNeeded,
                 onEffectiveDarkThemeChanged = ::applyEffectiveTheme

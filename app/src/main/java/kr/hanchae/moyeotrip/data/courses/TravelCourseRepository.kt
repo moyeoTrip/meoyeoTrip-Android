@@ -31,6 +31,8 @@ data class TravelCourse(
     val thumbnail: String?,
     val places: List<TravelCoursePlace>,
     val creatorNickname: String? = null,
+    /** 코스를 공개한 여행의 시작일. 화면기획 14의 "YYYY.MM.DD 여행 후 공개" 표기에 쓴다. */
+    val creatorTravelStartDate: String? = null,
     val chatRoomCount: Int? = null
 )
 
@@ -88,5 +90,6 @@ private fun JSONObject.toCourse() = TravelCourse(
         )
     }.sortedWith(compareBy({ it.dayNumber }, { it.sequence })),
     creatorNickname = stringOrNull("creatorNickname"),
+    creatorTravelStartDate = stringOrNull("creatorTravelStartDate"),
     chatRoomCount = if (has("chatRoomCount") && !isNull("chatRoomCount")) optInt("chatRoomCount") else null
 )

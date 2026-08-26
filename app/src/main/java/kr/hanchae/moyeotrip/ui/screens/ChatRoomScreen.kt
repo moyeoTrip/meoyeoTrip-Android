@@ -30,11 +30,14 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Autorenew
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.Payments
 import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Poll
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.FilledIconButton
@@ -64,6 +67,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -87,7 +91,9 @@ import kr.hanchae.moyeotrip.data.rooms.RoomMember
 import kr.hanchae.moyeotrip.data.rooms.RoomMembers
 import kr.hanchae.moyeotrip.data.rooms.RoomMessage
 import kr.hanchae.moyeotrip.data.rooms.RoomNotices
+import kr.hanchae.moyeotrip.data.rooms.recruitmentDDayText
 import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.InfoPill
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -110,7 +116,8 @@ fun ChatRoomScreen(
             server = server,
             onBack = onBack,
             onOpenNotices = onOpenNotices,
-            onOpenMenu = onOpenMenu
+            onOpenMenu = onOpenMenu,
+            onOpenAttachment = onOpenAttachment
         )
         return
     }
@@ -407,7 +414,8 @@ private fun ServerChatRoom(
     server: ServerDataDependencies,
     onBack: () -> Unit,
     onOpenNotices: (String) -> Unit,
-    onOpenMenu: () -> Unit
+    onOpenMenu: () -> Unit,
+    onOpenAttachment: () -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     var detail by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
@@ -418,8 +426,42 @@ private fun ServerChatRoom(
     var draft by rememberSaveable(roomId) { mutableStateOf("") }
     var sending by remember(roomId) { mutableStateOf(false) }
     var sendError by remember(roomId) { mutableStateOf<String?>(null) }
+    var voteBusyMessageId by remember(roomId) { mutableStateOf<Long?>(null) }
     val messageListState = rememberLazyListState()
     val sendScope = rememberCoroutineScope()
+
+    /** 투표 응답은 갱신된 메시지 한 건이다 — 목록에서 그 자리만 갈아 끼운다. */
+    fun replaceMessage(updated: RoomMessage) {
+        messages = messages?.map { existing -> if (existing.messageId == updated.messageId) updated else existing }
+    }
+
+    fun vote(message: RoomMessage, optionId: Long) {
+        if (voteBusyMessageId != null) return
+        voteBusyMessageId = message.messageId
+        sendScope.launch {
+            runCatching { server.chatRooms.voteOnPoll(roomId, message.messageId, optionId) }
+                .onSuccess { updated ->
+                    replaceMessage(updated)
+                    sendError = null
+                }
+                .onFailure { error -> sendError = error.message ?: "투표하지 못했어요." }
+            voteBusyMessageId = null
+        }
+    }
+
+    fun cancelVote(message: RoomMessage) {
+        if (voteBusyMessageId != null) return
+        voteBusyMessageId = message.messageId
+        sendScope.launch {
+            runCatching { server.chatRooms.cancelVote(roomId, message.messageId) }
+                .onSuccess { updated ->
+                    replaceMessage(updated)
+                    sendError = null
+                }
+                .onFailure { error -> sendError = error.message ?: "투표를 취소하지 못했어요." }
+            voteBusyMessageId = null
+        }
+    }
 
     LaunchedEffect(roomId, server) {
         detail = runCatching { server.chatRooms.room(roomId) }.getOrNull()
@@ -485,10 +527,10 @@ private fun ServerChatRoom(
             Text(
                 text = buildAnnotatedString {
                     append(serverRoomMetaLine(room))
-                    room.recruitmentDDay?.let { dDay ->
+                    recruitmentDDayText(room.recruitmentDDay)?.let { dDay ->
                         append(" · ")
                         withStyle(SpanStyle(color = colors.secondary, fontWeight = FontWeight.Bold)) {
-                            append("마감 D-$dDay")
+                            append("마감 $dDay")
                         }
                     }
                 },
@@ -530,10 +572,19 @@ private fun ServerChatRoom(
                 item { ServerChatPlaceholder(text = "아직 대화가 없어요.") }
             }
             items(loadedMessages.orEmpty(), key = { it.messageId }) { message ->
-                if (message.type == "SYSTEM") {
-                    SystemPillMessage(message.content)
-                } else {
-                    MessageBubble(message = message.toChatMessage(myUserId))
+                when {
+                    message.type == "SYSTEM" -> SystemPillMessage(message.content)
+
+                    // 특수 메시지는 일반 버블이 아니라 카드다 (화면기획 20 · 24 특수 메시지 6종)
+                    message.isSpecialCard -> ServerSpecialMessage(
+                        message = message,
+                        mine = myUserId != null && message.senderId == myUserId,
+                        busy = voteBusyMessageId == message.messageId,
+                        onVote = { optionId -> vote(message, optionId) },
+                        onCancelVote = { cancelVote(message) }
+                    )
+
+                    else -> MessageBubble(message = message.toChatMessage(myUserId))
                 }
             }
         }
@@ -549,6 +600,14 @@ private fun ServerChatRoom(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
+                    // 화면기획 20 의 첨부는 + 원형 버튼이다 — 20-2 첨부 시트를 이 방 기준으로 연다
+                    IconButton(
+                        onClick = onOpenAttachment,
+                        enabled = !sending,
+                        modifier = Modifier.testTag("chat-attachment")
+                    ) {
+                        Icon(imageVector = Icons.Filled.Add, contentDescription = "첨부")
+                    }
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { draft = it },
@@ -604,6 +663,254 @@ private fun ServerChatPlaceholder(text: String) {
 }
 
 private const val MESSAGE_PAGE_SIZE = 50
+
+/** 카드로 그리는 메시지 종류 — 화면기획 24 "특수 메시지 6종". */
+private val SPECIAL_CARD_TYPES = setOf("IMAGE", "TOURISM_CONTENT", "LOCATION", "POLL", "SETTLEMENT_MEMO")
+
+private val RoomMessage.isSpecialCard: Boolean get() = type in SPECIAL_CARD_TYPES
+
+/**
+ * 특수 메시지 카드(화면기획 20 · 24) — 사진·장소·지도·투표·정산은 일반 버블이 아니라 카드다.
+ * 서버가 카드 본문(`poll`·`location`·`tourismContent`)을 주지 않으면 본문 텍스트만 남긴다 —
+ * 없는 값을 지어내지 않는다.
+ */
+@Composable
+private fun ServerSpecialMessage(
+    message: RoomMessage,
+    mine: Boolean,
+    busy: Boolean,
+    onVote: (Long) -> Unit,
+    onCancelVote: () -> Unit
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
+        verticalArrangement = Arrangement.spacedBy(3.dp)
+    ) {
+        if (!mine) {
+            Text(
+                text = message.senderNickname,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant
+            )
+        }
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth(.88f)
+                .testTag("server-chat-card-${message.messageId}"),
+            shape = RoundedCornerShape(14.dp),
+            color = colors.surface,
+            border = BorderStroke(1.dp, colors.outline.copy(alpha = .55f))
+        ) {
+            Column(
+                modifier = Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                ServerCardEyebrow(type = message.type)
+                when (message.type) {
+                    "IMAGE" -> ServerImageCardBody(message)
+
+                    "TOURISM_CONTENT" -> ServerTourismCardBody(message)
+
+                    "LOCATION" -> ServerLocationCardBody(message)
+
+                    "POLL" -> ServerPollCardBody(
+                        message = message,
+                        busy = busy,
+                        onVote = onVote,
+                        onCancelVote = onCancelVote
+                    )
+
+                    else -> ServerSettlementCardBody(message)
+                }
+                message.createdAt.serverMessageTime().takeIf(String::isNotBlank)?.let { time ->
+                    Text(
+                        text = time,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.End,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ServerCardEyebrow(type: String) {
+    val icon = when (type) {
+        "IMAGE" -> Icons.Filled.Image
+        "TOURISM_CONTENT" -> Icons.Filled.Place
+        "LOCATION" -> Icons.Filled.Map
+        "POLL" -> Icons.Filled.Poll
+        else -> Icons.Filled.Payments
+    }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(5.dp)
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            modifier = Modifier.size(13.dp),
+            tint = MaterialTheme.colorScheme.primary
+        )
+        Text(
+            text = serverMessageKindLabels[type].orEmpty(),
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.ExtraBold
+        )
+    }
+}
+
+@Composable
+private fun ServerImageCardBody(message: RoomMessage) {
+    message.imageUrl?.let { url ->
+        CachedRemoteImage(
+            url = url,
+            contentDescription = message.content.takeIf(String::isNotBlank) ?: "공유한 사진",
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(180.dp)
+                .clip(RoundedCornerShape(10.dp)),
+            contentScale = ContentScale.Crop
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(180.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+            )
+        }
+    }
+    // 캡션은 선택이다 — 없으면 아무것도 쓰지 않는다
+    message.content.takeIf(String::isNotBlank)?.let { caption ->
+        Text(text = caption, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+@Composable
+private fun ServerTourismCardBody(message: RoomMessage) {
+    val place = message.tourismContent
+    Text(
+        text = place?.title?.takeIf(String::isNotBlank) ?: message.content,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.ExtraBold
+    )
+    place?.address?.let { address ->
+        Text(
+            text = address,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+    place?.thumbnail?.let { thumbnail ->
+        CachedRemoteImage(
+            url = thumbnail,
+            contentDescription = null,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(80.dp)
+                .clip(RoundedCornerShape(10.dp)),
+            contentScale = ContentScale.Crop
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(80.dp)
+                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(10.dp))
+            )
+        }
+    }
+}
+
+@Composable
+private fun ServerLocationCardBody(message: RoomMessage) {
+    val location = message.location
+    Text(
+        text = location?.name?.takeIf(String::isNotBlank) ?: message.content,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.ExtraBold
+    )
+    location?.let { point ->
+        Text(
+            text = "%.6f, %.6f".format(point.latitude, point.longitude),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+    }
+}
+
+@Composable
+private fun ServerSettlementCardBody(message: RoomMessage) {
+    Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
+}
+
+/**
+ * 투표 카드 — 선택지를 누르면 PUT poll-options/{id}/vote, 이미 고른 선택지를 다시 누르면
+ * DELETE vote 로 취소한다. 익명 투표면 투표자 이름이 오지 않으므로 표기하지 않는다.
+ */
+@Composable
+private fun ServerPollCardBody(message: RoomMessage, busy: Boolean, onVote: (Long) -> Unit, onCancelVote: () -> Unit) {
+    val poll = message.poll
+    if (poll == null) {
+        Text(text = message.content, style = MaterialTheme.typography.bodyMedium)
+        return
+    }
+    val colors = MaterialTheme.colorScheme
+    Text(
+        text = poll.question.takeIf(String::isNotBlank) ?: message.content,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.ExtraBold
+    )
+    poll.options.forEach { option ->
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(enabled = !busy) {
+                    if (option.votedByMe) onCancelVote() else onVote(option.optionId)
+                }
+                .testTag("server-poll-option-${option.optionId}"),
+            shape = RoundedCornerShape(10.dp),
+            color = if (option.votedByMe) MoyeoTheme.tints.primaryTint else colors.surface,
+            border = BorderStroke(
+                1.dp,
+                if (option.votedByMe) colors.primary.copy(alpha = .55f) else colors.outline
+            )
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = option.text,
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = if (option.votedByMe) FontWeight.ExtraBold else FontWeight.Normal,
+                    color = if (option.votedByMe) MoyeoTheme.tints.onPrimaryTint else colors.onSurface
+                )
+                Text(
+                    text = "${option.voteCount}",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = if (option.votedByMe) MoyeoTheme.tints.onPrimaryTint else colors.onSurfaceVariant,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+        }
+    }
+    Text(
+        text = listOfNotNull(
+            "총 ${poll.totalVoteCount}표",
+            if (poll.anonymous) "익명" else null,
+            if (poll.myOption != null) "다시 누르면 취소돼요" else null
+        ).joinToString(" · "),
+        style = MaterialTheme.typography.labelSmall,
+        color = colors.onSurfaceVariant
+    )
+}
 
 /** 서버 메시지 종류 라벨 — 서버가 주는 type 을 그대로 사람이 읽는 말로만 바꾼다. */
 private val serverMessageKindLabels = mapOf(

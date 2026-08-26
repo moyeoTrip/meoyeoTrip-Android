@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.data.courses.TravelCourse
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.components.InfoPill
@@ -304,6 +305,22 @@ private fun CourseDetailHero(course: TripCourse) {
 @Composable
 private fun CoursePublisherBlock(avatar: String, name: String, meta: String) {
     val colors = MaterialTheme.colorScheme
+    CoursePublisherRow(name = name, meta = meta) {
+        AnimalAvatar(
+            emoji = avatar,
+            modifier = Modifier.size(32.dp),
+            container = colors.primaryContainer
+        )
+    }
+}
+
+/**
+ * 화면기획 14의 "○○ 님이 다녀온 코스" 행. 아바타만 슬롯으로 받는다 —
+ * 목데이터는 동물 이모지, 실서버 코스는 작성자 닉네임 기반 아바타를 쓴다.
+ */
+@Composable
+private fun CoursePublisherRow(name: String, meta: String, avatar: @Composable () -> Unit) {
+    val colors = MaterialTheme.colorScheme
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -316,11 +333,7 @@ private fun CoursePublisherBlock(avatar: String, name: String, meta: String) {
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            AnimalAvatar(
-                emoji = avatar,
-                modifier = Modifier.size(32.dp),
-                container = colors.primaryContainer
-            )
+            avatar()
             Column(
                 modifier = Modifier.weight(1f),
                 verticalArrangement = Arrangement.spacedBy(2.dp)
@@ -331,11 +344,14 @@ private fun CoursePublisherBlock(avatar: String, name: String, meta: String) {
                     color = colors.onSurface,
                     fontWeight = FontWeight.ExtraBold
                 )
-                Text(
-                    text = meta,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.onSurfaceVariant
-                )
+                // 서버가 공개일·모임 수를 모두 주지 않으면 빈 줄을 만들지 않는다
+                if (meta.isNotBlank()) {
+                    Text(
+                        text = meta,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant
+                    )
+                }
             }
             InfoPill(
                 text = "여행자 코스",
@@ -701,6 +717,23 @@ private fun ServerCourseDetail(
                         }
                     }
                 }
+                // 화면기획 14의 "○○ 님이 다녀온 코스" 행. 서버가 creatorNickname·
+                // creatorTravelStartDate·chatRoomCount 를 주는데도 비어 있던 자리다.
+                loadedCourse.creatorNickname?.takeIf { it.isNotBlank() }?.let { nickname ->
+                    item {
+                        CoursePublisherRow(
+                            name = nickname,
+                            meta = serverCoursePublisherMeta(loadedCourse)
+                        ) {
+                            UserAvatar(
+                                imageUrl = null,
+                                nickname = nickname,
+                                modifier = Modifier.size(32.dp),
+                                fallbackFontSize = 16.sp
+                            )
+                        }
+                    }
+                }
                 if (loadedCourse.places.isNotEmpty()) {
                     item {
                         SectionHeader(title = "코스 미리보기")
@@ -749,3 +782,12 @@ private fun ServerCourseDetail(
         }
     }
 }
+
+/**
+ * 화면기획 14의 "2026.05.25 여행 후 공개 · 이 코스로 떠난 모임 3" 보조 문구를 서버값으로 만든다.
+ * 서버가 주지 않는 항목은 빼고 이어 붙인다 — 없는 값을 "0" 같은 자리표시자로 채우지 않는다.
+ */
+private fun serverCoursePublisherMeta(course: TravelCourse): String = listOfNotNull(
+    course.creatorTravelStartDate?.takeIf { it.isNotBlank() }?.let { "${it.replace('-', '.')} 여행 후 공개" },
+    course.chatRoomCount?.let { "이 코스로 떠난 모임 $it" }
+).joinToString(" · ")

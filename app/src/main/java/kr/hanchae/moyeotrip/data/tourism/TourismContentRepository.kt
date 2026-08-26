@@ -15,8 +15,8 @@ data class TourismContentSummary(
     val title: String,
     val address1: String?,
     val address2: String?,
-    val firstImageUrl: String?,
-    val firstThumbnailUrl: String?,
+    /** 서버 `thumbnail` — 목록·상세가 같은 키를 쓴다. 좌표처럼 없으면 null 이다. */
+    val thumbnailUrl: String?,
     val longitude: Double?,
     val latitude: Double?
 )
@@ -46,7 +46,16 @@ data class TourismContentPage(
 data class TourismContentTypeOption(val contentTypeId: Int, val contentTypeName: String)
 
 interface TourismContentRepository {
-    suspend fun contents(contentTypeId: Int?, page: Int = 0, size: Int = 100): TourismContentPage
+    /**
+     * 17-1a 방문지 검색. [keyword] 는 서버가 제목·기본주소·상세주소로 매칭한다 —
+     * 클라이언트에서 다시 거르지 않는다. 비어 있으면 파라미터를 보내지 않고 전체를 조회한다.
+     */
+    suspend fun contents(
+        keyword: String? = null,
+        contentTypeId: Int? = null,
+        page: Int = 0,
+        size: Int = 100
+    ): TourismContentPage
 
     suspend fun content(contentId: String): TourismContentDetail
 
@@ -62,8 +71,9 @@ class HttpTourismContentRepository(
 ) : TourismContentRepository {
     private val rootUrl = baseUrl.trimEnd('/')
 
-    override suspend fun contents(contentTypeId: Int?, page: Int, size: Int): TourismContentPage {
+    override suspend fun contents(keyword: String?, contentTypeId: Int?, page: Int, size: Int): TourismContentPage {
         val parameters = buildList {
+            keyword?.trim()?.takeIf(String::isNotEmpty)?.let { add("keyword=${encode(it)}") }
             contentTypeId?.let { add("contentTypeId=${encode(it.toString())}") }
             add("page=${page.coerceAtLeast(0)}")
             add("size=${size.coerceIn(1, 100)}")
@@ -85,12 +95,14 @@ class HttpTourismContentRepository(
             zipcode = json.stringOrNull("zipcode"),
             telephone = json.stringOrNull("telephone"),
             telephoneName = json.stringOrNull("telephoneName"),
-            homepage = json.stringOrNull("homepage"),
+            // `homepage` 는 앵커 태그가 그대로 오는 경우가 있다 — URL(없으면 표시 텍스트)만 남긴다.
+            homepage = tourismHomepageValue(json.stringOrNull("homepage")),
             bookTour = json.stringOrNull("bookTour"),
             overview = json.stringOrNull("overview"),
             contentImageUrls = json.optJSONArray("contentImages").imageUrls(),
             menuImageUrls = json.optJSONArray("menuImages").imageUrls(),
-            menuNames = json.optJSONArray("additionalDetails").menuNames()
+            // 서버 상세에는 메뉴 "이름" 이 없다 — 음식점 메뉴판은 menuImages 로만 온다.
+            menuNames = emptyList()
         )
     }
 
@@ -133,9 +145,9 @@ class FallbackTourismContentRepository(
     private val primary: TourismContentRepository,
     private val fallback: TourismContentRepository
 ) : TourismContentRepository {
-    override suspend fun contents(contentTypeId: Int?, page: Int, size: Int): TourismContentPage =
-        runCatching { primary.contents(contentTypeId, page, size) }
-            .getOrElse { fallback.contents(contentTypeId, page, size) }
+    override suspend fun contents(keyword: String?, contentTypeId: Int?, page: Int, size: Int): TourismContentPage =
+        runCatching { primary.contents(keyword, contentTypeId, page, size) }
+            .getOrElse { fallback.contents(keyword, contentTypeId, page, size) }
 
     override suspend fun content(contentId: String): TourismContentDetail = runCatching { primary.content(contentId) }
         .getOrElse { fallback.content(contentId) }
@@ -166,9 +178,16 @@ object SampleTourismContentRepository : TourismContentRepository {
         sample("2510773", 12, "청송 객주문학관", "경상북도 청송군 진보면 청송로 6359", 36.4739, 129.0093)
     )
 
-    override suspend fun contents(contentTypeId: Int?, page: Int, size: Int): TourismContentPage {
-        val filtered = details.map(TourismContentDetail::summary).filter {
-            contentTypeId == null || it.contentTypeId == contentTypeId
+    override suspend fun contents(keyword: String?, contentTypeId: Int?, page: Int, size: Int): TourismContentPage {
+        // 서버 `keyword` 와 같은 규칙으로 거른다(제목·기본주소·상세주소, 앞뒤 공백 제거).
+        val term = keyword?.trim().orEmpty()
+        val filtered = details.map(TourismContentDetail::summary).filter { summary ->
+            (contentTypeId == null || summary.contentTypeId == contentTypeId) &&
+                (
+                    term.isEmpty() ||
+                        summary.title.contains(term, true) ||
+                        listOfNotNull(summary.address1, summary.address2).any { it.contains(term, true) }
+                    )
         }
         return TourismContentPage(
             filtered,
@@ -204,15 +223,14 @@ object SampleTourismContentRepository : TourismContentRepository {
         menuNames: List<String> = emptyList()
     ) = TourismContentDetail(
         summary = TourismContentSummary(
-            contentId,
-            contentTypeId,
-            title,
-            address,
-            null,
-            null,
-            null,
-            longitude,
-            latitude
+            contentId = contentId,
+            contentTypeId = contentTypeId,
+            title = title,
+            address1 = address,
+            address2 = null,
+            thumbnailUrl = null,
+            longitude = longitude,
+            latitude = latitude
         ),
         zipcode = zipcode,
         telephone = telephone,
@@ -232,11 +250,37 @@ private fun JSONObject.toSummary() = TourismContentSummary(
     title = getString("title"),
     address1 = stringOrNull("address1"),
     address2 = stringOrNull("address2"),
-    firstImageUrl = stringOrNull("firstImageUrl"),
-    firstThumbnailUrl = stringOrNull("firstThumbnailUrl"),
+    thumbnailUrl = stringOrNull("thumbnail"),
     longitude = doubleOrNull("longitude"),
     latitude = doubleOrNull("latitude")
 )
+
+private val ANCHOR_HREF = Regex("""href\s*=\s*["']([^"']*)["']""", RegexOption.IGNORE_CASE)
+private val HTML_TAG = Regex("<[^>]*>")
+
+/**
+ * `homepage` 정리 — 서버는 `<a href="…" target="_blank" …>표시 텍스트</a>` 를 그대로 준다.
+ * href 를 우선 쓰고, 없으면 태그를 벗긴 표시 텍스트를 쓴다. 둘 다 없으면 null 이라 화면에서 줄이 사라진다.
+ */
+internal fun tourismHomepageValue(raw: String?): String? {
+    val value = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
+    ANCHOR_HREF.find(value)
+        ?.groupValues
+        ?.get(1)
+        ?.unescapeHtml()
+        ?.takeIf(String::isNotEmpty)
+        ?.let { return it }
+    return HTML_TAG.replace(value, " ").unescapeHtml().takeIf(String::isNotEmpty)
+}
+
+private fun String.unescapeHtml(): String = replace("&nbsp;", " ")
+    .replace("&amp;", "&")
+    .replace("&quot;", "\"")
+    .replace("&#39;", "'")
+    .replace("&lt;", "<")
+    .replace("&gt;", ">")
+    .replace(Regex("\\s+"), " ")
+    .trim()
 
 private fun JSONObject.stringOrNull(key: String): String? =
     if (!has(key) || isNull(key)) null else optString(key).takeIf(String::isNotBlank)
@@ -244,17 +288,11 @@ private fun JSONObject.stringOrNull(key: String): String? =
 private fun JSONObject.doubleOrNull(key: String): Double? =
     if (!has(key) || isNull(key)) null else optDouble(key).takeUnless(Double::isNaN)
 
-private fun JSONArray?.imageUrls(): List<String> = this.objectsOrEmpty { value ->
-    sequenceOf("originimgurl", "smallimageurl", "imageUrl", "url")
-        .mapNotNull(value::stringOrNull)
-        .firstOrNull()
-}.filterNotNull().distinct()
-
-private fun JSONArray?.menuNames(): List<String> = this.objectsOrEmpty { value ->
-    sequenceOf("menu", "menuName", "subname", "infoname", "text")
-        .mapNotNull(value::stringOrNull)
-        .firstOrNull()
-}.filterNotNull().distinct()
+/** `TourismContentImageResponse` — 서버가 주는 이미지 키는 `originalImageUrl` 하나다. */
+private fun JSONArray?.imageUrls(): List<String> = this
+    .objectsOrEmpty { value -> value.stringOrNull("originalImageUrl") }
+    .filterNotNull()
+    .distinct()
 
 private fun <T> JSONArray.objects(transform: (JSONObject) -> T): List<T> =
     List(length()) { index -> transform(getJSONObject(index)) }

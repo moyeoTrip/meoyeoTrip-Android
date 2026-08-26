@@ -43,6 +43,9 @@ data class NotificationSettingsUpdate(
     val doNotDisturbDays: List<String>
 )
 
+/** GET·PUT notifications/settings/chat-rooms/{roomId} — 화면기획 20-1 "이 모임의 알림만 끄기". */
+data class RoomNotificationSetting(val roomId: Long, val enabled: Boolean)
+
 interface NotificationRepository {
     suspend fun notifications(size: Int = 50, unreadOnly: Boolean = false): NotificationsPage
 
@@ -55,6 +58,10 @@ interface NotificationRepository {
     suspend fun updateSettings(update: NotificationSettingsUpdate): NotificationSettings
 
     suspend fun kickHistory(notificationId: Long): RoomKickHistory
+
+    suspend fun roomSetting(roomId: Long): RoomNotificationSetting
+
+    suspend fun updateRoomSetting(roomId: Long, enabled: Boolean): RoomNotificationSetting
 }
 
 class HttpNotificationRepository(private val client: MoyeoApiClient) : NotificationRepository {
@@ -102,7 +109,23 @@ class HttpNotificationRepository(private val client: MoyeoApiClient) : Notificat
             kickedAt = json.optString("kickedAt")
         )
     }
+
+    override suspend fun roomSetting(roomId: Long): RoomNotificationSetting =
+        client.getObject("/api/v1/notifications/settings/chat-rooms/$roomId").toRoomSetting(roomId)
+
+    override suspend fun updateRoomSetting(roomId: Long, enabled: Boolean): RoomNotificationSetting =
+        client.sendForObject(
+            "PUT",
+            "/api/v1/notifications/settings/chat-rooms/$roomId",
+            JSONObject().put("enabled", enabled)
+        ).toRoomSetting(roomId)
 }
+
+private fun JSONObject.toRoomSetting(roomId: Long) = RoomNotificationSetting(
+    roomId = optLong("roomId", roomId),
+    // 응답에 enabled 가 없으면 "켜져 있다"로 읽는다 — 서버 기본이 수신이다
+    enabled = optBoolean("enabled", true)
+)
 
 private fun JSONArray?.orEmpty(): JSONArray = this ?: JSONArray()
 
