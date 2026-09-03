@@ -13,6 +13,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.TextUnit
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MoyeoNicknameAnimal
 
 @Composable
 internal fun UserAvatar(imageUrl: String?, nickname: String?, modifier: Modifier, fallbackFontSize: TextUnit) {
@@ -28,23 +29,7 @@ internal fun UserAvatar(imageUrl: String?, nickname: String?, modifier: Modifier
             modifier = Modifier.fillMaxSize(),
             contentScale = ContentScale.Crop
         ) {
-            Text(text = nickname.animalEmoji(), fontSize = fallbackFontSize)
+            Text(text = MoyeoNicknameAnimal.emojiForNickname(nickname), fontSize = fallbackFontSize)
         }
-    }
-}
-
-private fun String?.animalEmoji(): String {
-    val value = this.orEmpty()
-    return when {
-        "사슴" in value || "고라니" in value -> "🦌"
-        "토끼" in value -> "🐰"
-        "거북" in value -> "🐢"
-        "여우" in value -> "🦊"
-        "고양" in value -> "🐱"
-        "강아" in value -> "🐶"
-        "두루미" in value || "백로" in value -> "🪽"
-        "수달" in value -> "🦦"
-        "부엉" in value -> "🦉"
-        else -> "🐻"
     }
 }

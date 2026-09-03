@@ -1,8 +1,6 @@
 package kr.hanchae.moyeotrip.domain
 
 import kr.hanchae.moyeotrip.data.FeedVisibility
-import kr.hanchae.moyeotrip.data.MockTripRepository
-import kr.hanchae.moyeotrip.data.TripCourse
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -10,9 +8,7 @@ import org.junit.Test
 class TripPoliciesTest {
     @Test
     fun recruitmentSummaryMarksOpenTripsThatMetMinimum() {
-        val course = course(participants = 4, capacity = 12)
-
-        val summary = course.recruitmentSummary()
+        val summary = recruitmentSummary(joined = 4, capacity = 12, minParticipants = 3)
 
         assertEquals(8, summary.remainingSeats)
         assertEquals(true, summary.minimumMet)
@@ -24,7 +20,7 @@ class TripPoliciesTest {
 
     @Test
     fun recruitmentSummaryMarksTripsBelowMinimum() {
-        val summary = course(participants = 2, capacity = 5).recruitmentSummary()
+        val summary = recruitmentSummary(joined = 2, capacity = 5, minParticipants = 3)
 
         assertEquals(RecruitmentState.BelowMinimum, summary.state)
         assertEquals(false, summary.minimumMet)
@@ -35,8 +31,8 @@ class TripPoliciesTest {
 
     @Test
     fun recruitmentSummaryMarksFewSeatsAndFullTrips() {
-        val fewSeats = course(participants = 9, capacity = 12).recruitmentSummary()
-        val full = course(participants = 14, capacity = 12).recruitmentSummary()
+        val fewSeats = recruitmentSummary(joined = 9, capacity = 12, minParticipants = 3)
+        val full = recruitmentSummary(joined = 14, capacity = 12, minParticipants = 3)
 
         assertEquals(RecruitmentState.FewSeats, fewSeats.state)
         assertEquals(3, fewSeats.remainingSeats)
@@ -49,18 +45,9 @@ class TripPoliciesTest {
     }
 
     @Test
-    fun weatherHeroPolicyUsesWeatherAndFeaturedCourseContext() {
-        val course = course(
-            title = "하회마을 초록 산책",
-            region = "안동",
-            participants = 8,
-            capacity = 12,
-            tags = listOf("고택", "산책", "로컬간식"),
-            stops = listOf("하회마을 입구", "부용대 전망", "로컬 찻집")
-        )
-
-        val clearHero = WeatherHeroPolicy.heroFor(WeatherSignal.Clear, course)
-        val rainyHero = WeatherHeroPolicy.heroFor(WeatherSignal.Rain, course)
+    fun weatherHeroPolicyDependsOnlyOnTheServerWeather() {
+        val clearHero = WeatherHeroPolicy.heroFor(WeatherSignal.Clear)
+        val rainyHero = WeatherHeroPolicy.heroFor(WeatherSignal.Rain)
 
         assertEquals("추천", clearHero.stateLabel)
         assertEquals("맑음", clearHero.weatherLabel)
@@ -69,7 +56,6 @@ class TripPoliciesTest {
         assertEquals("weather_sunny_cheomseongdae_night", clearHero.darkImageResourceName)
         assertTrue(clearHero.title.contains("어디로 떠나볼까요?"))
         assertEquals("햇살 좋은 날, 걷기 좋은 코스를 추천해드려요", clearHero.subtitle)
-        assertTrue(clearHero.tags.contains("미세먼지"))
 
         assertEquals("주의", rainyHero.stateLabel)
         assertEquals("비", rainyHero.weatherLabel)
@@ -81,10 +67,7 @@ class TripPoliciesTest {
 
     @Test
     fun heavyRainHeroUsesAlternativeRecommendationPolicy() {
-        val hero = WeatherHeroPolicy.heroFor(
-            signal = WeatherSignal.HeavyRain,
-            featuredCourse = course(participants = 3, capacity = 6)
-        )
+        val hero = WeatherHeroPolicy.heroFor(WeatherSignal.HeavyRain)
 
         assertEquals("대체 추천", hero.stateLabel)
         assertEquals("폭우", hero.weatherLabel)
@@ -95,24 +78,7 @@ class TripPoliciesTest {
     }
 
     @Test
-    fun weatherCoursePolicyReordersCoursesForUnsafeWeather() {
-        val courses = listOf(
-            course(id = "cheongsong-juwangsan", participants = 2, capacity = 5),
-            course(id = "andong-hahoe", participants = 3, capacity = 6),
-            course(id = "gyeongju-healing", participants = 4, capacity = 6)
-        )
-
-        val heavyRain = WeatherCoursePolicy.recommendedCourses(WeatherSignal.HeavyRain, courses)
-        val wind = WeatherCoursePolicy.recommendedCourses(WeatherSignal.Wind, courses)
-
-        assertEquals("gyeongju-healing", heavyRain.first().id)
-        assertEquals("andong-hahoe", wind.first().id)
-        assertEquals(courses.map { it.id }.toSet(), heavyRain.map { it.id }.toSet())
-    }
-
-    @Test
     fun weatherHeroPolicyMapsEveryStateToLightAndDarkWebPlanningPngResourceNames() {
-        val course = course(participants = 3, capacity = 6)
         val expectedNames = mapOf(
             WeatherSignal.Clear to ("weather_sunny_cheomseongdae" to "weather_sunny_cheomseongdae_night"),
             WeatherSignal.Cloud to ("weather_cloudy_bulguksa" to "weather_cloudy_bulguksa_night"),
@@ -126,7 +92,7 @@ class TripPoliciesTest {
         )
 
         expectedNames.forEach { (signal, resourceNames) ->
-            val hero = WeatherHeroPolicy.heroFor(signal, course)
+            val hero = WeatherHeroPolicy.heroFor(signal)
 
             assertEquals(resourceNames.first, hero.imageResourceName(isDark = false))
             assertEquals(resourceNames.second, hero.imageResourceName(isDark = true))
@@ -149,45 +115,9 @@ class TripPoliciesTest {
     }
 
     @Test
-    fun visibilityAndNicknameRulesMatchPlanningDocument() {
-        val nicknamePattern = Regex("^[가-힣]+( [가-힣]+ [0-9]{4})?$")
-
+    fun feedVisibilityLabelsMatchPlanningDocument() {
         assertEquals("전체공개", FeedVisibility.Public.label)
         assertEquals("친구만", FeedVisibility.Friends.label)
-        assertEquals("친구에게만", MockTripRepository.dogamVisibility.label)
-        assertTrue(MockTripRepository.feedPosts.all { nicknamePattern.matches(it.author) })
-        assertTrue(MockTripRepository.chatThreads.all { nicknamePattern.matches(it.partner) })
-        assertTrue(MockTripRepository.dogamFriends.all { nicknamePattern.matches(it.nickname) })
+        assertEquals("나만 보기", FeedVisibility.Private.label)
     }
-
-    private fun course(
-        id: String = "test",
-        title: String = "테스트 코스",
-        region: String = "안동",
-        participants: Int,
-        capacity: Int,
-        tags: List<String> = listOf("산책", "로컬"),
-        stops: List<String> = listOf("출발", "중간", "도착")
-    ) = TripCourse(
-        id = id,
-        title = title,
-        region = region,
-        oneLine = "테스트용 코스",
-        imageEmoji = "*",
-        duration = "당일",
-        courseTime = "2시간",
-        distance = "4.2km",
-        price = "0원",
-        host = "테스터",
-        hostAvatar = "*",
-        participants = participants,
-        capacity = capacity,
-        deadlineLabel = "마감 D-1",
-        startLabel = "2026.06.06 (토)",
-        meetingPoint = "테스트역",
-        rating = 4.8,
-        tags = tags,
-        stops = stops,
-        recruitmentNote = "테스트 모집 안내"
-    )
 }

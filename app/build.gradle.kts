@@ -54,16 +54,14 @@ android {
     // (이 버전 NDK 가 설치돼 있어야 한다. 빌드 환경을 늘릴 때 함께 챙길 것)
     ndkVersion = "27.1.12297006"
     compileSdk {
-        version = release(36) {
-            minorApiLevel = 1
-        }
+        version = release(37)
     }
 
     defaultConfig {
         applicationId = "kr.hanchae.moyeotrip"
         minSdk = 26
-        targetSdk = 36
-        versionCode = configuredProperty("MOYEO_VERSION_CODE", "1").toInt()
+        targetSdk = 37
+        versionCode = configuredProperty("MOYEO_VERSION_CODE", "3").toInt()
         versionName = configuredProperty("MOYEO_VERSION_NAME", "1.0")
 
         testInstrumentationRunner = "kr.hanchae.moyeotrip.MoyeoTripTestRunner"
@@ -72,7 +70,13 @@ android {
             "MOYEO_AUTH_API_BASE_URL",
             "https://moyeo-trip-api.jayden-bin.cc"
         )
-        val authDemoMode = configuredProperty("MOYEO_AUTH_DEMO_MODE", "false").toBoolean()
+        // 서버가 `travel-courses` 계열 썸네일을 **상대경로**로 준다(`tourism/image/….webp`).
+        // 절대 URL 로 통일해 달라고 요청해 뒀고(`BE-요청사항-2026-08-29.md` §2-9), 그때까지는
+        // 클라이언트가 CDN 호스트를 앞에 붙인다. 이미 절대 URL 인 값은 그대로 통과한다.
+        val cdnBaseUrl = configuredProperty(
+            "MOYEO_CDN_BASE_URL",
+            "https://moyeo-trip-cdn.jayden-bin.cc"
+        )
         val googleWebClientId = configuredProperty("MOYEO_GOOGLE_WEB_CLIENT_ID")
         val kakaoNativeAppKey = configuredProperty("KAKAO_NATIVE_APP_KEY")
         val sentryDsn = configuredProperty("SENTRY_DSN")
@@ -81,7 +85,7 @@ android {
             if (configuredProperty("CI", "false").toBoolean()) "ci" else "development"
         )
         buildConfigField("String", "AUTH_API_BASE_URL", "\"$authApiBaseUrl\"")
-        buildConfigField("boolean", "AUTH_DEMO_MODE", authDemoMode.toString())
+        buildConfigField("String", "CDN_BASE_URL", "\"$cdnBaseUrl\"")
         buildConfigField("boolean", "FIREBASE_CONFIGURED", hasFirebaseConfig.toString())
         buildConfigField("String", "GOOGLE_WEB_CLIENT_ID", "\"$googleWebClientId\"")
         buildConfigField("String", "KAKAO_NATIVE_APP_KEY", "\"$kakaoNativeAppKey\"")

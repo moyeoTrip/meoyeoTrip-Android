@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,10 +36,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -58,14 +53,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.R
-import kr.hanchae.moyeotrip.data.MockTripRepository
-import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.data.courses.TravelCourse
-import kr.hanchae.moyeotrip.domain.WeatherCoursePolicy
 import kr.hanchae.moyeotrip.domain.WeatherHero
 import kr.hanchae.moyeotrip.domain.WeatherHeroPolicy
 import kr.hanchae.moyeotrip.domain.WeatherHeroState
 import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
+import kr.hanchae.moyeotrip.ui.components.ServerListState
+import kr.hanchae.moyeotrip.ui.components.afterReload
+import kr.hanchae.moyeotrip.ui.state.LocalTabDataStore
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -77,24 +76,39 @@ fun HomeScreen(
     onCreateRecruitment: (String) -> Unit,
     isOnline: Boolean = true
 ) {
-    val weatherSignal = MockTripRepository.currentWeatherSignal
-    val recommendedCourses = WeatherCoursePolicy.recommendedCourses(weatherSignal, MockTripRepository.courses)
-    val featuredCourse = recommendedCourses.first()
-    val hero = WeatherHeroPolicy.heroFor(weatherSignal, featuredCourse)
-
-    // 로그인 상태면 인기 코스 섹션을 실서버(GET travel-courses/public/popular, 비면 /public)로 대체한다.
-    // 날씨 추천 코스는 서버에 대응 API 가 없어 목데이터를 유지한다.
     val server = LocalServerData.current
-    var serverCourses by remember(server) { mutableStateOf<List<TravelCourse>?>(null) }
-    LaunchedEffect(server) {
-        serverCourses = if (server == null) {
-            null
-        } else {
-            runCatching {
-                server.courses.popularCourses().ifEmpty { server.courses.publicCourses() }
-            }.getOrNull()
+    // 히어로 날씨는 서버가 정한다(GET weather/gyeongbuk). 값이 없으면 히어로를 그리지 않는다 —
+    // "맑음" 같은 기본값을 앱이 정해 버리면 화면이 오늘 날씨를 아는 척하게 된다.
+    //
+    // 데이터는 탭 바깥 보관소에 둔다. 화면 안에 들면 탭을 떠날 때 사라져 돌아올 때마다
+    // 로딩 문구와 기본 썸네일이 다시 보인다(정본 R1).
+    val home = LocalTabDataStore.current.home
+    val weather = home.weather
+    val recommended = home.recommended
+    val popular = home.popular
+    LaunchedEffect(server, home.reloadKey) {
+        if (server == null) {
+            home.weather = null
+            home.recommended = ServerListState.Loaded(emptyList())
+            home.popular = ServerListState.Loaded(emptyList())
+            return@LaunchedEffect
+        }
+        // 로딩 문구는 아직 아무것도 못 받아 봤을 때만 띄운다(정본 R2).
+        if (!home.loaded) {
+            home.recommended = ServerListState.Loading
+            home.popular = ServerListState.Loading
+        }
+        // 홈은 재진입할 때마다 갱신하되 **가진 것을 보여주며** 뒤에서 바꿔 끼운다 —
+        // 갱신 중 로딩으로 되돌리거나 실패로 덮지 않는다(정본 R2·R3).
+        home.weather = runCatching { server.weather.gyeongbuk() }.getOrNull() ?: home.weather
+        home.recommended = home.recommended.afterReload(runCatching { server.courses.publicCourses() })
+        home.popular = home.popular.afterReload(runCatching { server.courses.popularCourses() })
+        // 성공해서 보여줄 게 생겼을 때만 기록한다 — 실패하면 다음 진입에서 다시 로딩부터 시작한다(정본 R3-1).
+        if (home.recommended is ServerListState.Loaded || home.popular is ServerListState.Loaded) {
+            home.markLoaded()
         }
     }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -120,94 +134,50 @@ fun HomeScreen(
                 ),
                 verticalArrangement = Arrangement.spacedBy(18.dp)
             ) {
-                if (isOnline) {
-                    item {
-                        HomeHero(hero = hero)
-                    }
-                    item {
-                        HomeSectionHeader(
-                            title = "지금 떠나기 좋은 코스",
-                            trailing = "더보기 ›",
-                            onTrailingClick = onOpenExplore
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            items(recommendedCourses.take(6)) { course ->
-                                HomeMiniCourseCard(
-                                    course = course,
-                                    selected = course.id == featuredCourse.id,
-                                    onClick = { onOpenCourse(course.id) }
-                                )
-                            }
-                        }
-                    }
-                    item {
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            HomeSectionHeader(title = "인기 코스 TOP 3")
-                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                                val courses = serverCourses
-                                when {
-                                    courses == null -> homePopularCourses().forEach { ranked ->
-                                        PopularCourseRow(
-                                            course = ranked,
-                                            onClick = { onOpenCourse(ranked.courseId) }
-                                        )
-                                    }
-
-                                    courses.isEmpty() -> Text(
-                                        text = "아직 공개된 코스가 없어요.",
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 18.dp),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-
-                                    else -> courses.take(3).forEachIndexed { index, course ->
-                                        ServerPopularCourseRow(
-                                            rank = index + 1,
-                                            course = course,
-                                            onClick = { onOpenCourse("srv-${course.courseId}") }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
+                if (!isOnline) {
                     item { OfflineWeatherPlaceholder() }
-                    item {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                "저장해둔 코스",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                            Surface(
-                                modifier = Modifier.padding(start = 8.dp),
-                                shape = RoundedCornerShape(50),
-                                color = MaterialTheme.colorScheme.surfaceVariant
-                            ) {
-                                Text(
-                                    "오프라인에서도 열려요",
-                                    Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                    items(MockTripRepository.courses.take(3)) { course ->
-                        SavedOfflineCourseRow(course = course, onClick = { onOpenCourse(course.id) })
-                    }
+                    // 화면기획 36 · iOS 와 같은 순서로 "저장해둔 코스" 섹션이 날씨와 모집 카드 사이에 온다.
+                    // 안드로이드에는 아직 코스를 기기에 담아 두는 저장소가 없다 —
+                    // 없는 코스를 지어내지 않고 비어 있다는 사실을 그대로 그린다(NO-MOCK-CANON).
+                    item { OfflineSavedCoursesSection() }
                     item { OfflineRecruitmentPlaceholder() }
+                    return@LazyColumn
+                }
+                weather?.let { current ->
+                    item {
+                        HomeHero(
+                            hero = WeatherHeroPolicy.heroFor(current.signal),
+                            locationName = current.locationName
+                        )
+                    }
+                }
+                item {
+                    HomeSectionHeader(
+                        title = "지금 떠나기 좋은 코스",
+                        trailing = "더보기 ›",
+                        onTrailingClick = onOpenExplore
+                    )
+                }
+                item {
+                    HomeCourseStrip(
+                        state = recommended,
+                        signedIn = server != null,
+                        onOpenCourse = onOpenCourse,
+                        onRetry = home::reload
+                    )
+                }
+                item { HomeSectionHeader(title = "인기 코스 TOP 3") }
+                item {
+                    HomePopularCourses(
+                        state = popular,
+                        signedIn = server != null,
+                        onOpenCourse = onOpenCourse,
+                        onRetry = home::reload
+                    )
                 }
             }
-            // 오프라인일 때 FAB 위에 떠 있던 안내 캡션은 두지 않는다 — 화면기획 36에는 없고,
-            // 카드 밖으로 밀려 FAB과 겹쳐 보였다. 같은 안내는 아래 모집 카드 안에 이미 있다.
             FloatingActionButton(
-                onClick = { if (isOnline) onCreateRecruitment(featuredCourse.id) },
+                onClick = { if (isOnline) onCreateRecruitment(NEW_RECRUITMENT_COURSE_KEY) },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 20.dp, bottom = 14.dp)
@@ -221,6 +191,63 @@ fun HomeScreen(
                     imageVector = Icons.Filled.Add,
                     contentDescription = if (isOnline) "모집 만들기" else "연결되면 모집을 만들 수 있어요",
                     modifier = Modifier.size(26.dp)
+                )
+            }
+        }
+    }
+}
+
+/** 코스를 고르지 않고 모집 만들기로 들어갈 때 쓰는 초안 키. 코스는 17-1 에서 서버 목록으로 고른다. */
+const val NEW_RECRUITMENT_COURSE_KEY = "new"
+
+@Composable
+private fun HomeCourseStrip(
+    state: ServerListState<TravelCourse>,
+    signedIn: Boolean,
+    onOpenCourse: (String) -> Unit,
+    onRetry: () -> Unit
+) {
+    when {
+        !signedIn -> MoyeoEmptyState(MoyeoEmptyText.SIGN_IN_EXPLORE, testTag = "home-courses-signed-out")
+
+        state is ServerListState.Loading -> MoyeoEmptyState(MoyeoEmptyText.LOADING)
+
+        state is ServerListState.Failed -> MoyeoEmptyState(MoyeoEmptyText.FAILED, onRetry = onRetry)
+
+        state is ServerListState.Loaded && state.items.isEmpty() ->
+            MoyeoEmptyState("아직 공개된 코스가 없어요.", testTag = "home-courses-empty")
+
+        state is ServerListState.Loaded -> LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(state.items.take(6), key = { it.courseId }) { course ->
+                HomeMiniCourseCard(course = course, onClick = { onOpenCourse("srv-${course.courseId}") })
+            }
+        }
+    }
+}
+
+@Composable
+private fun HomePopularCourses(
+    state: ServerListState<TravelCourse>,
+    signedIn: Boolean,
+    onOpenCourse: (String) -> Unit,
+    onRetry: () -> Unit
+) {
+    when {
+        !signedIn -> MoyeoEmptyState(MoyeoEmptyText.SIGN_IN_EXPLORE, testTag = "home-popular-signed-out")
+
+        state is ServerListState.Loading -> MoyeoEmptyState(MoyeoEmptyText.LOADING)
+
+        state is ServerListState.Failed -> MoyeoEmptyState(MoyeoEmptyText.FAILED, onRetry = onRetry)
+
+        state is ServerListState.Loaded && state.items.isEmpty() ->
+            MoyeoEmptyState("아직 인기 코스가 없어요.", testTag = "home-popular-empty")
+
+        state is ServerListState.Loaded -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            state.items.take(3).forEachIndexed { index, course ->
+                ServerPopularCourseRow(
+                    rank = index + 1,
+                    course = course,
+                    onClick = { onOpenCourse("srv-${course.courseId}") }
                 )
             }
         }
@@ -291,12 +318,12 @@ private fun HomeSectionHeader(title: String, trailing: String? = null, onTrailin
 }
 
 @Composable
-private fun HomeMiniCourseCard(course: TripCourse, selected: Boolean, onClick: () -> Unit) {
+private fun HomeMiniCourseCard(course: TravelCourse, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .width(146.dp)
             .height(166.dp)
-            .testTag("home-course-${course.id}")
+            .testTag("home-course-${course.courseId}")
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
@@ -304,32 +331,28 @@ private fun HomeMiniCourseCard(course: TripCourse, selected: Boolean, onClick: (
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
     ) {
         Column {
-            Box(
+            CachedRemoteImage(
+                url = course.thumbnail,
+                contentDescription = course.title,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(92.dp)
+                    .height(92.dp),
+                contentScale = ContentScale.Crop,
+                fallbackShape = MoyeoPlaceholderShape.LANDSCAPE
             ) {
-                CourseScenicPanel(course = course, modifier = Modifier.fillMaxSize(), cornerRadius = 0.dp)
-                if (selected) {
-                    Text(
-                        text = "진행중",
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(8.dp)
-                            .background(MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
-                            .padding(horizontal = 7.dp, vertical = 3.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(92.dp)
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                )
             }
             Column(
                 modifier = Modifier.padding(horizontal = 9.dp, vertical = 10.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Text(
-                    text = course.homeCardTitle(),
+                    text = course.title,
                     fontSize = 12.sp,
                     lineHeight = 16.sp,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -339,86 +362,13 @@ private fun HomeMiniCourseCard(course: TripCourse, selected: Boolean, onClick: (
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = "${course.participants}/${course.capacity}명",
+                    text = "방문지 ${course.places.size}곳",
                     fontSize = 11.sp,
                     lineHeight = 14.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Bold
                 )
             }
-        }
-    }
-}
-
-private fun TripCourse.homeCardTitle(): String = when (id) {
-    "cheongsong-juwangsan" -> "주왕산 & 주산지 힐링\n트레킹"
-    "andong-hahoe" -> "안동 하회마을 하루\n코스"
-    "gyeongju-healing" -> "경주 감성 힐링\n코스"
-    "ulleung-island" -> "울릉도 2박 3일\n섬 여행"
-    "pohang-sea" -> "포항·영덕 동해\n드라이브"
-    "mungyeong-saejae" -> "문경 새재 단풍\n트레킹"
-    else -> title
-}
-
-@Composable
-private fun PopularCourseRow(course: HomePopularCourse, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(82.dp)
-            .testTag("home-popular-${course.rank}")
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        shape = RoundedCornerShape(8.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(start = 12.dp, top = 14.dp, end = 12.dp, bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(9.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(30.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = course.rank.toString(),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = ForestGreen,
-                    fontWeight = FontWeight.ExtraBold
-                )
-            }
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(2.dp)
-            ) {
-                Text(
-                    text = course.title,
-                    fontSize = 14.sp,
-                    lineHeight = 18.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.ExtraBold,
-                    maxLines = 1,
-                    modifier = Modifier.testTag("home-popular-${course.rank}-title")
-                )
-                Text(
-                    text = course.subtitle,
-                    fontSize = 11.sp,
-                    lineHeight = 15.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Icon(
-                imageVector = Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }
@@ -495,7 +445,7 @@ private fun ServerPopularCourseRow(rank: Int, course: TravelCourse, onClick: () 
 }
 
 @Composable
-private fun HomeHero(hero: WeatherHero) {
+private fun HomeHero(hero: WeatherHero, locationName: String?) {
     val isDark = MoyeoTheme.isDark
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -555,7 +505,8 @@ private fun HomeHero(hero: WeatherHero) {
                     contentScale = ContentScale.Crop
                 )
                 TextBubble(
-                    text = "${hero.weatherLabel} · ${hero.landmark}",
+                    // 지역명은 서버가 준 조회 지점이다. 없으면 날씨만 남긴다 — 지명을 지어내지 않는다.
+                    text = listOfNotNull(hero.weatherLabel, locationName).joinToString(" · "),
                     state = hero.state,
                     isDark = isDark,
                     modifier = Modifier
@@ -584,7 +535,6 @@ private fun TextBubble(text: String, state: WeatherHeroState, isDark: Boolean, m
     )
 }
 
-
 private fun WeatherHeroState.cardColor(isDark: Boolean): Color = when (this) {
     WeatherHeroState.Good -> if (isDark) Color(0xFF174C37) else ForestGreen
     WeatherHeroState.Caution -> if (isDark) Color(0xFF65411B) else Color(0xFFB87726)
@@ -602,29 +552,6 @@ private fun WeatherHeroState.selectedPillForeground(isDark: Boolean): Color = wh
     WeatherHeroState.Caution -> if (isDark) Color(0xFFFFE3B2) else Color(0xFF87530D)
     WeatherHeroState.Blocked -> if (isDark) Color(0xFFD7EFEB) else Color(0xFF254C4B)
 }
-
-private data class HomePopularCourse(val rank: Int, val title: String, val subtitle: String, val courseId: String)
-
-private fun homePopularCourses(): List<HomePopularCourse> = listOf(
-    HomePopularCourse(
-        rank = 1,
-        title = "주왕산 단풍 물길",
-        subtitle = "청송 · 자연",
-        courseId = "cheongsong-juwangsan"
-    ),
-    HomePopularCourse(
-        rank = 2,
-        title = "안동 하회마을 산책",
-        subtitle = "안동 · 문화",
-        courseId = "andong-hahoe"
-    ),
-    HomePopularCourse(
-        rank = 3,
-        title = "울릉도 2박 3일 섬 여행",
-        subtitle = "울릉 · 힐링",
-        courseId = "ulleung-island"
-    )
-)
 
 private fun WeatherHero.imageResId(isDark: Boolean): Int = when (imageResourceName(isDark)) {
     "weather_sunny_cheomseongdae" -> R.drawable.weather_sunny_cheomseongdae
@@ -686,38 +613,43 @@ private fun OfflineWeatherPlaceholder() {
     }
 }
 
-/** 저장해둔 코스 한 줄. 저장 시점을 함께 보여 캐시된 내용임을 알린다. */
+/**
+ * 36 오프라인(캐시 있음) 홈의 "저장해둔 코스" 섹션 (화면기획 · iOS 와 같은 자리).
+ *
+ * 안드로이드에는 코스를 기기에 담아 두는 저장소가 아직 없다. 그래서 목록은 늘 비어 있고,
+ * 그 사실을 빈 상태로 그대로 그린다 — 예시 코스를 끼워 넣지 않는다(NO-MOCK-CANON).
+ */
 @Composable
-private fun SavedOfflineCourseRow(course: TripCourse, onClick: () -> Unit) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .testTag("home-offline-saved-${course.id}"),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+private fun OfflineSavedCoursesSection() {
+    Column(
+        modifier = Modifier.fillMaxWidth().testTag("home-offline-saved-courses"),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Row(
-            Modifier.padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            CourseScenicPanel(course = course, modifier = Modifier.size(62.dp), cornerRadius = 10.dp)
-            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(course.title, fontWeight = FontWeight.ExtraBold, maxLines = 1)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "저장해둔 코스",
+                style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.onBackground,
+                fontWeight = FontWeight.ExtraBold
+            )
+            Surface(
+                modifier = Modifier.padding(start = 8.dp),
+                shape = RoundedCornerShape(999.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant
+            ) {
                 Text(
-                    "${course.region} · ${course.duration} ${course.distance}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    "어제 저장됨",
+                    "오프라인에서도 열려요",
+                    Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
                     style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
+        MoyeoEmptyState(
+            text = MoyeoEmptyText.NO_SAVED_COURSES,
+            testTag = "home-offline-saved-courses-empty"
+        )
     }
 }
 

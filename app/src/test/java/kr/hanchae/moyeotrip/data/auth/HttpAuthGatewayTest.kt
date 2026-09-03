@@ -47,7 +47,7 @@ class HttpAuthGatewayTest {
 
             gateway.signup(
                 IdentityToken(provider, "firebase-id-token"),
-                SignupInput("selection", "따스한 사슴 3492", Gender.FEMALE, "1998-04-12")
+                SignupInput("selection", "따스한 사슴 3492", Gender.FEMALE, "1998-04-12", listOf(1L))
             )
 
             assertEquals("POST", connection.requestMethod)

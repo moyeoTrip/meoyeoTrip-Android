@@ -35,7 +35,6 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -48,116 +47,59 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-import kr.hanchae.moyeotrip.data.FeedPost
 import kr.hanchae.moyeotrip.data.FeedVisibility
-import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.feed.FeedComment
 import kr.hanchae.moyeotrip.data.feed.ServerFeed
 import kr.hanchae.moyeotrip.ui.LocalServerData
-import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
+/**
+ * 화면기획 23 피드 상세 — 서버 피드(GET feeds/{id})만 그린다.
+ * 라우트 식별자는 `srv-{feedId}` 다. 그 형태가 아니거나 미로그인이면 빈 상태다.
+ *
+ * [onOpenReport] 는 30-2 피드 신고 시트로 가는 **유일한 진입점**이다 — 서버가 접수하는 신고는
+ * 피드뿐인데(`POST feeds/{id}/reports`) 여기 진입점이 없으면 기능이 죽는다(정본 §2).
+ * 자기 피드는 서버가 신고를 거절하므로(실서버 400 `40039`) 버튼을 아예 두지 않는다.
+ */
 @Composable
-fun FeedDetailScreen(postId: String, onBack: () -> Unit, onOpenAllComments: () -> Unit = {}) {
-    // "srv-{id}" 는 실서버 피드다 (서버 피드 목록·좋아요 알림에서만 이 형태로 진입한다)
+fun FeedDetailScreen(
+    postId: String,
+    onBack: () -> Unit,
+    onOpenAllComments: () -> Unit = {},
+    onOpenReport: (Long) -> Unit = {}
+) {
     val server = LocalServerData.current
     val serverFeedId = postId.removePrefix("srv-").toLongOrNull()?.takeIf { postId.startsWith("srv-") }
-    if (serverFeedId != null && server != null) {
-        ServerFeedDetail(feedId = serverFeedId, server = server, onBack = onBack)
+    if (serverFeedId == null || server == null) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(MaterialTheme.colorScheme.background)
+        ) {
+            FeedDetailHeader(onBack = onBack, onOpenReport = null)
+            MoyeoEmptyState(MoyeoEmptyText.NO_FEEDS, testTag = "feed-detail-empty")
+        }
         return
     }
-    val post = MockTripRepository.findFeedPost(postId)
-    var comment by rememberSaveable { mutableStateOf("") }
-    var actionMessage by rememberSaveable(postId) { mutableStateOf<String?>(null) }
-    val submittedComments = remember(postId) { mutableStateListOf<String>() }
-    val colorScheme = MaterialTheme.colorScheme
-
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(colorScheme.background)
-    ) {
-        Column(modifier = Modifier.fillMaxSize()) {
-            FeedDetailHeader(
-                onBack = onBack,
-                onOpenMore = {
-                    actionMessage = "피드 저장, 공유, 신고 옵션을 확인할 수 있어요."
-                }
-            )
-            LazyColumn(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .testTag("feed-detail-scroll"),
-                contentPadding = PaddingValues(start = 18.dp, top = 22.dp, end = 18.dp, bottom = 108.dp)
-            ) {
-                actionMessage?.let { message ->
-                    item {
-                        FeedActionBanner(message = message)
-                    }
-                }
-                item {
-                    FeedDetailAuthorRow(post = post)
-                }
-                item {
-                    FeedDetailTitleBlock(post = post)
-                }
-                item {
-                    FeedDetailMedia(post = post, modifier = Modifier.padding(top = 22.dp))
-                }
-                item {
-                    Text(
-                        text = post.body,
-                        modifier = Modifier.padding(top = 22.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.onBackground,
-                        lineHeight = MaterialTheme.typography.bodyMedium.lineHeight
-                    )
-                }
-                item {
-                    FeedDetailStats(
-                        stats = post.detailStats(),
-                        modifier = Modifier.padding(top = 16.dp)
-                    )
-                }
-                item {
-                    FeedDetailMetrics(
-                        post = post,
-                        modifier = Modifier.padding(top = 18.dp),
-                        onOpenAllComments = onOpenAllComments
-                    )
-                }
-                if (submittedComments.isNotEmpty()) {
-                    items(submittedComments.size) { index ->
-                        FeedSubmittedComment(text = submittedComments[index])
-                    }
-                }
-            }
-        }
-        FeedCommentBar(
-            comment = comment,
-            onCommentChange = { comment = it },
-            onSend = {
-                val trimmed = comment.trim()
-                if (trimmed.isNotEmpty()) {
-                    MockTripRepository.addFeedComment(post.id)
-                    submittedComments.add(trimmed)
-                    comment = ""
-                }
-            },
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
-    }
+    ServerFeedDetail(
+        feedId = serverFeedId,
+        server = server,
+        onBack = onBack,
+        onOpenAllComments = onOpenAllComments,
+        onOpenReport = onOpenReport
+    )
 }
 
 @Composable
-private fun FeedDetailHeader(onBack: () -> Unit, onOpenMore: () -> Unit) {
+private fun FeedDetailHeader(onBack: () -> Unit, onOpenReport: (() -> Unit)?) {
     val colorScheme = MaterialTheme.colorScheme
 
     Row(
@@ -176,75 +118,18 @@ private fun FeedDetailHeader(onBack: () -> Unit, onOpenMore: () -> Unit) {
                 tint = colorScheme.onBackground
             )
         }
-        IconButton(onClick = onOpenMore) {
-            Icon(
-                imageVector = Icons.Filled.MoreHoriz,
-                contentDescription = "더보기",
-                tint = colorScheme.onBackground
-            )
+        // 화면기획 23 의 ⋯ 자리. 예전에는 빈 onClick 이라 눌러도 아무 일도 없었다 —
+        // 30-2 피드 신고로 잇는다. 신고할 수 없는 피드(자기 피드·빈 상태)에는 두지 않는다.
+        if (onOpenReport != null) {
+            IconButton(onClick = onOpenReport, modifier = Modifier.testTag("feed-detail-report")) {
+                Icon(
+                    imageVector = Icons.Filled.MoreHoriz,
+                    contentDescription = "신고",
+                    tint = colorScheme.onBackground
+                )
+            }
         }
     }
-}
-
-@Composable
-private fun FeedActionBanner(message: String) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 12.dp),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.primaryContainer
-    ) {
-        Text(
-            text = message,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            fontWeight = FontWeight.ExtraBold
-        )
-    }
-}
-
-@Composable
-private fun FeedDetailAuthorRow(post: FeedPost) {
-    val colorScheme = MaterialTheme.colorScheme
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        AnimalAvatar(
-            emoji = post.avatar,
-            modifier = Modifier.size(42.dp),
-            container = colorScheme.primaryContainer
-        )
-        Column(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(5.dp)
-        ) {
-            Text(
-                text = post.author,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Black,
-                color = colorScheme.onBackground,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                text = post.detailTimeLabel(),
-                style = MaterialTheme.typography.labelSmall,
-                color = colorScheme.onSurfaceVariant
-            )
-        }
-        // 공개범위 필은 작성자 행 오른쪽에 둔다 (화면기획 23)
-        FeedVisibilityPill(post)
-    }
-}
-
-@Composable
-private fun FeedVisibilityPill(post: FeedPost) {
-    FeedVisibilityPill(label = post.visibility.label)
 }
 
 /**
@@ -277,167 +162,6 @@ private fun FeedVisibilityPill(label: String) {
                 color = colorScheme.onSurfaceVariant
             )
         }
-    }
-}
-
-@Composable
-private fun FeedDetailTitleBlock(post: FeedPost) {
-    val colorScheme = MaterialTheme.colorScheme
-
-    Column(
-        modifier = Modifier.padding(top = 22.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        Text(
-            text = post.title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Black,
-            color = colorScheme.onBackground,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
-        Text(
-            text = post.detailSubtitle(),
-            style = MaterialTheme.typography.labelMedium,
-            color = colorScheme.onSurfaceVariant
-        )
-    }
-}
-
-@Composable
-private fun FeedDetailMedia(post: FeedPost, modifier: Modifier = Modifier) {
-    val colorScheme = MaterialTheme.colorScheme
-
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(198.dp)
-            .clip(RoundedCornerShape(10.dp))
-    ) {
-        Row(
-            modifier = Modifier.fillMaxSize(),
-            horizontalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            FeedPhotoPanel(
-                post = post,
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-            )
-            FeedRouteMapPanel(
-                stops = post.routeStops(),
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-            )
-        }
-        Text(
-            text = post.photoCountText,
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(8.dp)
-                .background(colorScheme.scrim.copy(alpha = 0.55f), CircleShape)
-                .padding(horizontal = 7.dp, vertical = 4.dp),
-            style = MaterialTheme.typography.labelSmall,
-            fontWeight = FontWeight.Black,
-            color = colorScheme.onPrimary
-        )
-    }
-}
-
-@Composable
-private fun FeedDetailStats(stats: List<Pair<String, String>>, modifier: Modifier = Modifier) {
-    Row(
-        modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        stats.forEach { stat ->
-            FeedStatTile(
-                label = stat.first,
-                value = stat.second,
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
-
-@Composable
-private fun FeedStatTile(label: String, value: String, modifier: Modifier = Modifier) {
-    val colorScheme = MaterialTheme.colorScheme
-
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(10.dp),
-        color = colorScheme.surfaceVariant
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = value,
-                modifier = Modifier.padding(top = 5.dp),
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Black,
-                color = colorScheme.onSurface
-            )
-        }
-    }
-}
-
-@Composable
-private fun FeedDetailMetrics(post: FeedPost, modifier: Modifier = Modifier, onOpenAllComments: () -> Unit = {}) {
-    val colorScheme = MaterialTheme.colorScheme
-
-    Column(modifier = modifier.fillMaxWidth()) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(18.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = "좋아요 ${post.likes}개",
-                style = MaterialTheme.typography.bodyMedium,
-                color = colorScheme.onSurfaceVariant
-            )
-            Text(
-                text = "댓글 ${post.comments}개 모두 보기 →",
-                modifier = Modifier
-                    .clickable(onClick = onOpenAllComments)
-                    .testTag("feed-comments-open"),
-                style = MaterialTheme.typography.bodyMedium,
-                color = colorScheme.primary,
-                fontWeight = FontWeight.Bold
-            )
-        }
-        HorizontalDivider(
-            modifier = Modifier.padding(top = 14.dp),
-            color = colorScheme.outline.copy(alpha = 0.45f)
-        )
-    }
-}
-
-@Composable
-private fun FeedSubmittedComment(text: String) {
-    val colorScheme = MaterialTheme.colorScheme
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 10.dp),
-        shape = RoundedCornerShape(10.dp),
-        color = colorScheme.surfaceVariant
-    ) {
-        Text(
-            text = "나: $text",
-            modifier = Modifier.padding(12.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = colorScheme.onSurface
-        )
     }
 }
 
@@ -525,51 +249,25 @@ private fun FeedCommentBar(
     }
 }
 
-private fun FeedPost.detailTimeLabel(): String = when {
-    id.startsWith("session-feed-") -> "방금"
-    id == "feed-1" -> "2시간 전"
-    id == "feed-2" -> "5시간 전"
-    else -> "어제"
-}
-
-private fun FeedPost.detailSubtitle(): String = when (id) {
-    // 부제는 "장소 · #해시태그" 한 줄이다 (4개 플랫폼 공통, docs/alignment/MOCKDATA-CANON.md).
-    // 별도의 태그 칩 줄은 두지 않는다 — 같은 내용을 두 줄로 반복하게 된다.
-    "feed-1" -> "청송 · #주왕산 #주산지 #숲길"
-
-    "feed-2" -> "안동 · #한옥산책 #가을여행"
-
-    "feed-3" -> "경주 · #야경 #월정교"
-
-    "feed-4" -> "포항 · #바다 #드라이브"
-
-    "feed-5" -> "문경 · #단풍 #숲길"
-
-    "feed-7" -> "울릉 · #섬여행 #해안산책"
-
-    else -> region
-}
-
-private fun FeedPost.detailStats(): List<Pair<String, String>> {
-    val routeStopCount = routeStops().size.coerceAtLeast(1)
-    val travelStat = when (id) {
-        "feed-1" -> "12.4km" to "4시간 30분"
-        "feed-2" -> "8.8km" to "3시간 10분"
-        else -> "6.5km" to "2시간 40분"
-    }
-    return listOf(
-        "이동 거리" to travelStat.first,
-        "소요 시간" to travelStat.second,
-        "방문지" to "${routeStopCount}곳"
-    )
-}
+/**
+ * 23 피드 상세가 미리보기로 보여주는 댓글 수. 세 플랫폼이 3 으로 맞춘 값이다
+ * (PDF-REVIEW-2026-08-31 §F3 · 웹 `FEED_DETAIL_COMMENT_PREVIEW`).
+ * 나머지는 `댓글 … 모두 보기` 로 들어가는 23-1 이 무한 스크롤로 받는다.
+ */
+private const val FEED_DETAIL_COMMENT_PREVIEW = 3
 
 /**
  * 실서버 피드 상세 (GET feeds/{id} + comments). 댓글 등록은 POST comments,
  * 좋아요는 POST like 다. 서버가 주지 않는 값(이동 거리 통계 등)은 표시하지 않는다.
  */
 @Composable
-private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBack: () -> Unit) {
+private fun ServerFeedDetail(
+    feedId: Long,
+    server: ServerDataDependencies,
+    onBack: () -> Unit,
+    onOpenAllComments: () -> Unit,
+    onOpenReport: (Long) -> Unit
+) {
     val colorScheme = MaterialTheme.colorScheme
     var feed by remember(feedId) { mutableStateOf<ServerFeed?>(null) }
     var comments by remember(feedId) { mutableStateOf<List<FeedComment>>(emptyList()) }
@@ -582,7 +280,12 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
         feed = loaded
         loadFailed = loaded == null
         if (loaded != null) {
-            comments = runCatching { server.feeds.comments(feedId) }.getOrNull().orEmpty()
+            // 23 은 미리보기 3건만 그린다 — 자르는 것은 서버 커서 `limit` 이고 클라가 잘라내지
+            // 않는다(웹 `FEED_DETAIL_COMMENT_PREVIEW` 와 같은 값·같은 방식).
+            // 뒤 묶음은 `댓글 … 모두 보기`로 들어가는 23-1 이 무한 스크롤로 받는다.
+            comments = runCatching {
+                server.feeds.comments(feedId, limit = FEED_DETAIL_COMMENT_PREVIEW).comments
+            }.getOrNull().orEmpty()
         }
     }
 
@@ -592,15 +295,16 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
             .background(colorScheme.background)
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            FeedDetailHeader(onBack = onBack, onOpenMore = {})
+            val myUserId = remember(server) { server.signedInUserId() }
+            val reportable = feed?.author?.userId?.let { it != myUserId } == true
+            FeedDetailHeader(
+                onBack = onBack,
+                onOpenReport = if (reportable) ({ onOpenReport(feedId) }) else null
+            )
             val loadedFeed = feed
             if (loadedFeed == null) {
                 Box(modifier = Modifier.weight(1f).fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    Text(
-                        text = if (loadFailed) "피드를 불러오지 못했어요." else "불러오는 중…",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.onSurfaceVariant
-                    )
+                    MoyeoEmptyState(if (loadFailed) MoyeoEmptyText.FAILED else MoyeoEmptyText.LOADING)
                 }
             } else {
                 LazyColumn(
@@ -643,6 +347,19 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
                             }
                         }
                     }
+                    // 화면기획 23 은 작성자 바로 아래에 **코스 제목**이 굵게 온다.
+                    // 이전에는 제목이 본문 아래에 작은 글씨로 있어 웹·iOS 와 위계가 어긋났다.
+                    loadedFeed.trip?.courseTitle?.let { courseTitle ->
+                        item {
+                            Text(
+                                text = courseTitle,
+                                modifier = Modifier.padding(top = 14.dp),
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = colorScheme.onSurface
+                            )
+                        }
+                    }
                     if (loadedFeed.imageUrls.isNotEmpty()) {
                         item {
                             Row(
@@ -658,7 +375,8 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
                                         url = imageUrl,
                                         contentDescription = null,
                                         modifier = Modifier.weight(1f).fillMaxHeight(),
-                                        contentScale = ContentScale.Crop
+                                        contentScale = ContentScale.Crop,
+                                        fallbackShape = MoyeoPlaceholderShape.SQUARE
                                     ) {
                                         Box(
                                             modifier = Modifier
@@ -678,14 +396,34 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
                             color = colorScheme.onBackground
                         )
                     }
-                    loadedFeed.trip?.courseTitle?.let { courseTitle ->
+                    // 화면기획 23 의 지표 칸. 서버는 이동 거리·소요 시간을 주지 않으므로
+                    // 방문지 수만 그린다 — 없는 값을 지어내지 않는다.
+                    loadedFeed.trip?.placeTitles?.size?.takeIf { it > 0 }?.let { placeCount ->
                         item {
-                            Text(
-                                text = "🗺 $courseTitle",
-                                modifier = Modifier.padding(top = 10.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = colorScheme.onSurfaceVariant
-                            )
+                            Surface(
+                                modifier = Modifier
+                                    .padding(top = 18.dp)
+                                    .fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                color = colorScheme.surfaceVariant
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth(),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = "방문지",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "${placeCount}곳",
+                                        fontWeight = FontWeight.ExtraBold,
+                                        color = colorScheme.onSurface
+                                    )
+                                }
+                            }
                         }
                     }
                     item {
@@ -714,12 +452,18 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
                                 fontWeight = FontWeight.ExtraBold
                             )
                             Text(
-                                text = "댓글 ${loadedFeed.commentCount}",
+                                text = "댓글 ${loadedFeed.commentCount}개 모두 보기 →",
+                                modifier = Modifier
+                                    .clickable(onClick = onOpenAllComments)
+                                    .testTag("feed-comments-open"),
                                 style = MaterialTheme.typography.labelLarge,
-                                color = colorScheme.onSurface,
+                                color = colorScheme.primary,
                                 fontWeight = FontWeight.ExtraBold
                             )
                         }
+                    }
+                    if (comments.isEmpty()) {
+                        item { MoyeoEmptyState(MoyeoEmptyText.NO_COMMENTS, testTag = "feed-detail-no-comments") }
                     }
                     items(comments.size) { index ->
                         val entry = comments[index]
@@ -760,10 +504,16 @@ private fun ServerFeedDetail(feedId: Long, server: ServerDataDependencies, onBac
                 if (trimmed.isNotEmpty()) {
                     detailScope.launch {
                         runCatching { server.feeds.addComment(feedId, trimmed) }
-                            .onSuccess { created ->
-                                comments = comments + created
-                                feed = feed?.copy(commentCount = (feed?.commentCount ?: 0) + 1)
+                            .onSuccess {
+                                // 댓글을 달면 **미리보기 첫 묶음을 다시 읽는다**. 손으로 끼워 넣지
+                                // 않는 이유는 웹과 같다 — 최상위 댓글은 최신 ID 부터 오므로 3건
+                                // 미리보기에 새 댓글이 들어가면 마지막 1건은 밀려나야 하고,
+                                // 그 자리를 클라가 계산하면 서버 순서와 어긋난다.
                                 comment = ""
+                                feed = feed?.copy(commentCount = (feed?.commentCount ?: 0) + 1)
+                                comments = runCatching {
+                                    server.feeds.comments(feedId, limit = FEED_DETAIL_COMMENT_PREVIEW).comments
+                                }.getOrNull() ?: comments
                             }
                     }
                 }

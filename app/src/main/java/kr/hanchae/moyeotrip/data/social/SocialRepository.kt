@@ -15,12 +15,7 @@ data class FriendRequest(val requestId: Long, val user: SocialUser, val requeste
 data class BlockedUser(val userId: Long, val nickname: String, val profileImageUrl: String?, val blockedAt: String)
 
 /** 도감의 한 여행 기록. `oneLineReview` 는 "내가 그 사람에게 남긴" 메시지다(27-1). */
-data class DexMemory(
-    val chatRoomId: Long,
-    val tripTitle: String,
-    val tripDate: String,
-    val oneLineReview: String?
-)
+data class DexMemory(val chatRoomId: Long, val tripTitle: String, val tripDate: String, val oneLineReview: String?)
 
 data class DexCompanion(
     val userId: Long,

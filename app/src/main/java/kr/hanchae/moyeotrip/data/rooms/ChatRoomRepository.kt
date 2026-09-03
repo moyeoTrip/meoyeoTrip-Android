@@ -66,12 +66,21 @@ data class ChatRoomDetail(
     val minimumAge: Int?,
     val maximumAge: Int?,
     val recruitmentDDay: Int?,
+    val hostId: Long?,
     val hostProfileImageUrl: String?,
     val participantCount: Int,
+    // 18-1 확정 CTA 를 잠그는 근거. 서버 상세 응답의 `minimumParticipants` 를 그대로 쓴다 —
+    // 이 값이 없다고 임의의 하한(2·3명)을 지어내지 않는다.
+    val minimumParticipants: Int?,
     val maxParticipants: Int,
     val status: String,
     val favorite: Boolean,
-    val participantImageUrls: List<String?>
+    val participantImageUrls: List<String?>,
+    // 2026-08-26 BE 변경: 검색 응답이 카드용으로 축소되면서 코스 제목·태그가 상세로 옮겨졌다.
+    // canApply 는 삭제된 join-eligibility 를 대체한다(모집 상태·마감·기존 신청·성별/나이 제한이 반영된 값).
+    val courseTitle: String?,
+    val tags: List<RoomTag>,
+    val canApply: Boolean?
 )
 
 enum class RoomApplicationResult { JOINED, WAITLISTED, PENDING_APPROVAL }
@@ -204,6 +213,15 @@ data class RoomNotices(val pinned: List<RoomNotice>, val unpinned: List<RoomNoti
     val all: List<RoomNotice> get() = pinned + unpinned
 }
 
+/**
+ * 방 하나에 둘 수 있는 상단 고정 공지 수 — **1개**다 (`ATTACH-COMPOSER-CANON.md` R5-1).
+ *
+ * 서버는 고정 개수를 **제한하지 않는다**(실서버 방 101 에 2건이 고정돼 있는 것을 확인했다).
+ * 그러니 클라이언트가 지켜야 한다 — 새로 고정할 때 기존 고정 공지를
+ * `PUT chat-rooms/{id}/notices/{noticeId}` 로 `pinned:false` 처리한다.
+ */
+const val ROOM_NOTICE_PIN_LIMIT = 1
+
 data class RoadmapPlace(
     val contentId: Long,
     val sequence: Int,
@@ -287,7 +305,8 @@ enum class RoomStatusChange { RECRUITING, CONFIRMED, CANCELLED }
  * [mannerRating] 은 서버가 아직 값을 채우지 않아 대개 null 이다 — null 이면 표기를 숨긴다.
  */
 data class RoomCompanion(
-    val companionRecordId: Long,
+    // 2026-08-26 BE 변경: companionRecordId 가 응답에서 제거됐다.
+    // 평가 API 의 경로 변수도 companionUserId 로 바뀌어, 식별자는 userId 하나로 통일됐다.
     val userId: Long,
     val nickname: String,
     val profileImageUrl: String?,
@@ -321,20 +340,45 @@ data class ApplicationApproval(val applicationId: Long, val result: String, val 
 data class RoomLeaveResult(val roomId: Long, val result: String, val promotedUserId: Long?)
 
 interface ChatRoomRepository {
+    /**
+     * 12 · 12-1 통합 모집 검색 — `GET /api/v1/chat-rooms/search?keyword=`.
+     *
+     * 서버가 채팅방 제목·소개, 코스 이름, 코스 태그, 방문지 이름·주소를 한 번에 찾는다.
+     * **사용자가 직접 입력한 검색어**만 넘긴다 — 태그를 눌러 찾는 기능은 없다(2026-08-31 확인).
+     */
     suspend fun search(keyword: String? = null, limit: Int? = null): List<ChatRoomSearchResult>
 
-    /** 생성된 방의 roomId — 201 `CreateChatRoomResponse`. 이 값으로 15 모집 상세로 이동한다. */
-    suspend fun createRoom(room: NewChatRoom): Long
+    /**
+     * 지도 반경 조회 — `GET /api/v1/chat-rooms/map`.
+     *
+     * **검색 응답(`/search`)에는 집합 좌표가 없다**(2026-08-26 응답 축소). 지도에 핀을 찍으려면
+     * 이 엔드포인트를 써야 한다. 좌표 없는 목록으로 지도를 그리려 하면 늘 목업으로 떨어진다.
+     */
+    suspend fun mapRooms(latitude: Double, longitude: Double, radiusKm: Double): List<ChatRoomSearchResult>
+
+    /**
+     * 생성된 방의 roomId — 201 `CreateChatRoomResponse`. 이 값으로 15 모집 상세로 이동한다.
+     *
+     * 2026-08-26 서버 변경: 썸네일이 **필수**다(없으면 400 `40041`,
+     * 이미지가 아니거나 20MB 초과면 400 `40042`). 서버가 저장 전에 비율 유지 FHD 축소 + WebP 변환을
+     * 직접 하므로(2026-08-29 안내) 클라에서 리사이즈·변환하지 않는다.
+     * 사용자가 사진을 고르지 않으면 호출부가 기본 플레이스홀더를 넘긴다.
+     */
+    suspend fun createRoom(room: NewChatRoom, thumbnail: MultipartFile): Long
 
     suspend fun room(roomId: Long): ChatRoomDetail
-
-    suspend fun canApply(roomId: Long): Boolean
 
     suspend fun apply(roomId: Long, message: String?): RoomApplicationResult
 
     suspend fun cancelApplication(roomId: Long)
 
     suspend fun toggleFavorite(roomId: Long): Boolean
+
+    /**
+     * 26-1 찜한 모집 — `GET /api/v1/chat-rooms/my/favorites`.
+     * 마이 26 의 `찜한 코스` 와 다른 목록이다. 코스는 코스고 모집은 모집이다.
+     */
+    suspend fun favoriteRooms(): List<ChatRoomSearchResult>
 
     suspend fun myRooms(): List<MyChatRoom>
 
@@ -385,16 +429,22 @@ interface ChatRoomRepository {
     /** 18 모집 확정·취소 (호스트). */
     suspend fun changeStatus(roomId: Long, status: RoomStatusChange)
 
+    /** 20-3 공지 등록 (호스트). 고정 개수는 서버가 막지 않는다 — [publishNotice] 를 쓴다. */
+    suspend fun createNotice(roomId: Long, notice: String, pinned: Boolean)
+
     /** 20-3 공지 수정·고정 토글 (호스트). null 인 필드는 보내지 않아 그대로 유지된다. */
     suspend fun updateNotice(roomId: Long, noticeId: Long, notice: String? = null, pinned: Boolean? = null)
+
+    /** 20-3a 공지 삭제 — `DELETE /api/v1/chat-rooms/{roomId}/notices/{noticeId}`. 되돌릴 수 없다. */
+    suspend fun deleteNotice(roomId: Long, noticeId: Long)
 
     /** 20-1 · 27 동행자 목록 — 완료 여행만 200, 미완료는 `409 40915`. */
     suspend fun companions(roomId: Long): List<RoomCompanion>
 
-    /** 27-3 동행자 평가 — `mannerScore` 가 필수다. */
+    /** 27-3 동행자 평가 — `mannerScore` 가 필수다. 경로 변수는 상대의 `userId` 다. */
     suspend fun reviewCompanion(
         roomId: Long,
-        companionRecordId: Long,
+        companionUserId: Long,
         mannerScore: Int,
         oneLineReview: String? = null
     ): RoomCompanion
@@ -422,19 +472,26 @@ class HttpChatRoomRepository(private val client: MoyeoApiClient) : ChatRoomRepos
             limit?.let { add("limit=$it") }
         }.joinToString("&")
         val path = "/api/v1/chat-rooms/search" + if (query.isBlank()) "" else "?$query"
-        return client.getArray(path).mapObjects(JSONObject::toSearchResult)
+        return client.getArray(path).mapObjects(JSONObject::toChatRoomSearchResult)
     }
 
+    override suspend fun mapRooms(latitude: Double, longitude: Double, radiusKm: Double): List<ChatRoomSearchResult> =
+        client
+            .getArray("/api/v1/chat-rooms/map?latitude=$latitude&longitude=$longitude&radiusKm=$radiusKm")
+            .mapObjects(JSONObject::toChatRoomSearchResult)
+
     /** multipart 요청이고 `request` 파트가 application/json 이다. 썸네일은 선택이라 보내지 않는다. */
-    override suspend fun createRoom(room: NewChatRoom): Long =
-        client.sendMultipartForObject("POST", "/api/v1/chat-rooms", "request", room.toRequestJson())
-            .getLong("roomId")
+    override suspend fun createRoom(room: NewChatRoom, thumbnail: MultipartFile): Long =
+        client.sendMultipartJsonAndFileForObject(
+            "POST",
+            "/api/v1/chat-rooms",
+            "request",
+            room.toRequestJson(),
+            thumbnail
+        ).getLong("roomId")
 
     override suspend fun room(roomId: Long): ChatRoomDetail =
         client.getObject("/api/v1/chat-rooms/$roomId").toRoomDetail()
-
-    override suspend fun canApply(roomId: Long): Boolean =
-        client.getObject("/api/v1/chat-rooms/$roomId/join-eligibility").optBoolean("canApply")
 
     override suspend fun apply(roomId: Long, message: String?): RoomApplicationResult {
         val body = JSONObject()
@@ -449,6 +506,9 @@ class HttpChatRoomRepository(private val client: MoyeoApiClient) : ChatRoomRepos
 
     override suspend fun toggleFavorite(roomId: Long): Boolean =
         client.sendForObject("POST", "/api/v1/chat-rooms/$roomId/favorite").optBoolean("favorite")
+
+    override suspend fun favoriteRooms(): List<ChatRoomSearchResult> =
+        client.getArray("/api/v1/chat-rooms/my/favorites").mapObjects(JSONObject::toChatRoomSearchResult)
 
     override suspend fun myRooms(): List<MyChatRoom> =
         client.getArray("/api/v1/chat-rooms/my").mapObjects(JSONObject::toMyRoom)
@@ -559,6 +619,14 @@ class HttpChatRoomRepository(private val client: MoyeoApiClient) : ChatRoomRepos
         client.send("POST", "/api/v1/chat-rooms/$roomId/status", JSONObject().put("status", status.name))
     }
 
+    override suspend fun createNotice(roomId: Long, notice: String, pinned: Boolean) {
+        client.send(
+            "POST",
+            "/api/v1/chat-rooms/$roomId/notices",
+            JSONObject().put("notice", notice).put("pinned", pinned)
+        )
+    }
+
     override suspend fun updateNotice(roomId: Long, noticeId: Long, notice: String?, pinned: Boolean?) {
         client.send(
             "PUT",
@@ -567,12 +635,16 @@ class HttpChatRoomRepository(private val client: MoyeoApiClient) : ChatRoomRepos
         )
     }
 
+    override suspend fun deleteNotice(roomId: Long, noticeId: Long) {
+        client.send("DELETE", "/api/v1/chat-rooms/$roomId/notices/$noticeId")
+    }
+
     override suspend fun companions(roomId: Long): List<RoomCompanion> =
         client.getArray("/api/v1/chat-rooms/$roomId/companions").mapObjects(JSONObject::toCompanion)
 
     override suspend fun reviewCompanion(
         roomId: Long,
-        companionRecordId: Long,
+        companionUserId: Long,
         mannerScore: Int,
         oneLineReview: String?
     ): RoomCompanion {
@@ -580,7 +652,7 @@ class HttpChatRoomRepository(private val client: MoyeoApiClient) : ChatRoomRepos
         oneLineReview?.takeIf(String::isNotBlank)?.let { body.put("oneLineReview", it) }
         return client.sendForObject(
             "PUT",
-            "/api/v1/chat-rooms/$roomId/companions/$companionRecordId/review",
+            "/api/v1/chat-rooms/$roomId/companions/$companionUserId/review",
             body
         ).toCompanion()
     }
@@ -646,7 +718,11 @@ internal fun noticeUpdateJson(notice: String?, pinned: Boolean?): JSONObject {
     return body
 }
 
-private fun JSONObject.toSearchResult() = ChatRoomSearchResult(
+/**
+ * `SearchChatRoomResponse` → [ChatRoomSearchResult].
+ * 코스로 열린 모집(GET travel-courses/{id}/chat-rooms)도 같은 모양이라 함께 쓴다.
+ */
+internal fun JSONObject.toChatRoomSearchResult() = ChatRoomSearchResult(
     roomId = getLong("roomId"),
     title = getString("title"),
     description = stringOrNull("description"),
@@ -692,12 +768,17 @@ private fun JSONObject.toRoomDetail() = ChatRoomDetail(
     minimumAge = intOrNull("minimumAge"),
     maximumAge = intOrNull("maximumAge"),
     recruitmentDDay = intOrNull("recruitmentDDay"),
+    hostId = longOrNull("hostId"),
     hostProfileImageUrl = stringOrNull("hostProfileImageUrl"),
     participantCount = optInt("participantCount"),
+    minimumParticipants = intOrNull("minimumParticipants"),
     maxParticipants = optInt("maxParticipants"),
     status = optString("status"),
     favorite = optBoolean("favorite"),
-    participantImageUrls = mapArray("participants") { it.stringOrNull("profileImageUrl") }
+    participantImageUrls = mapArray("participants") { it.stringOrNull("profileImageUrl") },
+    courseTitle = stringOrNull("courseTitle"),
+    tags = mapArray("tags") { RoomTag(it.getLong("tagId"), it.getString("name")) },
+    canApply = if (has("canApply") && !isNull("canApply")) optBoolean("canApply") else null
 )
 
 private fun JSONObject.toMyRoom() = MyChatRoom(
@@ -805,7 +886,6 @@ private fun JSONObject.toPollOption() = PollOption(
 )
 
 private fun JSONObject.toCompanion() = RoomCompanion(
-    companionRecordId = getLong("companionRecordId"),
     userId = optLong("userId"),
     nickname = optString("nickname"),
     profileImageUrl = stringOrNull("profileImageUrl"),
@@ -838,3 +918,17 @@ private fun JSONObject.toKickHistory() = RoomKickHistory(
     reason = optString("reason"),
     kickedAt = optString("kickedAt")
 )
+
+/**
+ * 20-2f 공지 올리기 — 상단 고정은 **최대 1개**다 (`ATTACH-COMPOSER-CANON.md` R5-1).
+ *
+ * 서버는 고정 개수를 막지 않는다(실서버 방 101 에 2건이 고정돼 있다). 그래서 고정을 켠 채로
+ * 올릴 때 **먼저** 기존 고정 공지를 `pinned:false` 로 풀고 새 공지를 만든다.
+ * 순서를 뒤집으면 잠깐이지만 고정이 2개가 되고, 실패하면 그대로 남는다.
+ */
+suspend fun ChatRoomRepository.publishNotice(roomId: Long, notice: String, pinned: Boolean) {
+    if (pinned) {
+        notices(roomId).pinned.forEach { existing -> updateNotice(roomId, existing.noticeId, pinned = false) }
+    }
+    createNotice(roomId, notice, pinned)
+}

@@ -21,7 +21,9 @@ class TravelCourseRepositoryTest {
             client(
                 """
                 {"courseId":21,"title":"주왕산 & 주산지 힐링 트레킹!","description":"가을 단풍과 호수",
-                 "creatorNickname":"따스한 기린 2334","creatorTravelStartDate":"2026-07-20",
+                 "creatorNickname":"따스한 기린 2334",
+                 "creatorProfileImageUrl":"https://cdn.test/user/profile/image/f85f559b.webp",
+                 "creatorTravelStartDate":"2026-07-20",
                  "creatorTravelEndDate":null,"chatRoomCount":1,"travelTime":"9시간","distanceKm":90.7,
                  "averageRating":5.0,"ratingCount":1,"tags":[{"tagId":4,"name":"자연"}],"thumbnail":null,
                  "places":[{"contentId":2599344,"dayNumber":1,"sequence":1,"visitTime":"10:00:00",
@@ -33,6 +35,11 @@ class TravelCourseRepositoryTest {
         val course = repository.course(21)
 
         assertEquals("따스한 기린 2334", course.creatorNickname)
+        // 2026-09-02 서버 추가 필드 — 14 의 아바타가 닉네임 동물로 떨어지지 않으려면 이 값이 살아야 한다.
+        assertEquals(
+            "https://cdn.test/user/profile/image/f85f559b.webp",
+            course.creatorProfileImageUrl
+        )
         assertEquals("2026-07-20", course.creatorTravelStartDate)
         assertEquals(1, course.chatRoomCount)
     }
@@ -53,6 +60,8 @@ class TravelCourseRepositoryTest {
         val course = repository.course(61)
 
         assertNull(course.creatorNickname)
+        // 작성자 비공개·탈퇴·이미지 없음이면 null 이고, 그때만 닉네임 동물 아바타로 떨어진다.
+        assertNull(course.creatorProfileImageUrl)
         assertNull(course.creatorTravelStartDate)
         assertNull(course.chatRoomCount)
     }

@@ -205,14 +205,14 @@ class ChatRoomActionsTest {
     fun companionsKeepNullMannerRating() = runBlocking {
         val call = RecordingCall(
             """
-            [{"companionRecordId":7,"userId":41,"nickname":"숲속여행자","profileImageUrl":null,
+            [{"userId":41,"nickname":"숲속여행자","profileImageUrl":null,
               "mannerRating":null,"mannerScore":null,"oneLineReview":null,"reviewed":false}]
             """.trimIndent()
         )
         val companions = HttpChatRoomRepository(call.client()).companions(21)
 
         assertEquals("/api/v1/chat-rooms/21/companions", call.path)
-        assertEquals(7L, companions.single().companionRecordId)
+        assertEquals(41L, companions.single().userId)
         assertNull(companions.single().mannerRating)
         assertNull(companions.single().mannerScore)
         assertFalse(companions.single().reviewed)
@@ -233,7 +233,7 @@ class ChatRoomActionsTest {
     fun reviewCompanionSendsMannerScoreAndOptionalReview() = runBlocking {
         val call = RecordingCall(
             """
-            {"companionRecordId":7,"userId":41,"nickname":"숲속여행자","profileImageUrl":null,
+            {"userId":41,"nickname":"숲속여행자","profileImageUrl":null,
              "mannerRating":4.8,"mannerScore":5,"oneLineReview":"사진 고마워요!","reviewed":true}
             """.trimIndent()
         )
@@ -249,7 +249,7 @@ class ChatRoomActionsTest {
     @Test
     fun reviewCompanionOmitsBlankOneLineReview() = runBlocking {
         val call = RecordingCall(
-            """{"companionRecordId":7,"userId":41,"nickname":"숲속여행자","reviewed":true}"""
+            """{"userId":41,"nickname":"숲속여행자","reviewed":true}"""
         )
         HttpChatRoomRepository(call.client()).reviewCompanion(21, 7, 4, "   ")
 

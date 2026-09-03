@@ -48,10 +48,15 @@ data class NicknameSelectionState(
     )
 
     companion object {
+        /**
+         * 후보를 아직 받지 못한 상태. **로딩으로 두지 않는다** —
+         * 로딩으로 시작하면 새로고침이 막혀(`canRefresh = !isLoading`) 화면이 영원히 골격만 그린다.
+         * 화면이 열릴 때 후보가 비어 있으면 그때 서버를 부른다(iOS 와 같은 3상태).
+         */
         fun empty(): NicknameSelectionState = NicknameSelectionState(
             selectionToken = "",
             candidates = emptyList(),
-            isLoading = true
+            isLoading = false
         )
 
         fun fromInitial(response: NicknameCandidateResponse): NicknameSelectionState {
@@ -63,10 +68,5 @@ data class NicknameSelectionState(
                 candidates = response.candidates
             )
         }
-
-        fun initial(): NicknameSelectionState = NicknameSelectionState(
-            selectionToken = MockNicknameCandidateGateway.initialResponse.selectionToken,
-            candidates = MockNicknameCandidateGateway.initialResponse.candidates
-        )
     }
 }

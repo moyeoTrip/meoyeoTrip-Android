@@ -1,11 +1,14 @@
 package kr.hanchae.moyeotrip.data.courses
 
+import java.net.URLEncoder
 import kr.hanchae.moyeotrip.data.api.MoyeoApiClient
 import kr.hanchae.moyeotrip.data.api.doubleOrNull
 import kr.hanchae.moyeotrip.data.api.mapArray
 import kr.hanchae.moyeotrip.data.api.mapObjects
 import kr.hanchae.moyeotrip.data.api.stringOrNull
+import kr.hanchae.moyeotrip.data.rooms.ChatRoomSearchResult
 import kr.hanchae.moyeotrip.data.rooms.RoomTag
+import kr.hanchae.moyeotrip.data.rooms.toChatRoomSearchResult
 import org.json.JSONObject
 
 data class TravelCoursePlace(
@@ -31,10 +34,35 @@ data class TravelCourse(
     val thumbnail: String?,
     val places: List<TravelCoursePlace>,
     val creatorNickname: String? = null,
+    /**
+     * 코스 작성자 프로필 이미지 (2026-09-02 서버 추가). 14 코스 상세의
+     * "○○ 님이 다녀온 코스" 줄 아바타가 이 값을 그린다.
+     *
+     * 작성자 비공개 코스·탈퇴한 작성자·프로필 이미지가 없는 경우에만 `null` 이고,
+     * 그때만 닉네임 동물 아바타로 떨어진다.
+     */
+    val creatorProfileImageUrl: String? = null,
     /** 코스를 공개한 여행의 시작일. 화면기획 14의 "YYYY.MM.DD 여행 후 공개" 표기에 쓴다. */
     val creatorTravelStartDate: String? = null,
     val chatRoomCount: Int? = null
 )
+
+/**
+ * 26 마이 `찜한 코스` 목록 (`GET /api/v1/travel-courses/me/favorites`).
+ *
+ * 응답(`LikedTravelCourseResponse`)은 목록 카드보다 **좁다** — 소요 시간·거리·평점이 없다.
+ * [TravelCourse] 로 억지로 채우면 없는 값을 0·null 로 그리게 되므로 따로 둔다.
+ */
+data class LikedTravelCourse(
+    val courseId: Long,
+    val title: String,
+    val description: String?,
+    val thumbnail: String?,
+    val tags: List<RoomTag>
+)
+
+/** `POST /api/v1/travel-courses/{courseId}/publication` 응답. */
+data class CoursePublication(val courseId: Long, val publicationStatus: String)
 
 interface TravelCourseRepository {
     suspend fun publicCourses(tagId: Long? = null): List<TravelCourse>
@@ -46,6 +74,59 @@ interface TravelCourseRepository {
     suspend fun course(courseId: Long): TravelCourse
 
     suspend fun roomCourse(roomId: Long): TravelCourse
+
+    /**
+     * 12-1 검색 결과 — GET travel-courses/search?keyword=.
+     *
+     * 서버는 **제목에 포함되거나 태그명이 일치**하는 공개 코스만 준다. 소개글(`description`)은
+     * 검색 대상이 아니다 — 실서버에서 `청송`(소개글에만 있는 낱말)이 0건인 이유다.
+     * 클라이언트가 결과를 다시 거르거나 채우지 않는다.
+     */
+    suspend fun searchCourses(keyword: String): List<TravelCourse>
+
+    /**
+     * 14 코스 상세 `모집 중인 모임 보기` — GET travel-courses/{courseId}/chat-rooms.
+     *
+     * 서버 설명 그대로 "모집 마감 전이고 로그인 사용자가 아직 참가하지 않은 방"만 온다.
+     * 응답은 11 탐색 카드와 같은 `SearchChatRoomResponse` 다.
+     */
+    suspend fun courseChatRooms(courseId: Long): List<ChatRoomSearchResult>
+
+    /**
+     * 27-4 코스 평가 — `POST /api/v1/travel-courses/chat-rooms/{roomId}/rating` `{ score: 1~5 }`.
+     *
+     * 서버 조건: **완료한 여행의 참가자만** 평가할 수 있다(그 외에는 400 40006).
+     * 이 호출이 14 코스 상세의 `averageRating`/`ratingCount` 를 만드는 유일한 자리다.
+     */
+    suspend fun rateRoomCourse(roomId: Long, score: Int)
+
+    /**
+     * 26 마이 `찜한 코스` — `GET /api/v1/travel-courses/me/favorites`.
+     *
+     * 오래 "조회 API 가 없다"고 적어 두고 탭 자체를 빼 두었는데, 실서버는 200 을 준다.
+     * 모임 찜(`chat-rooms/my/favorites`)과 **다른 목록**이다 — 코스는 코스고 모집은 모집이다.
+     */
+    suspend fun likedCourses(): List<LikedTravelCourse>
+
+    /**
+     * 14 코스 상세의 하트 — `POST /api/v1/travel-courses/{courseId}/favorite` (토글).
+     * 모임 찜은 이미 서버에 저장하는데 코스 찜만 화면 안에서만 켜졌다 꺼졌다 했다.
+     * 응답의 `favorite` 가 새 상태다.
+     */
+    suspend fun toggleCourseFavorite(courseId: Long): Boolean
+
+    /**
+     * 27-3 코스 공개 — `POST /api/v1/travel-courses/{courseId}/publication`.
+     *
+     * **되돌릴 수 없다.** 호출부는 두 단계 확인을 지난 뒤에만 부른다.
+     * 이 호출이 없어서 `공개할게요` 가 화면 상태만 바꾸고 서버를 부르지 않았다.
+     */
+    suspend fun publishCourse(
+        courseId: Long,
+        title: String,
+        description: String,
+        showCreatorNickname: Boolean
+    ): CoursePublication
 }
 
 class HttpTravelCourseRepository(private val client: MoyeoApiClient) : TravelCourseRepository {
@@ -65,6 +146,57 @@ class HttpTravelCourseRepository(private val client: MoyeoApiClient) : TravelCou
 
     override suspend fun roomCourse(roomId: Long): TravelCourse =
         client.getObject("/api/v1/travel-courses/chat-rooms/$roomId").getJSONObject("course").toCourse()
+
+    override suspend fun searchCourses(keyword: String): List<TravelCourse> {
+        // 검색어는 한글이 대부분이라 반드시 인코딩해서 보낸다.
+        val encoded = URLEncoder.encode(keyword, "UTF-8")
+        return client.getArray("/api/v1/travel-courses/search?keyword=$encoded").mapObjects(JSONObject::toCourse)
+    }
+
+    override suspend fun courseChatRooms(courseId: Long): List<ChatRoomSearchResult> =
+        client.getArray("/api/v1/travel-courses/$courseId/chat-rooms").mapObjects(JSONObject::toChatRoomSearchResult)
+
+    override suspend fun likedCourses(): List<LikedTravelCourse> =
+        client.getArray("/api/v1/travel-courses/me/favorites").mapObjects { course ->
+            LikedTravelCourse(
+                courseId = course.getLong("courseId"),
+                title = course.getString("title"),
+                description = course.stringOrNull("description"),
+                thumbnail = course.stringOrNull("thumbnail"),
+                tags = course.mapArray("tags") { RoomTag(it.getLong("tagId"), it.getString("name")) }
+            )
+        }
+
+    override suspend fun toggleCourseFavorite(courseId: Long): Boolean =
+        client.sendForObject("POST", "/api/v1/travel-courses/$courseId/favorite").optBoolean("favorite")
+
+    override suspend fun publishCourse(
+        courseId: Long,
+        title: String,
+        description: String,
+        showCreatorNickname: Boolean
+    ): CoursePublication {
+        val json = client.sendForObject(
+            "POST",
+            "/api/v1/travel-courses/$courseId/publication",
+            JSONObject()
+                .put("title", title)
+                .put("description", description)
+                .put("showCreatorNickname", showCreatorNickname)
+        )
+        return CoursePublication(
+            courseId = json.optLong("courseId", courseId),
+            publicationStatus = json.optString("publicationStatus")
+        )
+    }
+
+    override suspend fun rateRoomCourse(roomId: Long, score: Int) {
+        client.send(
+            "POST",
+            "/api/v1/travel-courses/chat-rooms/$roomId/rating",
+            JSONObject().put("score", score)
+        )
+    }
 }
 
 private fun JSONObject.toCourse() = TravelCourse(
@@ -90,6 +222,7 @@ private fun JSONObject.toCourse() = TravelCourse(
         )
     }.sortedWith(compareBy({ it.dayNumber }, { it.sequence })),
     creatorNickname = stringOrNull("creatorNickname"),
+    creatorProfileImageUrl = stringOrNull("creatorProfileImageUrl"),
     creatorTravelStartDate = stringOrNull("creatorTravelStartDate"),
     chatRoomCount = if (has("chatRoomCount") && !isNull("chatRoomCount")) optInt("chatRoomCount") else null
 )

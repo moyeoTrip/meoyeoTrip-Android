@@ -43,8 +43,10 @@ class PersistedRecentSearchStore(context: Context) : RecentSearchStore {
 }
 
 /**
- * 번호별 비교 캡처(`moyeo_screen`)에서 쓰는 저장소 — 기기에 남은 검색 기록이 캡처에 섞이면
- * 화면기획과 픽셀이 어긋나므로 목데이터를 메모리에만 들고 있는다.
+ * 기기에 쓰지 않는 저장소. 시험에서 최근 검색어 규칙만 확인할 때 쓴다.
+ *
+ * 화면은 캡처에서도 [PersistedRecentSearchStore] 를 쓴다 — 캡처 전용으로 예시 검색어를
+ * 끼워 넣으면 캡처가 실제 화면과 달라진다.
  */
 class InMemoryRecentSearchStore(initialKeywords: List<String> = emptyList()) : RecentSearchStore {
     private val state = MutableStateFlow(initialKeywords)
@@ -62,6 +64,3 @@ class InMemoryRecentSearchStore(initialKeywords: List<String> = emptyList()) : R
         state.value = emptyList()
     }
 }
-
-/** 화면기획 12 검색의 최근 검색어 목데이터 — 캡처에서만 쓴다. */
-val PLANNING_RECENT_SEARCHES = listOf("경주", "단풍", "황리단길", "안동 한옥", "주왕산")

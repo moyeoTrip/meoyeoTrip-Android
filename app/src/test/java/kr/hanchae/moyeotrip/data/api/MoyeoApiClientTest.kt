@@ -5,6 +5,7 @@ import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.runBlocking
+import kr.hanchae.moyeotrip.domain.auth.SignupGateStage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -48,10 +49,58 @@ class MoyeoApiClientTest {
         assertEquals("서버에러입니다.", error.message)
     }
 
-    private fun failingCall(statusCode: Int, body: String): MoyeoApiException {
+    /**
+     * 가입 미완료(40902·40918)는 토큰 문제가 아니다 — 재발급을 타면 새 토큰으로 같은 409 를 받아
+     * 무한 재시도가 된다(정본 R1). 재발급 대신 가입 단계 복귀 신호만 올린다.
+     */
+    @Test
+    fun signupGateCodesSkipTokenRefreshAndReportTheStage() {
+        listOf(40902 to SignupGateStage.USER_INFO, 40918 to SignupGateStage.PROFILE_IMAGE).forEach { (code, stage) ->
+            val stages = mutableListOf<SignupGateStage>()
+            var refreshCalls = 0
+            val error = failingCall(
+                statusCode = 409,
+                body = """{"code":$code,"errorMessage":"가입이 필요합니다."}""",
+                onSignupGate = stages::add,
+                refreshAccessToken = {
+                    refreshCalls += 1
+                    "refreshed-token"
+                }
+            )
+
+            assertEquals(stage, error.signupGate)
+            assertEquals(listOf(stage), stages)
+            assertEquals(0, refreshCalls)
+        }
+    }
+
+    /** 진짜 만료(401)는 기존대로 한 번 재발급하고 다시 보낸다 — 게이트 처리가 이 길을 막으면 안 된다. */
+    @Test
+    fun expiredTokensStillTakeTheRefreshPath() {
+        var refreshCalls = 0
+        failingCall(
+            statusCode = 401,
+            body = """{"code":40101,"errorMessage":"만료된 토큰입니다."}""",
+            refreshAccessToken = {
+                refreshCalls += 1
+                "refreshed-token"
+            }
+        )
+
+        assertEquals(1, refreshCalls)
+    }
+
+    private fun failingCall(
+        statusCode: Int,
+        body: String,
+        onSignupGate: (SignupGateStage) -> Unit = {},
+        refreshAccessToken: suspend () -> String? = { null }
+    ): MoyeoApiException {
         val client = MoyeoApiClient(
             baseUrl = "https://example.test",
             accessToken = { "access-token" },
+            refreshAccessToken = refreshAccessToken,
+            onSignupGate = onSignupGate,
             connectionFactory = { url -> ErrorConnection(url, statusCode, body) }
         )
         return try {

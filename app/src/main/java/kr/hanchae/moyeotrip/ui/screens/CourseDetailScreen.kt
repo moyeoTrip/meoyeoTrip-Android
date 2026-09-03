@@ -1,322 +1,141 @@
 package kr.hanchae.moyeotrip.ui.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
-import androidx.compose.material.icons.filled.Route
-import androidx.compose.material.icons.filled.Schedule
-import androidx.compose.material.icons.filled.Share
-import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kr.hanchae.moyeotrip.R
-import kr.hanchae.moyeotrip.data.MockTripRepository
-import kr.hanchae.moyeotrip.data.TripCourse
+import kotlinx.coroutines.launch
+import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.courses.TravelCourse
+import kr.hanchae.moyeotrip.data.courses.TravelCoursePlace
+import kr.hanchae.moyeotrip.data.rooms.ChatRoomSearchResult
 import kr.hanchae.moyeotrip.ui.LocalServerData
-import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.CourseRouteMap
+import kr.hanchae.moyeotrip.ui.components.CourseRoutePoint
 import kr.hanchae.moyeotrip.ui.components.InfoPill
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
+import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.SectionHeader
-import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
+import kr.hanchae.moyeotrip.ui.components.ServerListState
+import kr.hanchae.moyeotrip.ui.components.afterReload
 
+/**
+ * 화면기획 14 코스 상세 — 서버 코스(GET travel-courses/{id})만 그린다.
+ *
+ * 라우트가 들고 오는 식별자는 `srv-{courseId}` 다. 그 형태가 아니거나 미로그인이면 코스를 읽어올
+ * 근거가 없으므로 빈 상태를 그린다 — 예시 코스를 대신 보여주지 않는다.
+ */
 @Composable
 fun CourseDetailScreen(
     courseId: String,
     onBack: () -> Unit,
-    onOpenTrip: (String) -> Unit,
-    onCreateRecruitment: (String) -> Unit
+    onCreateRecruitment: (String) -> Unit,
+    onOpenRoom: (String) -> Unit
 ) {
-    // "srv-{id}" 는 실서버 코스다 (홈 인기 코스 서버 목록에서만 이 형태로 진입한다)
     val server = LocalServerData.current
     val serverCourseId = courseId.removePrefix("srv-").toLongOrNull()?.takeIf { courseId.startsWith("srv-") }
-    if (serverCourseId != null && server != null) {
-        ServerCourseDetail(courseId = serverCourseId, server = server, onBack = onBack)
+    if (serverCourseId == null || server == null) {
+        CourseDetailShell(onBack = onBack) {
+            MoyeoEmptyState(MoyeoEmptyText.SIGN_IN_EXPLORE, testTag = "course-detail-signed-out")
+        }
         return
     }
-    val course = remember(courseId) { MockTripRepository.findCourse(courseId) }
-    val colors = MaterialTheme.colorScheme
-    var isFavorite by rememberSaveable(courseId) { mutableStateOf(false) }
-    var actionMessage by rememberSaveable(courseId) { mutableStateOf<String?>(null) }
+    ServerCourseDetail(
+        courseId = serverCourseId,
+        server = server,
+        onBack = onBack,
+        onCreateRecruitment = onCreateRecruitment,
+        onOpenRoom = onOpenRoom
+    )
+}
 
-    Box(
+/** 헤더만 있는 껍데기 — 빈 상태·로딩·오류를 그릴 때 화면 구조가 흔들리지 않게 공유한다. */
+@Composable
+private fun CourseDetailShell(onBack: () -> Unit, content: @Composable () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 12.dp, bottom = 132.dp),
-            verticalArrangement = Arrangement.spacedBy(18.dp)
-        ) {
-            item {
-                CourseDetailHeader(
-                    isFavorite = isFavorite,
-                    onBack = onBack,
-                    onShare = {
-                        actionMessage = "코스 공유 링크를 복사했어요."
-                    },
-                    onToggleFavorite = {
-                        isFavorite = !isFavorite
-                        actionMessage = if (isFavorite) {
-                            "찜한 코스에 담았어요."
-                        } else {
-                            "찜한 코스에서 제외했어요."
-                        }
-                    }
-                )
-            }
-            actionMessage?.let { message ->
-                item {
-                    CourseActionBanner(message = message)
-                }
-            }
-            item {
-                CourseDetailHero(course = course)
-            }
-            item {
-                SectionHeader(title = "코스 미리보기")
-                Spacer(modifier = Modifier.height(10.dp))
-                CourseRouteMapPreview(course.stops)
-            }
-        }
-
-        CourseDetailBottomActions(
-            onCreateRecruitment = { onCreateRecruitment(course.id) },
-            onOpenTrip = { onOpenTrip(MockTripRepository.tripIdForCourse(course.id)) },
-            modifier = Modifier.align(Alignment.BottomCenter)
-        )
-    }
-}
-
-@Composable
-private fun CourseDetailBottomActions(
-    onCreateRecruitment: () -> Unit,
-    onOpenTrip: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val colors = MaterialTheme.colorScheme
-
-    Row(
-        modifier = modifier
-            .fillMaxWidth()
-            .background(colors.surface)
-            .navigationBarsPadding()
-            .padding(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 16.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        OutlinedButton(
-            onClick = onCreateRecruitment,
-            modifier = Modifier
-                .weight(1f)
-                .height(52.dp),
-            border = BorderStroke(1.dp, colors.primary),
-            colors = ButtonDefaults.outlinedButtonColors(contentColor = colors.primary),
-            contentPadding = PaddingValues(horizontal = 8.dp),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Text(
-                text = "이 코스로 모집 만들기",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1
-            )
-        }
-        Button(
-            onClick = onOpenTrip,
-            modifier = Modifier
-                .weight(1f)
-                .height(52.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
-            contentPadding = PaddingValues(horizontal = 8.dp),
-            shape = RoundedCornerShape(8.dp)
-        ) {
-            Text(
-                text = "모집 중인 모임 보기",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold,
-                maxLines = 1
-            )
-        }
-    }
-}
-
-@Composable
-private fun CourseDetailHeader(
-    isFavorite: Boolean,
-    onBack: () -> Unit,
-    onShare: () -> Unit,
-    onToggleFavorite: () -> Unit
-) {
-    val colors = MaterialTheme.colorScheme
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        IconButton(onClick = onBack) {
-            Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
-        }
-        Text(
-            text = "코스 상세",
-            style = MaterialTheme.typography.titleLarge,
-            color = colors.onBackground
-        )
-        Row {
-            IconButton(onClick = onShare) {
-                Icon(imageVector = Icons.Filled.Share, contentDescription = "공유")
-            }
-            IconButton(onClick = onToggleFavorite) {
-                Icon(
-                    imageVector = if (isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = if (isFavorite) "찜 해제" else "찜"
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun CourseActionBanner(message: String) {
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.primaryContainer
-    ) {
-        Text(
-            text = message,
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            fontWeight = FontWeight.ExtraBold
-        )
-    }
-}
-
-@Composable
-private fun CourseDetailHero(course: TripCourse) {
-    val colors = MaterialTheme.colorScheme
-    val isDark = MoyeoTheme.isDark
-
-    Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(218.dp)
-                .clip(RoundedCornerShape(16.dp))
+                .height(56.dp)
+                .padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
-            Image(
-                painter = painterResource(id = course.heroImageResId(isDark)),
-                contentDescription = "${course.title} 대표 이미지",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(218.dp),
-                contentScale = ContentScale.Crop
-            )
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(96.dp)
-                    .align(Alignment.BottomCenter)
-                    .background(
-                        Brush.verticalGradient(
-                            colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.48f))
-                        )
-                    )
-            )
-            // 화면기획 14 히어로에는 상태 배지가 없다
-        }
-        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text(
-                text = course.title,
-                style = MaterialTheme.typography.titleLarge,
-                color = colors.onSurface,
-                fontWeight = FontWeight.ExtraBold
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                course.tags.take(3).forEach { tag ->
-                    InfoPill(text = tag, container = colors.primaryContainer, content = colors.primary)
-                }
-            }
-            course.publisher?.let { publisher ->
-                CoursePublisherBlock(
-                    avatar = publisher.avatar,
-                    name = publisher.name,
-                    meta = "${publisher.publishedAfterTrip} · 이 코스로 떠난 모임 ${publisher.recruitmentCount}"
+            IconButton(onClick = onBack) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                    contentDescription = "뒤로",
+                    tint = colors.onBackground
                 )
             }
             Text(
-                text = course.oneLine,
-                style = MaterialTheme.typography.bodyMedium,
-                color = colors.onSurfaceVariant
+                text = "코스 상세",
+                style = MaterialTheme.typography.titleMedium,
+                color = colors.onBackground,
+                fontWeight = FontWeight.ExtraBold
             )
-            CourseMetricGrid(course = course)
         }
-    }
-}
-
-@Composable
-private fun CoursePublisherBlock(avatar: String, name: String, meta: String) {
-    val colors = MaterialTheme.colorScheme
-    CoursePublisherRow(name = name, meta = meta) {
-        AnimalAvatar(
-            emoji = avatar,
-            modifier = Modifier.size(32.dp),
-            container = colors.primaryContainer
-        )
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { content() }
     }
 }
 
 /**
- * 화면기획 14의 "○○ 님이 다녀온 코스" 행. 아바타만 슬롯으로 받는다 —
- * 목데이터는 동물 이모지, 실서버 코스는 작성자 닉네임 기반 아바타를 쓴다.
+ * 화면기획 14의 "○○ 님이 다녀온 코스" 행.
+ *
+ * 아바타는 서버가 주는 작성자 프로필 이미지([TravelCourse.creatorProfileImageUrl], 2026-09-02 추가)다.
+ * 그 값이 `null` 일 때만(작성자 비공개·탈퇴·이미지 없음) 닉네임 동물 아바타로 떨어진다 —
+ * 이미지가 있는데도 동물이 보이던 것이 이 화면의 오래된 지적이었다.
  */
 @Composable
 private fun CoursePublisherRow(name: String, meta: String, avatar: @Composable () -> Unit) {
@@ -363,313 +182,126 @@ private fun CoursePublisherRow(name: String, meta: String, avatar: @Composable (
 }
 
 @Composable
-private fun CourseMetricGrid(course: TripCourse) {
-    val colors = MaterialTheme.colorScheme
-
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        CourseMetric(
-            info = CourseMetricInfo(
-                icon = Icons.Filled.Schedule,
-                label = "소요시간",
-                value = course.courseTime
-            ),
-            modifier = Modifier.weight(1f)
-        )
-        CourseMetric(
-            info = CourseMetricInfo(
-                icon = Icons.Filled.Route,
-                label = "이동거리",
-                value = course.distance
-            ),
-            modifier = Modifier.weight(1f)
-        )
-        CourseMetric(
-            info = CourseMetricInfo(
-                icon = Icons.Filled.Star,
-                label = "평점",
-                value = course.rating.toString()
-            ),
-            modifier = Modifier.weight(1f)
-        )
-    }
-}
-
-@Composable
-private fun CourseMetric(info: CourseMetricInfo, modifier: Modifier = Modifier) {
-    val colors = MaterialTheme.colorScheme
-
-    Column(
-        modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(5.dp)
-    ) {
-        Icon(
-            imageVector = info.icon,
-            contentDescription = null,
-            tint = colors.onSurfaceVariant,
-            modifier = Modifier.size(18.dp)
-        )
-        Text(
-            text = info.label,
-            style = MaterialTheme.typography.labelSmall,
-            color = colors.onSurfaceVariant
-        )
-        Text(
-            text = info.value,
-            style = MaterialTheme.typography.labelMedium,
-            color = colors.onSurface,
-            fontWeight = FontWeight.ExtraBold
-        )
-    }
-}
-
-private data class CourseMetricInfo(val icon: ImageVector, val label: String, val value: String)
-
-@Composable
-private fun CourseRouteMapPreview(stops: List<String>) {
-    val isDark = MoyeoTheme.isDark
-    val mapBackground = if (isDark) Color(0xFF16251F) else Color(0xFFDCECE4)
-    val roadColor = if (isDark) Color(0xFF31423A) else Color.White.copy(alpha = 0.50f)
-    val ridgeColor = if (isDark) Color(0xFF23362E) else Color(0xFFBED8C4)
-    val routeColor = if (isDark) Color(0xFF58C98C) else Color(0xFF2D8F5A)
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(146.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(mapBackground)
-    ) {
-        Canvas(modifier = Modifier.matchParentSize()) {
-            val route = listOf(
-                Offset(size.width * 0.16f, size.height * 0.75f),
-                Offset(size.width * 0.40f, size.height * 0.52f),
-                Offset(size.width * 0.66f, size.height * 0.32f),
-                Offset(size.width * 0.86f, size.height * 0.16f)
-            )
-            drawLine(
-                color = roadColor,
-                start = Offset(0f, size.height * 0.36f),
-                end = Offset(size.width, size.height * 0.22f),
-                strokeWidth = 30.dp.toPx(),
-                cap = StrokeCap.Round
-            )
-            drawLine(
-                color = ridgeColor,
-                start = Offset(0f, size.height * 0.62f),
-                end = Offset(size.width, size.height * 0.50f),
-                strokeWidth = 26.dp.toPx(),
-                cap = StrokeCap.Round
-            )
-            route.zipWithNext().forEach { (start, end) ->
-                drawLine(
-                    color = routeColor,
-                    start = start,
-                    end = end,
-                    strokeWidth = 4.dp.toPx(),
-                    cap = StrokeCap.Round
-                )
-            }
-        }
-        stops.take(4).forEachIndexed { index, stop ->
-            RoutePoint(
-                number = index + 1,
-                isStart = index == 0,
-                label = stop,
-                isDark = isDark,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .offset(
-                        x = when (index) {
-                            0 -> 24.dp
-                            1 -> 104.dp
-                            2 -> 210.dp
-                            else -> 208.dp
-                        },
-                        y = when (index) {
-                            0 -> 98.dp
-                            1 -> 70.dp
-                            2 -> 58.dp
-                            else -> 8.dp
-                        }
-                    )
-            )
-        }
-    }
-}
-
-@Composable
-private fun RoutePoint(number: Int, isStart: Boolean, label: String, isDark: Boolean, modifier: Modifier = Modifier) {
-    val labelBackground = if (isDark) Color(0xE61D2C26) else Color.White.copy(alpha = 0.88f)
-    val labelText = if (isDark) Color(0xFFE8F5ED) else Color(0xFF0F1714)
-
-    Row(
-        modifier = modifier
-            .background(labelBackground, RoundedCornerShape(50))
-            .padding(horizontal = 8.dp, vertical = 5.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            modifier = Modifier
-                .size(24.dp)
-                .clip(CircleShape)
-                .background(if (isStart) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primary),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                text = number.toString(),
-                style = MaterialTheme.typography.labelMedium,
-                color = Color.White,
-                fontWeight = FontWeight.Bold
-            )
-        }
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelSmall,
-            color = labelText,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1
-        )
-    }
-}
-
-private fun TripCourse.heroImageResId(isDark: Boolean): Int = when (id) {
-    "cheongsong-juwangsan" -> weatherRes(
-        isDark = isDark,
-        light = R.drawable.weather_fog_seokguram,
-        dark = R.drawable.weather_fog_seokguram_night
-    )
-
-    "andong-hahoe" -> weatherRes(
-        isDark = isDark,
-        light = R.drawable.weather_rain_hahoe,
-        dark = R.drawable.weather_rain_hahoe_night
-    )
-
-    "gyeongju-healing" -> weatherRes(
-        isDark = isDark,
-        light = R.drawable.weather_sunny_cheomseongdae,
-        dark = R.drawable.weather_sunny_cheomseongdae_night
-    )
-
-    "pohang-sea",
-    "ulleung-island" -> weatherRes(
-        isDark = isDark,
-        light = R.drawable.weather_wind_homigot,
-        dark = R.drawable.weather_wind_homigot_night
-    )
-
-    "mungyeong-saejae" -> weatherRes(
-        isDark = isDark,
-        light = R.drawable.weather_cloudy_bulguksa,
-        dark = R.drawable.weather_cloudy_bulguksa_night
-    )
-
-    "yeongju-buseoksa" -> weatherRes(
-        isDark = isDark,
-        light = R.drawable.weather_snow_buseoksa,
-        dark = R.drawable.weather_snow_buseoksa_night
-    )
-
-    "andong-dosan" -> weatherRes(
-        isDark = isDark,
-        light = R.drawable.weather_heatwave_dosan,
-        dark = R.drawable.weather_heatwave_dosan_night
-    )
-
-    else -> weatherRes(
-        isDark = isDark,
-        light = R.drawable.weather_sunny_cheomseongdae,
-        dark = R.drawable.weather_sunny_cheomseongdae_night
-    )
-}
-
-private fun weatherRes(isDark: Boolean, light: Int, dark: Int): Int = if (isDark) dark else light
-
-private fun TripCourse.courseStatusLabel(): String {
-    val distanceValue = distance.removeSuffix("km").toDoubleOrNull() ?: 0.0
-    return when {
-        distanceValue < 5.5 -> "느긋한 코스"
-        distanceValue < 7.5 -> "알찬 코스"
-        else -> "활동적인 코스"
-    }
-}
-
-/**
- * 실서버 코스 상세 (GET travel-courses/{courseId}).
- * 모집 만들기 플로우는 목데이터 전용이라 서버 코스에서는 진입 버튼을 두지 않는다.
- */
-@Composable
 private fun ServerCourseDetail(
     courseId: Long,
-    server: kr.hanchae.moyeotrip.data.ServerDataDependencies,
-    onBack: () -> Unit
+    server: ServerDataDependencies,
+    onBack: () -> Unit,
+    onCreateRecruitment: (String) -> Unit,
+    onOpenRoom: (String) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
-    var course by remember(courseId) {
-        mutableStateOf<kr.hanchae.moyeotrip.data.courses.TravelCourse?>(null)
-    }
+    var course by remember(courseId) { mutableStateOf<TravelCourse?>(null) }
     var loadFailed by remember(courseId) { mutableStateOf(false) }
-    LaunchedEffect(courseId, server) {
+    var reloadKey by remember(courseId) { mutableIntStateOf(0) }
+    LaunchedEffect(courseId, server, reloadKey) {
+        loadFailed = false
         val loaded = runCatching { server.courses.course(courseId) }.getOrNull()
         course = loaded
         loadFailed = loaded == null
     }
 
-    Column(
+    // 14 하트 — POST travel-courses/{id}/favorite (토글). 모임 찜은 이미 서버에 저장하는데
+    // 코스 찜만 서버로 안 갔다. 상세 응답에 `favorite` 필드가 없어 처음 상태는
+    // GET travel-courses/me/favorites 로 판정한다 — 켜져 있는지 지어내지 않는다.
+    var favorite by remember(courseId) { mutableStateOf<Boolean?>(null) }
+    var favoriteBusy by remember(courseId) { mutableStateOf(false) }
+    val favoriteScope = rememberCoroutineScope()
+    LaunchedEffect(courseId, server) {
+        favorite = runCatching { server.courses.likedCourses() }.getOrNull()
+            ?.any { it.courseId == courseId }
+    }
+
+    // 14 "모집 중인 모임 보기" — GET travel-courses/{courseId}/chat-rooms (정본 §4).
+    // 예전에 "모집을 찾는 API 가 없다"고 잘못 적어 버튼째 빠져 있었다. API 는 있고, 설명까지 이 버튼용이다.
+    var showsRooms by remember(courseId) { mutableStateOf(false) }
+    var roomsReloadKey by remember(courseId) { mutableIntStateOf(0) }
+    var recruitingRooms by remember(courseId) {
+        mutableStateOf<ServerListState<ChatRoomSearchResult>>(ServerListState.Loading)
+    }
+    // 시트를 열었을 때만 부른다 — 상세 첫 화면에 필요 없는 요청을 얹지 않는다.
+    LaunchedEffect(courseId, server, showsRooms, roomsReloadKey) {
+        if (!showsRooms) return@LaunchedEffect
+        recruitingRooms = recruitingRooms.afterReload(runCatching { server.courses.courseChatRooms(courseId) })
+    }
+
+    val loadedCourse = course
+    if (loadedCourse == null) {
+        CourseDetailShell(onBack = onBack) {
+            if (loadFailed) {
+                MoyeoEmptyState(MoyeoEmptyText.FAILED, onRetry = { reloadKey++ })
+            } else {
+                MoyeoEmptyState(MoyeoEmptyText.LOADING)
+            }
+        }
+        return
+    }
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(colors.background)
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(56.dp)
-                .padding(horizontal = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            IconButton(onClick = onBack) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "뒤로",
-                    tint = colors.onBackground
-                )
-            }
-            Text(
-                text = "코스 상세",
-                style = MaterialTheme.typography.titleMedium,
-                color = colors.onBackground,
-                fontWeight = FontWeight.ExtraBold
-            )
-        }
-        val loadedCourse = course
-        if (loadedCourse == null) {
-            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(56.dp)
+                    .padding(horizontal = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                IconButton(onClick = onBack) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "뒤로",
+                        tint = colors.onBackground
+                    )
+                }
                 Text(
-                    text = if (loadFailed) "코스 정보를 불러오지 못했어요." else "불러오는 중…",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant
+                    text = "코스 상세",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colors.onBackground,
+                    fontWeight = FontWeight.ExtraBold
                 )
+                // 상태를 못 읽었으면 하트를 그리지 않는다 — 꺼진 것처럼 보이면 눌러서 되레 풀린다.
+                favorite?.let { on ->
+                    IconButton(
+                        enabled = !favoriteBusy,
+                        onClick = {
+                            favoriteBusy = true
+                            favorite = !on
+                            favoriteScope.launch {
+                                runCatching { server.courses.toggleCourseFavorite(courseId) }
+                                    .onSuccess { saved -> favorite = saved }
+                                    .onFailure { favorite = on }
+                                favoriteBusy = false
+                            }
+                        },
+                        modifier = Modifier.testTag("course-detail-favorite")
+                    ) {
+                        Icon(
+                            imageVector = if (on) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                            contentDescription = if (on) "찜 해제" else "찜하기",
+                            tint = if (on) colors.primary else colors.onSurfaceVariant
+                        )
+                    }
+                }
             }
-        } else {
             LazyColumn(
                 modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 40.dp),
+                contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 6.dp, bottom = 132.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
-                    kr.hanchae.moyeotrip.ui.components.CachedRemoteImage(
+                    CachedRemoteImage(
                         url = loadedCourse.thumbnail,
                         contentDescription = loadedCourse.title,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(190.dp)
                             .clip(RoundedCornerShape(14.dp)),
-                        contentScale = ContentScale.Crop
+                        contentScale = ContentScale.Crop,
+                        fallbackShape = MoyeoPlaceholderShape.LANDSCAPE
                     ) {
                         Box(
                             modifier = Modifier
@@ -717,8 +349,6 @@ private fun ServerCourseDetail(
                         }
                     }
                 }
-                // 화면기획 14의 "○○ 님이 다녀온 코스" 행. 서버가 creatorNickname·
-                // creatorTravelStartDate·chatRoomCount 를 주는데도 비어 있던 자리다.
                 loadedCourse.creatorNickname?.takeIf { it.isNotBlank() }?.let { nickname ->
                     item {
                         CoursePublisherRow(
@@ -726,7 +356,7 @@ private fun ServerCourseDetail(
                             meta = serverCoursePublisherMeta(loadedCourse)
                         ) {
                             UserAvatar(
-                                imageUrl = null,
+                                imageUrl = loadedCourse.creatorProfileImageUrl,
                                 nickname = nickname,
                                 modifier = Modifier.size(32.dp),
                                 fallbackFontSize = 16.sp
@@ -735,52 +365,191 @@ private fun ServerCourseDetail(
                     }
                 }
                 if (loadedCourse.places.isNotEmpty()) {
-                    item {
-                        SectionHeader(title = "코스 미리보기")
-                    }
+                    item { SectionHeader(title = "코스 미리보기") }
+                    // 좌표가 있는 방문지만 실제 지도에 올린다. 하나도 없으면 지도 자리가 사라지고
+                    // 아래 방문지 목록만 남는다 — 손으로 그린 지도를 대신 그리지 않는다.
+                    item { CourseRouteMap(points = loadedCourse.places.toRoutePoints()) }
                     items(loadedCourse.places.size) { index ->
                         val place = loadedCourse.places[index]
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(26.dp)
-                                    .clip(CircleShape)
-                                    .background(colors.primaryContainer),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "${index + 1}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.primary,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    text = place.title,
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = colors.onSurface,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                val placeMeta = listOfNotNull(
-                                    "${place.dayNumber}일차",
-                                    place.visitTime?.take(5)
-                                ).joinToString(" · ")
-                                Text(
-                                    text = placeMeta,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.onSurfaceVariant
-                                )
-                            }
-                        }
+                        CoursePlaceRow(index = index, place = place)
+                    }
+                }
+            }
+        }
+
+        CourseDetailBottomActions(
+            onCreateRecruitment = { onCreateRecruitment("srv-$courseId") },
+            onOpenRecruitingRooms = { showsRooms = true },
+            modifier = Modifier.align(Alignment.BottomCenter)
+        )
+    }
+
+    if (showsRooms) {
+        CourseRecruitingRoomsSheet(
+            state = recruitingRooms,
+            onDismiss = { showsRooms = false },
+            onRetry = { roomsReloadKey++ },
+            onOpenRoom = { roomId ->
+                showsRooms = false
+                onOpenRoom("room-$roomId")
+            }
+        )
+    }
+}
+
+/**
+ * 14 `모집 중인 모임 보기` 결과 시트 — GET travel-courses/{courseId}/chat-rooms.
+ *
+ * 서버가 주는 것은 "모집 마감 전이고 내가 아직 참가하지 않은 방"뿐이다. 0건이면 정본 문구를 쓴다.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CourseRecruitingRoomsSheet(
+    state: ServerListState<ChatRoomSearchResult>,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit,
+    onOpenRoom: (Long) -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ) {
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .testTag("course-detail-rooms-sheet"),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            item {
+                Text(
+                    text = "모집 중인 모임",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.ExtraBold
+                )
+            }
+            when (state) {
+                ServerListState.Loading -> item { MoyeoEmptyState(MoyeoEmptyText.LOADING) }
+
+                ServerListState.Failed -> item { MoyeoEmptyState(MoyeoEmptyText.FAILED, onRetry = onRetry) }
+
+                is ServerListState.Loaded -> if (state.items.isEmpty()) {
+                    item { MoyeoEmptyState(MoyeoEmptyText.NO_ROOMS, testTag = "course-detail-rooms-empty") }
+                } else {
+                    items(state.items, key = { it.roomId }) { room ->
+                        SearchResultRoomCard(room = room, onClick = { onOpenRoom(room.roomId) })
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun CoursePlaceRow(index: Int, place: TravelCoursePlace) {
+    val colors = MaterialTheme.colorScheme
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(26.dp)
+                .clip(CircleShape)
+                .background(colors.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                text = "${index + 1}",
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.primary,
+                fontWeight = FontWeight.ExtraBold
+            )
+        }
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = place.title,
+                style = MaterialTheme.typography.labelLarge,
+                color = colors.onSurface,
+                fontWeight = FontWeight.Bold
+            )
+            val placeMeta = listOfNotNull(
+                "${place.dayNumber}일차",
+                place.visitTime?.take(5)
+            ).joinToString(" · ")
+            Text(
+                text = placeMeta,
+                style = MaterialTheme.typography.labelSmall,
+                color = colors.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
+private fun CourseDetailBottomActions(
+    onCreateRecruitment: () -> Unit,
+    onOpenRecruitingRooms: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colors = MaterialTheme.colorScheme
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .background(colors.surface)
+            .navigationBarsPadding()
+            .padding(start = 20.dp, top = 12.dp, end = 20.dp, bottom = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // 웹·iOS·화면기획에 이미 있던 버튼이다 — 안드로이드에만 빠져 있었다 (정본 §4)
+        OutlinedButton(
+            onClick = onOpenRecruitingRooms,
+            modifier = Modifier
+                .weight(1f)
+                .height(52.dp)
+                .testTag("course-detail-open-rooms"),
+            border = BorderStroke(1.dp, colors.outline),
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text(
+                text = "모집 중인 모임 보기",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+        Button(
+            onClick = onCreateRecruitment,
+            modifier = Modifier
+                .weight(1f)
+                .height(52.dp)
+                .testTag("course-detail-create-recruitment"),
+            colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
+            contentPadding = PaddingValues(horizontal = 8.dp),
+            shape = RoundedCornerShape(8.dp)
+        ) {
+            Text(
+                text = "이 코스로 모집 만들기",
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 1
+            )
+        }
+    }
+}
+
+/** 서버 방문지 → 지도 순번 마커. 좌표가 없는 방문지는 지도에서 빠진다. */
+internal fun List<TravelCoursePlace>.toRoutePoints(): List<CourseRoutePoint> = mapNotNull { place ->
+    val latitude = place.latitude ?: return@mapNotNull null
+    val longitude = place.longitude ?: return@mapNotNull null
+    CourseRoutePoint(
+        id = "course-place-${place.contentId}-${place.sequence}",
+        title = place.title,
+        position = MoyeoLatLng(latitude, longitude)
+    )
 }
 
 /**

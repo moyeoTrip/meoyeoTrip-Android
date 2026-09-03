@@ -2,11 +2,7 @@ package kr.hanchae.moyeotrip.ui.screens
 
 import android.content.Context
 import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.PickVisualMediaRequest
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -22,12 +18,14 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -46,7 +44,6 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteForever
-import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Flag
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.LocationOn
@@ -63,6 +60,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.outlined.AccountCircle
 import androidx.compose.material.icons.outlined.Circle
@@ -91,9 +89,13 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -103,9 +105,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -119,19 +121,32 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.ServerDataDependencies
+import kr.hanchae.moyeotrip.data.api.MoyeoApiException
+import kr.hanchae.moyeotrip.data.courses.TravelCourse
+import kr.hanchae.moyeotrip.data.feed.FeedComment
+import kr.hanchae.moyeotrip.data.feed.FeedReportReason
+import kr.hanchae.moyeotrip.data.feed.ServerFeed
 import kr.hanchae.moyeotrip.data.notifications.NotificationSettingsUpdate
+import kr.hanchae.moyeotrip.data.profile.ServerUserProfile
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
+import kr.hanchae.moyeotrip.data.rooms.RoadmapPlace
+import kr.hanchae.moyeotrip.data.rooms.RoomCompanion
 import kr.hanchae.moyeotrip.data.rooms.RoomMember
 import kr.hanchae.moyeotrip.data.rooms.RoomMembers
+import kr.hanchae.moyeotrip.data.rooms.RoomMessage
 import kr.hanchae.moyeotrip.data.rooms.RoomNotices
 import kr.hanchae.moyeotrip.data.rooms.RoomRoadmap
 import kr.hanchae.moyeotrip.data.rooms.recruitmentDDayText
 import kr.hanchae.moyeotrip.ui.LocalServerData
-import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.MoyeoContact
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.OverlayBackdrop
 import kr.hanchae.moyeotrip.ui.components.emphasized
+import kr.hanchae.moyeotrip.ui.navigation.AppRoutes
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 private data class MenuEntry(
@@ -271,233 +286,47 @@ fun ChatMenuScreen(
     threadId: String,
     onBack: () -> Unit,
     onOpenSpecialMessages: () -> Unit,
-    onOpenNotificationSettings: () -> Unit,
-    onOpenReport: () -> Unit,
+    /** 20-1c 이 모임 알림. 전역 방해금지(29-2)가 아니라 **이 방의** 설정으로 간다. */
+    onOpenNotificationSettings: (String) -> Unit,
     onOpenNotices: (String) -> Unit,
     onOpenRoute: (String) -> Unit,
-    // / 20-1a 캡처용 — 멤버 액션 시트를 처음부터 열어 둔다 (qaApply 선례)
-    showActionsSheetInitially: Boolean = false,
-    // / 20-1b 캡처용 — 사유 입력 시트를 처음부터 열어 둔다
-    showRemoveSheetInitially: Boolean = false
+    /**
+     * 20-1a 멤버 액션 · 20-1b 내보내기 사유는 20-1 위에 뜨는 **시트**다.
+     *
+     * 두 화면 번호로 들어왔을 때는 시트가 열린 상태로 시작한다 — 예전에는 20-1 목록만 그려져
+     * "시트가 없는 화면"이 찍혔다. 웹도 20-1b 를 20-1 본문 위에 시트를 얹은 별도 라우트로 둔다.
+     */
+    initialSheet: ChatMenuSheet = ChatMenuSheet.None
 ) {
     // "room-{id}" 는 실서버 모임이다 — 서버 멤버·공지·로드맵을 읽어 보여준다
     val server = LocalServerData.current
     val serverRoomId = threadId.serverRoomIdOrNull()
-    if (serverRoomId != null && server != null) {
-        ServerChatMenu(
-            roomId = serverRoomId,
-            server = server,
+    if (serverRoomId == null || server == null) {
+        ChangeLogScaffold(
+            title = "모임 정보",
             onBack = onBack,
-            onOpenNotices = onOpenNotices,
-            onOpenNotificationSettings = onOpenNotificationSettings,
-            onOpenReport = onOpenReport
-        )
-        return
-    }
-    val thread = MockTripRepository.findThread(threadId)
-    val trip = thread.tripId?.let(MockTripRepository::findTrip)
-    // 화면기획 20-1은 전원 "매너 4.8 · 여행 8회"로 표기하고, 역할(호스트·나)은 우측 칩으로 둔다
-    val members = listOf(
-        FriendEntry("🐻", "숲속여행자", "매너 4.8 · 여행 8회"),
-        FriendEntry("🦌", "따스한 사슴 3492", "매너 4.8 · 여행 8회"),
-        FriendEntry("🐰", "엉뚱한 토끼 1457", "매너 4.8 · 여행 8회"),
-        FriendEntry("🐢", "잔잔한 거북이 9032", "매너 4.8 · 여행 8회"),
-        FriendEntry("🦝", "호기심 많은 너구리 9027", "매너 4.8 · 여행 8회")
-    )
-    val memberRoles = mapOf("숲속여행자" to "호스트", "따스한 사슴 3492" to "나")
-    // ⋯은 두 단계다 — 20-1a 멤버 액션 시트를 먼저 열고, 내보내기를 고르면 20-1b 사유 시트로 넘어간다.
-    // 화면기획 캡처의 기본 대상은 둘 다 너구리 9027.
-    var actionTargetName by rememberSaveable {
-        mutableStateOf(if (showActionsSheetInitially) "호기심 많은 너구리 9027" else null)
-    }
-    var removeTargetName by rememberSaveable {
-        mutableStateOf(if (showRemoveSheetInitially) "호기심 많은 너구리 9027" else null)
-    }
-    val actionTarget = members.firstOrNull { it.name == actionTargetName }
-    val removeTarget = members.firstOrNull { it.name == removeTargetName }
-    ChangeLogScaffold(title = "모임 정보", onBack = onBack, modifier = Modifier.testTag("chat-menu-screen")) { padding ->
-        LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
-            contentPadding = PaddingValues(bottom = 28.dp)
-        ) {
-            item {
-                Column(modifier = Modifier.padding(horizontal = 20.dp, vertical = 10.dp)) {
-                    Text(
-                        trip?.recruitmentName ?: thread.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    trip?.let {
-                        Text(
-                            "🗺 ${it.title}",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                    }
-                    Text(
-                        "5/25(토) 당일치기 · 08:00 – 18:00",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp)
-                    )
-                    if (trip != null) {
-                        Row(
-                            modifier = Modifier.padding(top = 10.dp),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            listOf(
-                                "1인 ${"%,d".format(trip.estimatedCostPerPerson)}원",
-                                if (trip.ddayLabel.startsWith("마감")) trip.ddayLabel else "마감 ${trip.ddayLabel}",
-                                "${trip.minimumAge}~${trip.maximumAge}세",
-                                trip.genderCondition
-                            ).forEach { label ->
-                                Surface(
-                                    shape = RoundedCornerShape(50),
-                                    color = MaterialTheme.colorScheme.surfaceVariant
-                                ) {
-                                    Text(
-                                        label,
-                                        Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    Text(
-                        "07:50 청송 시외버스터미널 정문 앞 집합",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Row(
-                        modifier = Modifier.padding(top = 14.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        // 화면기획 순서: 모집 상세 → 여행 경로, 아이콘 없이 초록 외곽선
-                        OutlinedButton(
-                            onClick = { trip?.id?.let(onOpenNotices) },
-                            modifier = Modifier.weight(1f).height(46.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
-                        ) {
-                            Text("모집 상세", fontWeight = FontWeight.Bold)
-                        }
-                        OutlinedButton(
-                            onClick = { trip?.id?.let(onOpenRoute) },
-                            modifier = Modifier.weight(1f).height(46.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
-                        ) {
-                            Text("여행 경로", fontWeight = FontWeight.Bold)
-                        }
-                    }
-                }
-                HorizontalDivider(thickness = 8.dp, color = MaterialTheme.colorScheme.surfaceVariant)
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text("동행자  ${members.size}", fontWeight = FontWeight.ExtraBold)
-                    Text("최대 5명 · 대기 1명", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            items(members) { member ->
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    AnimalAvatar(member.emoji, modifier = Modifier.size(42.dp))
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(member.name, fontWeight = FontWeight.Bold)
-                        Text(
-                            member.subtitle,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    // 화면기획 20-1: 호스트·나는 역할 칩, 나머지 멤버만 ⋯ 로 액션 시트를 연다
-                    val role = memberRoles[member.name].orEmpty()
-                    if (role.isNotBlank()) {
-                        Surface(
-                            shape = RoundedCornerShape(50),
-                            color = if (role == "호스트") {
-                                MoyeoTheme.tints.primaryTint
-                            } else {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            },
-                            border = BorderStroke(
-                                1.dp,
-                                if (role == "호스트") {
-                                    MaterialTheme.colorScheme.primary.copy(alpha = .4f)
-                                } else {
-                                    MaterialTheme.colorScheme.outline
-                                }
-                            )
-                        ) {
-                            Text(
-                                role,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-                                style = MaterialTheme.typography.labelSmall,
-                                color = if (role == "호스트") {
-                                    MoyeoTheme.tints.onPrimaryTint
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                                fontWeight = FontWeight.ExtraBold
-                            )
-                        }
-                    } else {
-                        IconButton(
-                            onClick = { actionTargetName = member.name },
-                            modifier = Modifier.size(48.dp)
-                        ) {
-                            Icon(Icons.Filled.MoreHoriz, contentDescription = "${member.name} 관리")
-                        }
-                    }
-                }
-            }
-            item {
-                Text(
-                    "호스트는 멤버 우측 메뉴에서 내보내기를 할 수 있어요. 내보낸 자리는 대기 큐에서 자동으로 채워져요.",
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                HorizontalDivider(thickness = 8.dp, color = MaterialTheme.colorScheme.surfaceVariant)
-                listOf(
-                    MenuEntry(Icons.AutoMirrored.Filled.StickyNote2, "공지", "고정 2개 · 전체 4개") {
-                        trip?.id?.let(onOpenNotices)
-                    },
-                    MenuEntry(Icons.Filled.Image, "공유된 항목", "사진 12 · 장소 4 · 투표 2", onClick = onOpenSpecialMessages),
-                    MenuEntry(
-                        Icons.Filled.Notifications,
-                        "알림 설정",
-                        "이 모임의 알림과 방해금지 시간",
-                        onClick = onOpenNotificationSettings
-                    ),
-                    MenuEntry(Icons.Filled.Flag, "신고 · 차단", "부적절한 대화나 멤버를 신고해요", onClick = onOpenReport),
-                    MenuEntry(Icons.Filled.Close, "채팅방 나가기", "다음 신청자가 자동으로 합류해요", danger = true, onClick = onBack)
-                ).forEach { ActionRow(it) }
+            modifier = Modifier.testTag("chat-menu-screen")
+        ) { padding ->
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                MoyeoEmptyState(MoyeoEmptyText.NO_JOINED_ROOMS, testTag = "chat-menu-empty")
             }
         }
+        return
     }
-    if (actionTarget != null) {
-        MemberActionsSheet(
-            member = actionTarget,
-            onRemove = {
-                removeTargetName = actionTarget.name
-                actionTargetName = null
-            },
-            onDismiss = { actionTargetName = null }
-        )
-    }
-    if (removeTarget != null) {
-        MemberRemoveSheet(member = removeTarget, onDismiss = { removeTargetName = null })
-    }
+    ServerChatMenu(
+        roomId = serverRoomId,
+        server = server,
+        onBack = onBack,
+        onOpenNotices = onOpenNotices,
+        onOpenRoute = onOpenRoute,
+        onOpenSpecialMessages = onOpenSpecialMessages,
+        onOpenNotificationSettings = onOpenNotificationSettings,
+        initialSheet = initialSheet
+    )
 }
+
+/** 20-1 위에 얹힌 시트 중 어느 것으로 열 것인지. */
+enum class ChatMenuSheet { None, MemberActions, MemberRemove }
 
 /**
  * 실서버 모임 정보(화면기획 20-1) — GET chat-rooms/{id} · {id}/members · {id}/notices · {id}/roadmap/current.
@@ -513,8 +342,10 @@ private fun ServerChatMenu(
     server: ServerDataDependencies,
     onBack: () -> Unit,
     onOpenNotices: (String) -> Unit,
-    onOpenNotificationSettings: () -> Unit,
-    onOpenReport: () -> Unit
+    onOpenRoute: (String) -> Unit,
+    onOpenSpecialMessages: () -> Unit,
+    onOpenNotificationSettings: (String) -> Unit,
+    initialSheet: ChatMenuSheet
 ) {
     var detail by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
     var members by remember(roomId) { mutableStateOf<RoomMembers?>(null) }
@@ -523,8 +354,13 @@ private fun ServerChatMenu(
     var actionTarget by remember(roomId) { mutableStateOf<RoomMember?>(null) }
     var removeTarget by remember(roomId) { mutableStateOf<RoomMember?>(null) }
     var actionMessage by remember(roomId) { mutableStateOf<String?>(null) }
+    // 20-1a 의 "친구 요청하기" 는 한 번만 보낼 수 있다 — 시트를 닫으면 다시 Idle 로 돌아간다.
+    var friendRequestState by remember(roomId, actionTarget) { mutableStateOf(FriendRequestState.Idle) }
+    var friendRequestError by remember(roomId, actionTarget) { mutableStateOf<String?>(null) }
     var roomAlertsEnabled by remember(roomId) { mutableStateOf<Boolean?>(null) }
     var showLeaveConfirm by remember(roomId) { mutableStateOf(false) }
+    // 20-1 「신고 · 문의」 — 접수 API 가 없어 누른 자리에서 안내한다(정본 §3).
+    var showReportNotice by remember(roomId) { mutableStateOf(false) }
     var leaveBusy by remember(roomId) { mutableStateOf(false) }
     val actionScope = rememberCoroutineScope()
     val me = members?.members?.firstOrNull(RoomMember::me)
@@ -536,6 +372,24 @@ private fun ServerChatMenu(
         notices = runCatching { server.chatRooms.notices(roomId) }.getOrNull()
         roadmap = runCatching { server.chatRooms.currentRoadmap(roomId) }.getOrNull()
         roomAlertsEnabled = runCatching { server.notifications.roomSetting(roomId) }.getOrNull()?.enabled
+    }
+
+    // 20-1a·20-1b 로 들어왔으면 멤버가 도착한 뒤 그 시트를 연다. 대상은 **내가 아닌 다른 참가자**다 —
+    // 호스트를 내보내는 시트는 성립하지 않으므로 호스트도 건너뛴다. 대상이 없으면 시트를 열지 않는다
+    // (없는 멤버를 지어내지 않는다).
+    LaunchedEffect(initialSheet, members) {
+        if (initialSheet == ChatMenuSheet.None) return@LaunchedEffect
+        val candidate = members?.members?.firstOrNull { !it.me && !it.host } ?: return@LaunchedEffect
+        when (initialSheet) {
+            ChatMenuSheet.MemberActions -> if (removeTarget == null) actionTarget = candidate
+
+            ChatMenuSheet.MemberRemove -> {
+                actionTarget = null
+                removeTarget = candidate
+            }
+
+            ChatMenuSheet.None -> Unit
+        }
     }
 
     ChangeLogScaffold(
@@ -746,6 +600,18 @@ private fun ServerChatMenu(
                         "고정 ${pinnedCount}개 · 전체 ${noticeCount}개"
                     ) { onOpenNotices("room-$roomId") },
                     MenuEntry(
+                        Icons.Filled.Map,
+                        "여행 경로",
+                        "방문지와 집합 정보를 확인해요"
+                    ) { onOpenRoute("room-$roomId") },
+                    // 21 특수 메시지 — 사진·장소·투표·정산 카드를 모아 본다
+                    MenuEntry(
+                        Icons.Filled.Image,
+                        "공유된 항목",
+                        "사진·장소·투표·정산 카드",
+                        onClick = onOpenSpecialMessages
+                    ),
+                    MenuEntry(
                         Icons.Filled.Notifications,
                         "알림 설정",
                         "이 모임의 알림만 끄기",
@@ -769,9 +635,16 @@ private fun ServerChatMenu(
                                 )
                             }
                         },
-                        onClick = onOpenNotificationSettings
+                        onClick = { onOpenNotificationSettings("room-$roomId") }
                     ),
-                    MenuEntry(Icons.Filled.Flag, "신고 · 차단", "부적절한 대화나 멤버를 신고해요", onClick = onOpenReport)
+                    // 채팅방·멤버 신고는 접수 API 가 없다 — 화면을 옮기지 않고 그 자리에서 안내한다.
+                    // 차단은 20-1a 멤버 액션에서 한다(대상이 확실한 자리 · 정본 §3).
+                    MenuEntry(
+                        Icons.Filled.Flag,
+                        "신고 · 문의",
+                        "부적절한 대화는 GitHub 이슈나 이메일로 알려주세요",
+                        onClick = { showReportNotice = true }
+                    )
                 ).forEach { ActionRow(it) }
                 HorizontalDivider(thickness = 8.dp, color = MaterialTheme.colorScheme.surfaceVariant)
                 ActionRow(
@@ -785,60 +658,71 @@ private fun ServerChatMenu(
             }
         }
     }
+    if (showReportNotice) {
+        ReportUnsupportedDialog(onDismiss = { showReportNotice = false })
+    }
     val target = actionTarget
     if (target != null) {
-        AlertDialog(
-            onDismissRequest = { actionTarget = null },
-            title = { Text(target.nickname) },
-            text = {
-                Text(
-                    if (amHost) {
-                        "친구 신청을 보내거나 이 사용자를 차단하거나, 모임에서 내보낼 수 있어요."
-                    } else {
-                        "친구 신청을 보내거나 이 사용자를 차단할 수 있어요."
-                    }
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    actionTarget = null
+        // 화면기획 20-1a·웹과 같은 **바텀시트**다. 예전에는 여기에 AlertDialog 를 띄워
+        // 20-1a 로 만들어 둔 [MemberActionsSheet] 가 아무 데서도 쓰이지 않았고,
+        // 그 안의 "친구 요청하기" 는 빈 onClick 이었다(감사 도구가 잡은 자리).
+        MemberActionsSheet(
+            member = FriendEntry(
+                emoji = "🙂",
+                name = target.nickname,
+                subtitle = "여행 ${target.completedTripCount}회",
+                imageUrl = target.profileImageUrl,
+                userId = target.userId
+            ),
+            friendRequestState = friendRequestState,
+            friendRequestError = friendRequestError,
+            onSendFriendRequest = {
+                if (friendRequestState == FriendRequestState.Idle) {
+                    friendRequestState = FriendRequestState.Sending
+                    friendRequestError = null
                     actionScope.launch {
                         runCatching { server.social.sendRequest(target.userId) }
-                            .onSuccess { actionMessage = "${target.nickname}님에게 친구 신청을 보냈어요." }
-                            .onFailure { error -> actionMessage = error.message ?: "친구 신청에 실패했어요." }
+                            .onSuccess {
+                                friendRequestState = FriendRequestState.Sent
+                                actionMessage = "${target.nickname}님에게 친구 신청을 보냈어요."
+                            }
+                            .onFailure { error ->
+                                friendRequestState = FriendRequestState.Idle
+                                // 문구는 웹 20-1a 와 같은 것을 쓴다
+                                friendRequestError = error.message ?: "친구 요청을 보내지 못했어요."
+                            }
                     }
-                }) { Text("친구 신청") }
-            },
-            dismissButton = {
-                Row {
-                    // 내보내기는 호스트에게만 보인다 (화면기획 20-1a)
-                    if (amHost) {
-                        TextButton(
-                            onClick = {
-                                removeTarget = target
-                                actionTarget = null
-                            },
-                            modifier = Modifier.testTag("server-member-remove")
-                        ) {
-                            Text("내보내기", color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                    TextButton(onClick = {
-                        actionTarget = null
-                        actionScope.launch {
-                            runCatching { server.social.block(target.userId) }
-                                .onSuccess { actionMessage = "${target.nickname}님을 차단했어요." }
-                                .onFailure { error -> actionMessage = error.message ?: "차단에 실패했어요." }
-                        }
-                    }) { Text("차단", color = MaterialTheme.colorScheme.error) }
                 }
-            }
+            },
+            // 신고 접수 API 는 서버에 없다(웹 30-2 도 같은 이유로 차단만 반영한다) —
+            // 대상이 확실한 이 경로에서 차단만 실제로 보낸다.
+            onBlock = {
+                actionTarget = null
+                actionScope.launch {
+                    runCatching { server.social.block(target.userId) }
+                        .onSuccess {
+                            actionMessage = "${target.nickname}님을 차단했어요."
+                            members = runCatching { server.chatRooms.members(roomId) }.getOrNull() ?: members
+                        }
+                        .onFailure { error -> actionMessage = error.message ?: "차단에 실패했어요." }
+                }
+            },
+            onRemove = {
+                removeTarget = target
+                actionTarget = null
+            },
+            onDismiss = { actionTarget = null }
         )
     }
-    // 20-1b 사유 입력 시트 — 목데이터 화면과 같은 시트를 재사용하고 확인에서만 서버를 부른다
+    // 20-1b 사유 입력 시트 — 확인에서만 서버를 부른다
     removeTarget?.let { member ->
         MemberRemoveSheet(
-            member = FriendEntry(emoji = "🙂", name = member.nickname, subtitle = "여행 ${member.completedTripCount}회"),
+            member = FriendEntry(
+                emoji = "🙂",
+                name = member.nickname,
+                subtitle = "여행 ${member.completedTripCount}회",
+                imageUrl = member.profileImageUrl
+            ),
             onDismiss = { removeTarget = null },
             onConfirm = { reason ->
                 removeTarget = null
@@ -854,19 +738,12 @@ private fun ServerChatMenu(
         )
     }
     if (showLeaveConfirm) {
-        // 화면기획 31 — 호스트가 나가면 모임이 종료된다는 경고를 먼저 보여준다
+        // 화면기획 31 · 31-1 — 호스트와 참가자는 결과가 전혀 다르다. 문구는 정본 한 곳에서 온다.
+        val leaveCopy = LeaveCopy.of(amHost)
         AlertDialog(
             onDismissRequest = { showLeaveConfirm = false },
-            title = { Text(if (amHost) "호스트가 나가면 이 모임은 종료돼요" else "이 모임에서 나갈까요?") },
-            text = {
-                Text(
-                    if (amHost) {
-                        "참여한 멤버 모두에게 알림이 가고, 채팅방은 읽기 전용으로 남아요."
-                    } else {
-                        "나가면 대기 중인 다음 신청자가 자동으로 합류해요."
-                    }
-                )
-            },
+            title = { Text(leaveCopy.spokenTitle()) },
+            text = { Text(leaveCopy.description) },
             confirmButton = {
                 TextButton(
                     enabled = !leaveBusy,
@@ -887,7 +764,7 @@ private fun ServerChatMenu(
                     },
                     modifier = Modifier.testTag("server-room-leave-confirm")
                 ) {
-                    Text(if (amHost) "모임 종료" else "나가기", color = MaterialTheme.colorScheme.error)
+                    Text(leaveCopy.confirm, color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
@@ -910,17 +787,27 @@ internal fun ChatMenuBody(threadId: String = OVERLAY_BACKDROP_THREAD_ID) {
         onBack = {},
         onOpenSpecialMessages = {},
         onOpenNotificationSettings = {},
-        onOpenReport = {},
         onOpenNotices = {},
         onOpenRoute = {}
     )
 }
 
+/** 20-1a "친구 요청하기" 행의 세 상태. 웹과 같은 라벨을 쓴다. */
+private enum class FriendRequestState { Idle, Sending, Sent }
+
 // / 20-1a 멤버 액션 시트 (changeLog14) — ⋯의 첫 단계.
 // / 내보내기 행은 호스트에게만 보인다는 전제이고, 캡처 화면에서는 항상 표시한다.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun MemberActionsSheet(member: FriendEntry, onRemove: () -> Unit, onDismiss: () -> Unit) {
+private fun MemberActionsSheet(
+    member: FriendEntry,
+    friendRequestState: FriendRequestState,
+    friendRequestError: String?,
+    onSendFriendRequest: () -> Unit,
+    onBlock: () -> Unit,
+    onRemove: () -> Unit,
+    onDismiss: () -> Unit
+) {
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -939,11 +826,18 @@ private fun MemberActionsSheet(member: FriendEntry, onRemove: () -> Unit, onDism
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                AnimalAvatar(member.emoji, modifier = Modifier.size(40.dp))
+                // 20-1 목록과 같은 아바타다 — 서버가 준 프로필 이미지가 있으면 그것을 쓴다.
+                // 이모지 폴백을 그대로 두면 목록에는 실제 사진이, 시트에는 🙂 가 보였다.
+                UserAvatar(
+                    imageUrl = member.imageUrl,
+                    nickname = member.name,
+                    modifier = Modifier.size(40.dp),
+                    fallbackFontSize = 18.sp
+                )
                 Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                     Text(member.name, fontWeight = FontWeight.ExtraBold)
                     Text(
-                        text = "${member.subtitle} · 어제 합류",
+                        text = member.subtitle,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -952,11 +846,41 @@ private fun MemberActionsSheet(member: FriendEntry, onRemove: () -> Unit, onDism
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             MemberActionRow(
                 icon = Icons.Outlined.AccountCircle,
-                title = "친구 요청하기",
+                // POST users/me/friend-requests/{userId}. 라벨은 웹 20-1a 와 같다.
+                title = when (friendRequestState) {
+                    FriendRequestState.Idle -> "친구 요청하기"
+                    FriendRequestState.Sending -> "보내는 중..."
+                    FriendRequestState.Sent -> "친구 요청을 보냈어요"
+                },
                 iconTint = MaterialTheme.colorScheme.onSurfaceVariant,
-                titleColor = MaterialTheme.colorScheme.onSurface,
+                titleColor = if (friendRequestState == FriendRequestState.Sent) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface
+                },
                 tag = "member-actions-friend",
-                onClick = {}
+                actionable = friendRequestState == FriendRequestState.Idle,
+                onClick = onSendFriendRequest
+            )
+            friendRequestError?.let { message ->
+                // 서버가 거절한 이유를 시트 안에서 보여준다. 시트 뒤 목록에 적으면 딤에 가려 안 보인다.
+                Text(
+                    message,
+                    modifier = Modifier.padding(start = 34.dp, bottom = 8.dp)
+                        .testTag("member-actions-friend-error"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.error
+                )
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            MemberActionRow(
+                icon = Icons.Filled.Flag,
+                // 신고 접수는 서버가 받지 않는다 — 실제로 반영되는 것은 차단뿐이라 행 이름도 차단이다.
+                title = "차단하기",
+                iconTint = MaterialTheme.colorScheme.error,
+                titleColor = MaterialTheme.colorScheme.error,
+                tag = "member-actions-block",
+                onClick = onBlock
             )
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             MemberActionRow(
@@ -996,13 +920,15 @@ private fun MemberActionRow(
     iconTint: Color,
     titleColor: Color,
     tag: String,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    /** 아직 누를 수 있는 행인지. 보내는 중·이미 보낸 뒤에는 셰브런도 지운다. */
+    actionable: Boolean = true
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(54.dp)
-            .clickable(role = Role.Button, onClick = onClick)
+            .clickable(role = Role.Button, enabled = actionable, onClick = onClick)
             .testTag(tag),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1014,12 +940,14 @@ private fun MemberActionRow(
             fontWeight = FontWeight.Bold,
             color = titleColor
         )
-        Icon(
-            Icons.Filled.ChevronRight,
-            contentDescription = null,
-            modifier = Modifier.size(20.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        if (actionable) {
+            Icon(
+                Icons.Filled.ChevronRight,
+                contentDescription = null,
+                modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
     }
 }
 
@@ -1030,7 +958,7 @@ private fun MemberActionRow(
 private fun MemberRemoveSheet(
     member: FriendEntry,
     onDismiss: () -> Unit,
-    /** 실서버 방에서만 채운다 — 목데이터·캡처 경로는 닫기만 한다. */
+    /** 실서버 방에서만 채운다 — 방을 모르면 닫기만 한다. */
     onConfirm: ((String) -> Unit)? = null
 ) {
     var reason by rememberSaveable { mutableStateOf("") }
@@ -1070,11 +998,18 @@ private fun MemberRemoveSheet(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    AnimalAvatar(member.emoji, modifier = Modifier.size(40.dp))
+                    // 프로필 이미지가 있으면 그 이미지다 — 이모지는 없을 때의 폴백이다(R5).
+                    UserAvatar(
+                        imageUrl = member.imageUrl,
+                        nickname = member.name,
+                        modifier = Modifier.size(40.dp),
+                        fallbackFontSize = 18.sp
+                    )
                     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(member.name, fontWeight = FontWeight.ExtraBold)
                         Text(
-                            text = "${member.subtitle} · 어제 합류",
+                            // 합류 시점은 서버 멤버 응답에 없다 — `어제 합류` 는 지어낸 값이라 뺐다.
+                            text = member.subtitle,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -1213,88 +1148,47 @@ internal suspend fun readPickedImage(context: Context, uri: Uri): PickedImage? =
     }.getOrNull()
 }
 
+/** 20-2 첨부 타일 한 칸 — 아이콘·이름·한 줄 설명 + 그 타일이 여는 작성 화면 라우트. */
+private data class AttachTile(
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val label: String,
+    val hint: String,
+    val route: String
+)
+
 /**
  * 20-2 첨부 시트.
  *
- * 실서버 방(`room-{id}`)에서는 기획에 이미 자리가 있는 두 타일이 바로 서버를 부른다 —
- * "지도"는 POST chat-rooms/{id}/messages/locations(본문 없음), "사진"은 시스템 사진 선택기로 고른 파일을
- * POST chat-rooms/{id}/messages/images(multipart)로 보낸다.
- * "장소"·"투표"·"정산"은 서버 API 는 있지만 기획에 입력 화면(장소 고르기·질문/선택지·메모)이 없어
- * 기존 진입(특수 메시지 6종)을 그대로 두고 저장소 배선만 해뒀다.
+ * 타일 6개는 각자의 **작성 화면**(20-2a~20-2f)으로 간다 — `ATTACH-COMPOSER-CANON.md` §0·§1.
+ * 예전에는 여섯 개가 전부 21(특수 메시지 견본)로 갔는데, 21 은 "보내고 나면 이렇게 보인다"는
+ * 결과 카드 모음이라 무엇을 어떻게 만드는지를 대신하지 못한다.
+ *
+ * 방(`room-{id}`)은 작성 화면으로 그대로 넘긴다. 실제 전송은 각 작성 화면이 한다.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ChatAttachmentScreen(
     onBack: () -> Unit,
-    onOpenSpecialMessages: () -> Unit,
     isOnline: Boolean,
-    /** 공유 대상 방. "room-{id}" 면 실서버로 보낸다. 캡처 라우트는 null 로 들어와 목데이터 방을 쓴다. */
-    threadId: String? = null
+    /** 공유 대상 방. "room-{id}" 면 작성 화면이 실서버로 보낸다. */
+    threadId: String? = null,
+    /** 타일이 여는 20-2a~20-2f 라우트. */
+    onOpenComposer: (String) -> Unit = {}
 ) {
     val backdropThreadId = threadId ?: OVERLAY_BACKDROP_THREAD_ID
     val items = listOf(
-        Triple(Icons.Filled.CameraAlt, "사진", "최대 20MB · 1장씩"),
-        Triple(Icons.Filled.LocationOn, "장소", "TourAPI 장소 카드"),
-        Triple(Icons.Filled.Map, "지도", "만날 위치 핀 공유"),
-        Triple(Icons.Filled.Poll, "투표", "2~5개 · 익명 기본"),
-        Triple(Icons.Filled.Payments, "정산", "메모용 · 송금 아님"),
-        Triple(Icons.AutoMirrored.Filled.StickyNote2, "메모", "상단 고정 공지")
-    )
-    val server = LocalServerData.current
-    val serverRoomId = threadId?.serverRoomIdOrNull()
-    val context = LocalContext.current
-    val shareScope = rememberCoroutineScope()
-    var shareBusy by remember(serverRoomId) { mutableStateOf(false) }
-    var shareMessage by remember(serverRoomId) { mutableStateOf<String?>(null) }
-
-    val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
-        if (uri == null || serverRoomId == null || server == null) return@rememberLauncherForActivityResult
-        shareBusy = true
-        shareScope.launch {
-            val picked = readPickedImage(context, uri)
-            if (picked == null) {
-                shareMessage = "사진을 읽지 못했어요."
-                shareBusy = false
-                return@launch
-            }
-            runCatching {
-                server.chatRooms.shareImage(
-                    roomId = serverRoomId,
-                    fileName = picked.fileName,
-                    mimeType = picked.mimeType,
-                    bytes = picked.bytes
-                )
-            }
-                .onSuccess { onBack() }
-                .onFailure { error -> shareMessage = error.message ?: "사진을 보내지 못했어요." }
-            shareBusy = false
-        }
-    }
-
-    fun shareMeetingLocation() {
-        if (serverRoomId == null || server == null || shareBusy) return
-        shareBusy = true
-        shareScope.launch {
-            runCatching { server.chatRooms.shareMeetingLocation(serverRoomId) }
-                .onSuccess { onBack() }
-                .onFailure { error -> shareMessage = error.message ?: "만날 위치를 보내지 못했어요." }
-            shareBusy = false
-        }
-    }
-
-    val serverActions: Map<String, () -> Unit> = if (serverRoomId != null && server != null) {
-        mapOf(
-            "지도" to ::shareMeetingLocation,
-            "사진" to {
-                photoPicker.launch(
-                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                )
-            }
+        AttachTile(Icons.Filled.CameraAlt, "사진", "최대 20MB · 1장씩", AppRoutes.attachPhoto(threadId)),
+        AttachTile(Icons.Filled.LocationOn, "장소", "관광 정보에서 찾기", AppRoutes.attachPlace(threadId)),
+        AttachTile(Icons.Filled.Map, "지도", "만날 위치 핀 공유", AppRoutes.attachMap(threadId)),
+        AttachTile(Icons.Filled.Poll, "투표", "2~5개 · 익명 기본", AppRoutes.attachPoll(threadId)),
+        AttachTile(Icons.Filled.Payments, "정산", "메모용 · 송금 아님", AppRoutes.attachSettlement(threadId)),
+        AttachTile(
+            Icons.AutoMirrored.Filled.StickyNote2,
+            "메모",
+            "상단 고정 공지",
+            AppRoutes.attachNotice(threadId)
         )
-    } else {
-        emptyMap()
-    }
-
+    )
     // changeLog14 "오버레이 배경 일괄" — 채팅 버블 실루엣 대신 실제 채팅방 본문을 깐다.
     OverlayBackdrop(
         modifier = Modifier.testTag("chat-attach-screen"),
@@ -1329,18 +1223,15 @@ fun ChatAttachmentScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     items.forEach { item ->
-                        val serverAction = serverActions[item.second]
                         Surface(
                             modifier = Modifier
                                 .weight(1f)
                                 .height(116.dp)
-                                .clickable(enabled = isOnline && !shareBusy) {
-                                    serverAction?.invoke() ?: onOpenSpecialMessages()
-                                }
-                                .testTag("chat-attach-${item.second}")
+                                .clickable(enabled = isOnline) { onOpenComposer(item.route) }
+                                .testTag("chat-attach-${item.label}")
                                 .semantics {
                                     role = Role.Button
-                                    contentDescription = if (isOnline) item.second else "${item.second}, 오프라인에서 사용 불가"
+                                    contentDescription = if (isOnline) item.label else "${item.label}, 오프라인에서 사용 불가"
                                 },
                             shape = RoundedCornerShape(14.dp),
                             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
@@ -1356,15 +1247,15 @@ fun ChatAttachmentScreen(
                                     color = MaterialTheme.colorScheme.primaryContainer
                                 ) {
                                     Icon(
-                                        item.first,
+                                        item.icon,
                                         contentDescription = null,
                                         modifier = Modifier.padding(10.dp).size(24.dp),
                                         tint = MaterialTheme.colorScheme.onPrimaryContainer
                                     )
                                 }
-                                Text(item.second, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
+                                Text(item.label, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 6.dp))
                                 Text(
-                                    item.third,
+                                    item.hint,
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center,
@@ -1373,14 +1264,6 @@ fun ChatAttachmentScreen(
                             }
                         }
                     }
-                }
-                shareMessage?.let { message ->
-                    Text(
-                        message,
-                        modifier = Modifier.padding(top = 10.dp).testTag("chat-attach-error"),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.error
-                    )
                 }
                 TextButton(
                     onClick = onBack,
@@ -1395,14 +1278,31 @@ fun ChatAttachmentScreen(
 }
 
 @Composable
-fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
+fun FriendsScreen(
+    onBack: () -> Unit,
+    onOpenDex: () -> Unit,
+    /** 27-2a 친구 정리 — ⋯ 는 onClick 이 없어 눌러도 아무 일이 없었다(정본 §6-5). */
+    onOpenFriendManage: (Long, String, String) -> Unit = { _, _, _ -> }
+) {
     var tab by rememberSaveable { mutableStateOf(0) }
-    var removeTarget by remember { mutableStateOf<FriendEntry?>(null) }
-    // 로그인 상태면 실서버 친구·신청 목록으로 대체한다 — 실패 시 목데이터 유지
+    // 우측 상단 검색은 눌러도 아무 일이 없던 자리다 — 이 목록을 닉네임으로 좁히는 입력줄을 연다.
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    // 친구·신청 목록은 실서버가 근거다 — 못 받아오면 비어 있는 상태로 둔다
     val server = LocalServerData.current
     var serverFriends by remember(server) { mutableStateOf<ServerFriendLists?>(null) }
     val friendScope = rememberCoroutineScope()
-    LaunchedEffect(server) {
+    // 27-2a 에서 친구를 끊고 돌아오면 목록이 달라져 있다 — 화면이 다시 보일 때마다 읽는다.
+    var reloadKey by remember(server) { mutableIntStateOf(0) }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) reloadKey++
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+    LaunchedEffect(server, reloadKey) {
         serverFriends = if (server == null) {
             null
         } else {
@@ -1443,13 +1343,6 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
         }
     }
 
-    /** 친구 삭제 — DELETE users/me/friends/{userId} (friendshipId 가 아니다). */
-    fun removeFriend(userId: Long) {
-        friendScope.launch {
-            runCatching { server?.social?.removeFriend(userId) }.onSuccess { reloadFriendLists() }
-        }
-    }
-
     val tabs = serverFriends?.let { data ->
         listOf("내 친구 ${data.friends.size}", "받은 신청 ${data.received.size}", "보낸 신청 ${data.sent.size}")
     } ?: listOf("내 친구 3", "받은 신청 2", "보낸 신청 1")
@@ -1484,25 +1377,30 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
                 )
             }
         )
-    } ?: listOf(
-        listOf(
-            FriendEntry("🐻", "우직한 곰 7821", "함께 여행 3회 · 어제 접속"),
-            FriendEntry("🐰", "엉뚱한 토끼 1457", "함께 여행 1회 · 3일 전 접속"),
-            FriendEntry("🐢", "잔잔한 거북이 9032", "함께 여행 2회 · 오늘 접속")
-        ),
-        listOf(
-            FriendEntry("🦝", "호기심 많은 너구리 9027", "포항·영덕 드라이브에서 만났어요"),
-            FriendEntry("🪽", "고요한 두루미 1130", "경주 단풍·야경에서 만났어요")
-        ),
-        listOf(FriendEntry("🦌", "따스한 사슴 3492", "어제 신청 · 수락 대기 중"))
-    )
+    } ?: listOf(emptyList(), emptyList(), emptyList())
+    // 이 목록 안에서 닉네임으로 좁힌다. 서버에는 사용자 검색 API 가 없다
+    // (GET users/{userId}/profile 만 있다) — 없는 API 를 부르는 대신 받아 둔 목록을 거른다.
+    val shownList = if (searchQuery.isBlank()) {
+        lists[tab]
+    } else {
+        lists[tab].filter { it.name.contains(searchQuery.trim(), ignoreCase = true) }
+    }
     ChangeLogScaffold(
         title = "친구 관리",
         onBack = onBack,
         modifier = Modifier.testTag("friends-screen"),
         actions = {
-            IconButton(onClick = {}, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Filled.Search, contentDescription = "친구 검색")
+            IconButton(
+                onClick = {
+                    searchOpen = !searchOpen
+                    if (!searchOpen) searchQuery = ""
+                },
+                modifier = Modifier.size(48.dp).testTag("friends-search-toggle")
+            ) {
+                Icon(
+                    if (searchOpen) Icons.Filled.Close else Icons.Filled.Search,
+                    contentDescription = if (searchOpen) "친구 검색 닫기" else "친구 검색"
+                )
             }
         }
     ) { padding ->
@@ -1525,6 +1423,20 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
                 }
             }
             HorizontalDivider()
+            if (searchOpen) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 20.dp, vertical = 8.dp)
+                        .testTag("friends-search-input"),
+                    placeholder = { Text("닉네임으로 찾기") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(24.dp)
+                )
+            }
             LazyColumn(contentPadding = PaddingValues(vertical = 8.dp, horizontal = 20.dp)) {
                 if (tab == 1) {
                     item {
@@ -1536,36 +1448,37 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
                         )
                     }
                 }
-                if (serverFriends != null && lists[tab].isEmpty()) {
+                if (shownList.isEmpty()) {
                     item {
                         Text(
-                            when (tab) {
-                                0 -> "아직 친구가 없어요."
-                                1 -> "받은 친구 신청이 없어요."
+                            when {
+                                // 검색으로 비었을 때 "아직 친구가 없어요" 라고 하면 목록이 빈 것처럼 읽힌다
+                                searchQuery.isNotBlank() -> "‘${searchQuery.trim()}’ 과 맞는 사람이 없어요."
+
+                                tab == 0 -> "아직 친구가 없어요."
+
+                                tab == 1 -> "받은 친구 신청이 없어요."
+
                                 else -> "보낸 친구 신청이 없어요."
                             },
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
+                            modifier = Modifier.padding(vertical = 24.dp).testTag("friends-empty")
                         )
                     }
                 }
-                items(lists[tab]) { friend ->
+                items(shownList) { friend ->
                     Row(
                         modifier = Modifier.fillMaxWidth().height(68.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        if (serverFriends != null) {
-                            UserAvatar(
-                                imageUrl = friend.imageUrl,
-                                nickname = friend.name,
-                                modifier = Modifier.size(44.dp),
-                                fallbackFontSize = 20.sp
-                            )
-                        } else {
-                            AnimalAvatar(friend.emoji, modifier = Modifier.size(44.dp))
-                        }
+                        UserAvatar(
+                            imageUrl = friend.imageUrl,
+                            nickname = friend.name,
+                            modifier = Modifier.size(44.dp),
+                            fallbackFontSize = 20.sp
+                        )
                         Column(modifier = Modifier.weight(1f)) {
                             Text(friend.name, fontWeight = FontWeight.ExtraBold)
                             if (friend.subtitle.isNotBlank()) {
@@ -1578,8 +1491,11 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
                         }
                         when (tab) {
                             0 -> IconButton(
-                                onClick = { if (serverFriends != null) removeTarget = friend },
-                                modifier = Modifier.size(48.dp)
+                                // 27-2a 친구 정리 시트로 간다 — 친구 끊기는 되돌리기 어렵다
+                                onClick = {
+                                    friend.userId?.let { onOpenFriendManage(it, friend.name, friend.subtitle) }
+                                },
+                                modifier = Modifier.size(48.dp).testTag("friend-manage-open")
                             ) {
                                 Icon(Icons.Filled.MoreHoriz, contentDescription = "${friend.name} 관리")
                             }
@@ -1652,23 +1568,6 @@ fun FriendsScreen(onBack: () -> Unit, onOpenDex: () -> Unit) {
             }
         }
     }
-    val friendToRemove = removeTarget
-    if (friendToRemove?.userId != null) {
-        AlertDialog(
-            onDismissRequest = { removeTarget = null },
-            title = { Text("${friendToRemove.name}님을 친구에서 삭제할까요?") },
-            text = { Text("친구를 삭제하면 서로의 피드 구독이 끊겨요. 함께한 여행 기록(도감)은 그대로 남아요.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    removeTarget = null
-                    removeFriend(friendToRemove.userId)
-                }) { Text("친구 삭제", color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = {
-                TextButton(onClick = { removeTarget = null }) { Text("취소") }
-            }
-        )
-    }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -1677,12 +1576,72 @@ fun TripMessageScreen(
     onBack: () -> Unit,
     onOpenFeedWrite: () -> Unit,
     onOpenCoursePublish: () -> Unit,
-    onOpenDex: () -> Unit
+    onOpenDex: () -> Unit,
+    // 27-4 코스 평가 — 14 코스 상세가 보여주는 평점을 만드는 **유일한** 자리다.
+    // 여기서 권하지 않으면 아무도 평가하지 않아 평점이 영원히 비어 있다(정본 §6-4).
+    onOpenCourseRating: (String) -> Unit = {}
 ) {
-    val names = listOf("우직한 곰 7821", "엉뚱한 토끼 1457", "잔잔한 거북이 9032")
-    val emojis = listOf("🐻", "🐰", "🐢")
-    val messages = remember { mutableStateListOf("핑크뮬리 사진 잘 찍어주셔서 고마워요!", "", "") }
+    // 20-4 는 "방금 끝난 여행"의 동행자에게 한 줄을 남기는 화면이다.
+    // 대상은 서버가 준다 — 가장 최근에 끝난 내 모임의 동행자(GET chat-rooms/{id}/companions).
+    val server = LocalServerData.current
+    var roomId by remember(server) { mutableStateOf<Long?>(null) }
+    var companions by remember(server) { mutableStateOf<List<RoomCompanion>>(emptyList()) }
+    val messages = remember { mutableStateMapOf<Long, String>() }
+    // 27-1 매너 점수 — ReviewTravelCompanionRequest 의 `mannerScore` (1~5, 필수).
+    // 별점 UI 가 한 픽셀도 없어서 앱 곳곳의 "매너 4.7" 을 만드는 사람이 아무도 없었다(정본 §6-2).
+    val scores = remember { mutableStateMapOf<Long, Int>() }
+    var saveError by remember { mutableStateOf<String?>(null) }
+    val saveScope = rememberCoroutineScope()
     val presets = listOf("덕분에 즐거웠어요", "사진 고마워요!", "다음에도 잘 부탁드려요")
+
+    LaunchedEffect(server) {
+        if (server == null) return@LaunchedEffect
+        // 불발된 방(`CANCELLED`)도 `ended` 다. 그런 방의 동행자를 물으면 서버가 409 40915 를 주고
+        // 화면은 통째로 빈 상태가 된다 — 평가할 수 있는 것은 **확정돼서 끝난** 여행뿐이다.
+        val latestEnded = runCatching {
+            server.chatRooms.myRooms()
+                .filter { it.ended && it.status == "CONFIRMED" }
+        }.getOrElse { emptyList() }.firstOrNull()
+        roomId = latestEnded?.roomId
+        val id = latestEnded?.roomId ?: return@LaunchedEffect
+        companions = runCatching { server.chatRooms.companions(id) }.getOrElse { emptyList() }
+        companions.forEach { companion ->
+            companion.oneLineReview?.let { messages[companion.userId] = it }
+            // 이미 매긴 점수만 채운다 — 안 매긴 사람에게 기본 점수를 넣지 않는다.
+            companion.mannerScore?.let { scores[companion.userId] = it }
+        }
+    }
+
+    fun saveReviews() {
+        val id = roomId
+        if (server == null || id == null) {
+            onOpenDex()
+            return
+        }
+        saveError = null
+        saveScope.launch {
+            var failed = false
+            companions.forEach { companion ->
+                val text = messages[companion.userId]?.trim().orEmpty()
+                val score = scores[companion.userId] ?: 0
+                // `mannerScore` 는 필수다. 점수를 안 매긴 동행자는 아예 보내지 않는다 —
+                // 안 매긴 점수를 만점으로 채워 보내면 없는 평가를 앱이 지어내는 것이 된다.
+                val changed = score != companion.mannerScore || text != companion.oneLineReview.orEmpty()
+                if (score in 1..5 && changed) {
+                    runCatching {
+                        server.chatRooms.reviewCompanion(
+                            id,
+                            companion.userId,
+                            score,
+                            text.takeIf(String::isNotBlank)
+                        )
+                    }.onFailure { failed = true }
+                }
+            }
+            if (failed) saveError = "평가를 저장하지 못한 동행자가 있어요." else onOpenDex()
+        }
+    }
+
     ChangeLogScaffold(
         title = "여행 마무리",
         onBack = onBack,
@@ -1695,7 +1654,7 @@ fun TripMessageScreen(
                 ) {
                     TextButton(onClick = onOpenDex) { Text("나중에") }
                     Button(
-                        onClick = onOpenDex,
+                        onClick = { saveReviews() },
                         modifier = Modifier.weight(1f).height(50.dp),
                         shape = RoundedCornerShape(12.dp)
                     ) {
@@ -1711,10 +1670,10 @@ fun TripMessageScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             item {
-                Text("함께 걸어준 친구들에게\n한 줄 남겨볼까요?", style = MaterialTheme.typography.headlineSmall)
+                Text("함께 걸어준 친구들,\n어떠셨어요?", style = MaterialTheme.typography.headlineSmall)
                 Text(
                     emphasized(
-                        "남긴 메시지는 상대방의 도감 카드 뒷면에 적혀요. 안 남겨도 카드는 그대로 모여요.",
+                        "매너 점수는 다음 모임의 호스트가 보고, 한 줄 메시지는 상대방의 도감 카드 뒷면에 적혀요.",
                         "도감 카드 뒷면"
                     ),
                     style = MaterialTheme.typography.bodySmall,
@@ -1722,9 +1681,13 @@ fun TripMessageScreen(
                     modifier = Modifier.padding(top = 8.dp)
                 )
             }
-            items(names.indices.toList()) { index ->
+            if (companions.isEmpty()) {
+                item { MoyeoEmptyState("아직 함께 여행한 친구가 없어요.", testTag = "trip-message-empty") }
+            }
+            items(companions, key = { it.userId }) { companion ->
+                val text = messages[companion.userId].orEmpty()
                 RoundedPanel(
-                    containerColor = if (messages[index].isNotBlank()) {
+                    containerColor = if (text.isNotBlank()) {
                         MaterialTheme.colorScheme.primaryContainer
                     } else {
                         MaterialTheme.colorScheme.surface
@@ -1734,26 +1697,38 @@ fun TripMessageScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        AnimalAvatar(emojis[index], modifier = Modifier.size(40.dp))
+                        UserAvatar(
+                            imageUrl = companion.profileImageUrl,
+                            nickname = companion.nickname,
+                            modifier = Modifier.size(40.dp),
+                            fallbackFontSize = 18.sp
+                        )
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(names[index], fontWeight = FontWeight.ExtraBold)
+                            Text(companion.nickname, fontWeight = FontWeight.ExtraBold)
                             Text(
-                                if (messages[index].isBlank()) "아직 안 남겼어요" else "메시지를 남겼어요",
+                                if (text.isBlank()) "아직 안 남겼어요" else "메시지를 남겼어요",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        if (messages[index].isNotBlank()) Icon(Icons.Filled.Check, contentDescription = "작성 완료")
+                        if (text.isNotBlank()) Icon(Icons.Filled.Check, contentDescription = "작성 완료")
                     }
+                    // 27-1 매너 점수 (정본 §6-2) — 서버가 받는 값이 정수 1~5 라 반 개는 두지 않는다
+                    MannerScoreRow(
+                        score = scores[companion.userId] ?: 0,
+                        enabled = roomId != null,
+                        onScoreChange = { scores[companion.userId] = it },
+                        testTag = "manner-score-${companion.userId}"
+                    )
                     OutlinedTextField(
-                        value = messages[index],
-                        onValueChange = { messages[index] = it.take(40) },
+                        value = text,
+                        onValueChange = { messages[companion.userId] = it.take(40) },
                         modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
                         placeholder = { Text("한 줄 메시지를 남겨주세요 (최대 40자)") },
                         minLines = 2,
-                        supportingText = { Text("${messages[index].length}/40") }
+                        supportingText = { Text("${text.length}/40") }
                     )
-                    if (messages[index].isBlank()) {
+                    if (text.isBlank()) {
                         FlowRow(
                             modifier = Modifier.padding(top = 6.dp),
                             horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -1761,7 +1736,7 @@ fun TripMessageScreen(
                         ) {
                             presets.forEach { preset ->
                                 OutlinedButton(onClick = {
-                                    messages[index] = preset
+                                    messages[companion.userId] = preset
                                 }, shape = RoundedCornerShape(12.dp)) { Text(preset) }
                             }
                         }
@@ -1769,9 +1744,58 @@ fun TripMessageScreen(
                 }
             }
             item {
-                RelatedActionCard(Icons.Filled.ChatBubbleOutline, "경로가 담긴 피드도 이어서 써볼까요?", "피드 쓰기", onOpenFeedWrite)
+                // 웹·iOS 20-4 와 같은 안내 — 메시지를 왜 남기는지 알려준다
+                RoundedPanel(containerColor = MaterialTheme.colorScheme.primaryContainer) {
+                    Row(
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Icon(
+                            Icons.Filled.Bookmark,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Text(
+                            "메시지를 남기면 서로의 도감 카드가 완성돼요. 가끔 도감을 펼쳐 보면 그날의 여행이 다시 떠올라요.",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+            saveError?.let { message ->
+                item {
+                    Text(
+                        message,
+                        modifier = Modifier.testTag("trip-message-error"),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
+            item {
+                // 27-4 코스 평가 진입점 — 화면만 만들고 연결을 안 하면 막다른 길이 하나 더 생긴다
+                RelatedActionCard(
+                    Icons.Filled.Star,
+                    "다녀온 코스는 어떠셨어요?",
+                    "코스 평가",
+                    { roomId?.let { onOpenCourseRating("room-$it") } }
+                )
                 Spacer(Modifier.height(10.dp))
-                RelatedActionCard(Icons.Filled.Map, "이 코스를 다른 여행자에게 열어둘 수도 있어요", "코스 공개", onOpenCoursePublish)
+                RelatedActionCard(
+                    Icons.Filled.ChatBubbleOutline,
+                    "경로가 담긴 피드도 이어서 써볼까요?",
+                    "피드 쓰기",
+                    onOpenFeedWrite
+                )
+                Spacer(Modifier.height(10.dp))
+                RelatedActionCard(
+                    Icons.Filled.Map,
+                    "이 코스를 다른 여행자에게 열어둘 수도 있어요",
+                    "코스 공개",
+                    onOpenCoursePublish
+                )
             }
         }
     }
@@ -1788,18 +1812,135 @@ private fun RelatedActionCard(icon: ImageVector, text: String, action: String, o
     }
 }
 
+/** 접수 API 가 없는 신고 안내 문구. 네 표면이 **글자까지 같은 것**을 쓴다(정본 §3). */
+private const val REPORT_UNSUPPORTED_TITLE = "신고를 접수하지 못해요"
+
+private const val REPORT_UNSUPPORTED_BODY =
+    "멤버·채팅방 신고는 아직 앱에서 받지 못해요. GitHub 이슈나 이메일로 알려주시면 확인할게요."
+
+/**
+ * 접수 API 가 없는 신고(멤버·채팅방·댓글)를 **누른 자리에서** 안내한다.
+ *
+ * 화면을 옮기지 않는다 — 문의 버튼은 29 설정 안에 있어서 거기로 보내면 사용자가 하려던 일에서
+ * 멀어진다. 접수되는 신고는 피드뿐이고([ReportScreen]) 나머지는 이 다이얼로그다 —
+ * 한 화면에 두 결과를 섞지 않는다(정본 `docs/alignment/REPORT-CANON.md` §3).
+ */
 @Composable
-fun ReportScreen(onBack: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP_THREAD_ID) {
-    val reasons = listOf("스팸 · 도박", "성희롱 · 불쾌한 언행", "돈거래 유도", "허위 정보", "부적절한 내용", "기타")
-    var selected by rememberSaveable { mutableStateOf(reasons[1]) }
-    var block by rememberSaveable { mutableStateOf(true) }
-    // 화면기획 32는 전체 화면이 아니라 채팅방 위로 올라오는 바텀시트다 —
-    // changeLog14 "오버레이 배경 일괄": 빈 딤 대신 실제 채팅방 본문을 깐다.
+fun ReportUnsupportedDialog(onDismiss: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("report-unsupported-dialog"),
+        title = { Text(REPORT_UNSUPPORTED_TITLE, fontWeight = FontWeight.ExtraBold) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(REPORT_UNSUPPORTED_BODY, style = MaterialTheme.typography.bodyMedium)
+                // 안내만 하고 끝나면 아무 일도 일어나지 않는다 — 실제로 갈 수 있는 두 창구를 버튼으로 둔다.
+                OutlinedButton(
+                    onClick = { uriHandler.openUri(MoyeoContact.ISSUES_URL) },
+                    modifier = Modifier.fillMaxWidth().testTag("report-unsupported-issues")
+                ) { Text(MoyeoContact.ISSUES_LABEL, fontWeight = FontWeight.ExtraBold) }
+                OutlinedButton(
+                    onClick = { uriHandler.openUri(MoyeoContact.MAILTO_URL) },
+                    modifier = Modifier.fillMaxWidth().testTag("report-unsupported-email")
+                ) { Text(MoyeoContact.EMAIL_LABEL, fontWeight = FontWeight.ExtraBold) }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss, modifier = Modifier.testTag("report-unsupported-close")) { Text("닫기") }
+        }
+    )
+}
+
+/** 30-2 상세 입력 상한. 서버 `details` 가 0~300자다(실서버 초과 시 400 `40000`). */
+private const val REPORT_DETAILS_LIMIT = 300
+
+/**
+ * 30-2 피드 신고 시트. **피드 전용이다** — 서버가 접수하는 신고는 피드뿐이다
+ * (`POST /api/v1/feeds/{feedId}/reports` → 204). 멤버·채팅방·댓글은 [ReportUnsupportedDialog].
+ *
+ * 사유는 `GET /api/v1/feeds/report-reasons` 가 코드와 표시 문구를 함께 준다 —
+ * 클라이언트가 문구를 갖지 않는다(정본 §2). 목록을 못 받으면 사유를 지어내지 않고 오류를 드러낸다.
+ */
+@Composable
+fun ReportScreen(onBack: () -> Unit, feedId: Long? = null) {
+    var details by rememberSaveable(feedId) { mutableStateOf("") }
+    var selected by rememberSaveable(feedId) { mutableStateOf<String?>(null) }
+    var block by rememberSaveable(feedId) { mutableStateOf(true) }
+    val server = LocalServerData.current
+    val scope = rememberCoroutineScope()
+    var reasons by remember(server, feedId) { mutableStateOf<List<FeedReportReason>?>(null) }
+    var reasonsFailed by remember(server, feedId) { mutableStateOf(false) }
+    var reasonsAttempt by remember(server, feedId) { mutableIntStateOf(0) }
+    var feed by remember(server, feedId) { mutableStateOf<ServerFeed?>(null) }
+    var submitting by remember(feedId) { mutableStateOf(false) }
+    // 접수 결과(중립)와 오류(붉은색)를 나눈다 — 409 는 오류가 아니라 "이미 신고한 피드" 안내다.
+    var resultText by remember(feedId) { mutableStateOf<String?>(null) }
+    var errorText by remember(feedId) { mutableStateOf<String?>(null) }
+    var blockNotice by remember(feedId) { mutableStateOf<String?>(null) }
+    var submitted by remember(feedId) { mutableStateOf(false) }
+    LaunchedEffect(server, feedId, reasonsAttempt) {
+        if (server == null || feedId == null) return@LaunchedEffect
+        reasonsFailed = false
+        val loaded = runCatching { server.feeds.reportReasons() }.getOrNull()?.takeIf { it.isNotEmpty() }
+        reasons = loaded
+        reasonsFailed = loaded == null
+        // 첫 사유를 미리 고른다 — 특정 코드를 클라가 골라 두면 서버 목록이 바뀔 때 어긋난다.
+        if (loaded != null && selected == null) selected = loaded.first().reason
+        // 차단 대상(작성자 userId)과 시트 상단 미리보기는 피드 응답에서 온다.
+        feed = runCatching { server.feeds.feed(feedId) }.getOrNull()
+    }
+    val submit: () -> Unit = submit@{
+        val reason = selected
+        if (server == null || feedId == null || reason == null || submitting) return@submit
+        submitting = true
+        errorText = null
+        resultText = null
+        blockNotice = null
+        scope.launch {
+            runCatching { server.feeds.reportFeed(feedId, reason, details) }
+                .onSuccess {
+                    submitted = true
+                    resultText = "신고를 접수했어요."
+                }
+                .onFailure { error ->
+                    // 409 = 이미 신고한 피드. 붉은 오류로 띄우지 않는다(정본 §2).
+                    if ((error as? MoyeoApiException)?.statusCode == 409) {
+                        submitted = true
+                        resultText = "이미 신고한 피드예요"
+                    } else {
+                        errorText = error.message ?: "신고를 접수하지 못했어요."
+                    }
+                }
+            // 차단은 신고와 **따로** 보낸다 — 신고가 204 여도 차단은 실패할 수 있고,
+            // 차단은 되돌릴 수 있으므로(29-1a) 실패해도 신고를 되돌리지 않는다.
+            val author = feed?.author
+            if (submitted && block) {
+                if (author == null) {
+                    // 작성자를 못 읽었으면 누구를 차단할지 알 수 없다 — 조용히 넘기지 않고 적는다.
+                    blockNotice = "차단할 대상을 확인하지 못했어요."
+                } else {
+                    runCatching { server.social.block(author.userId) }
+                        .onSuccess { blockNotice = "${author.nickname}님을 차단했어요." }
+                        .onFailure { error -> blockNotice = error.message ?: "차단하지 못했어요." }
+                }
+            }
+            submitting = false
+        }
+    }
+    // 30-2 는 전체 화면이 아니라 피드 상세 위로 올라오는 바텀시트다 —
+    // changeLog14 "오버레이 배경 일괄": 빈 딤 대신 실제 피드 상세를 깐다.
     OverlayBackdrop(
         modifier = Modifier.testTag("report-screen"),
         scrimAlpha = .45f,
         onScrimClick = onBack,
-        background = { ChatRoomBody(threadId = backdropThreadId) }
+        background = {
+            if (feedId == null) {
+                Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background))
+            } else {
+                FeedDetailScreen(postId = "srv-$feedId", onBack = {})
+            }
+        }
     ) {
         Surface(
             modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth(),
@@ -1828,25 +1969,70 @@ fun ReportScreen(onBack: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.ExtraBold
                         )
-                        RoundedPanel(modifier = Modifier.padding(top = 12.dp)) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Icon(
-                                    Icons.Filled.ChatBubbleOutline,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(15.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text("해당 메시지 · “계좌로 먼저 보내주시면…”", style = MaterialTheme.typography.bodySmall)
+                        // 신고 대상 미리보기. 서버 피드 응답이 오기 전에는 없는 내용을 지어내지 않는다.
+                        feed?.let { target ->
+                            RoundedPanel(modifier = Modifier.padding(top = 12.dp)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.ChatBubbleOutline,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(15.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        "해당 피드 · “${target.trip?.courseTitle ?: target.content}”",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     }
-                    items(reasons) { reason ->
-                        val chosen = selected == reason
+                    // 사유를 못 받았으면 지어내지 않는다 — 로딩·오류를 그대로 드러낸다(정본 §2 · NO-MOCK R1).
+                    if (reasons == null || feedId == null) {
+                        item {
+                            when {
+                                feedId == null -> Text(
+                                    "신고할 피드를 찾지 못했어요.",
+                                    modifier = Modifier.testTag("report-no-target"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+
+                                reasonsFailed -> Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        MoyeoEmptyText.FAILED,
+                                        modifier = Modifier.weight(1f).testTag("report-reasons-failed"),
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.error
+                                    )
+                                    TextButton(onClick = { reasonsAttempt += 1 }) { Text("다시 시도") }
+                                }
+
+                                else -> Text(
+                                    MoyeoEmptyText.LOADING,
+                                    modifier = Modifier.testTag("report-reasons-loading"),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                    items(reasons.orEmpty()) { reason ->
+                        val chosen = selected == reason.reason
                         Surface(
-                            modifier = Modifier.fillMaxWidth().height(50.dp).clickable { selected = reason },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(50.dp)
+                                .clickable { selected = reason.reason },
                             shape = RoundedCornerShape(11.dp),
                             border = BorderStroke(
                                 1.5.dp,
@@ -1874,8 +2060,9 @@ fun ReportScreen(onBack: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP
                                         MaterialTheme.colorScheme.outline
                                     }
                                 )
+                                // 표시 문구는 서버 displayName 을 그대로 쓴다 — 클라가 문구를 갖지 않는다.
                                 Text(
-                                    reason,
+                                    reason.displayName,
                                     fontWeight = FontWeight.Bold,
                                     color = if (chosen) {
                                         MaterialTheme.colorScheme.primary
@@ -1887,6 +2074,24 @@ fun ReportScreen(onBack: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP
                         }
                     }
                     item {
+                        // 상세 입력 — 서버 `details` 는 선택이고 0~300자다. 특히 「기타」를 골랐을 때 필요하다.
+                        OutlinedTextField(
+                            value = details,
+                            onValueChange = { next -> details = next.take(REPORT_DETAILS_LIMIT) },
+                            modifier = Modifier.fillMaxWidth().testTag("report-details"),
+                            enabled = !submitted,
+                            placeholder = { Text("어떤 점이 문제인지 알려주세요 (선택)") },
+                            minLines = 3,
+                            maxLines = 5,
+                            supportingText = {
+                                Text(
+                                    "${details.length} / $REPORT_DETAILS_LIMIT",
+                                    modifier = Modifier.fillMaxWidth(),
+                                    textAlign = TextAlign.End,
+                                    style = MaterialTheme.typography.labelSmall
+                                )
+                            }
+                        )
                         Row(
                             modifier = Modifier.fillMaxWidth().clickable { block = !block }.padding(vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
@@ -1911,25 +2116,55 @@ fun ReportScreen(onBack: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP
                                 modifier = Modifier.width(72.dp).height(52.dp).testTag("report-cancel")
                             ) {
                                 Text(
-                                    "취소",
+                                    if (submitted) "닫기" else "취소",
                                     color = MaterialTheme.colorScheme.onSurface,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                            Button(
-                                onClick = onBack,
-                                modifier = Modifier.weight(1f).height(52.dp).testTag("report-submit"),
-                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                                shape = RoundedCornerShape(12.dp)
-                            ) { Text("신고하기") }
+                            if (!submitted) {
+                                Button(
+                                    onClick = submit,
+                                    enabled = !submitting && selected != null && feedId != null,
+                                    modifier = Modifier.weight(1f).height(52.dp).testTag("report-submit"),
+                                    colors = ButtonDefaults.buttonColors(
+                                        containerColor = MaterialTheme.colorScheme.error
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) { Text(if (submitting) "보내는 중..." else "신고하기") }
+                            }
                         }
-                        Text(
-                            "24시간 이내에 검토해 드릴게요.",
-                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                            textAlign = TextAlign.Center,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                        // 접수 결과는 중립 문구로 남긴다 — 409(이미 신고한 피드)도 여기로 온다.
+                        resultText?.let { message ->
+                            Text(
+                                message,
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                    .testTag("report-result"),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        // 차단은 신고와 별개다 — 결과도 따로 적는다.
+                        blockNotice?.let { message ->
+                            Text(
+                                message,
+                                modifier = Modifier.fillMaxWidth().padding(top = 4.dp)
+                                    .testTag("report-block-result"),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        errorText?.let { message ->
+                            Text(
+                                message,
+                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp)
+                                    .testTag("report-error"),
+                                textAlign = TextAlign.Center,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
                     }
                 }
             }
@@ -1938,21 +2173,14 @@ fun ReportScreen(onBack: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP
 }
 
 @Composable
-fun BlockedUsersScreen(onBack: () -> Unit) {
+fun BlockedUsersScreen(onBack: () -> Unit, onOpenUnblockConfirm: (Long, String) -> Unit = { _, _ -> }) {
     // 로그인 상태면 실서버 차단 목록(GET users/me/blocks)으로 대체한다
     val server = LocalServerData.current
     var serverBlocked by remember(server) {
         mutableStateOf<List<kr.hanchae.moyeotrip.data.social.BlockedUser>?>(null)
     }
-    val blockScope = rememberCoroutineScope()
     LaunchedEffect(server) {
         serverBlocked = if (server == null) null else runCatching { server.social.blocks() }.getOrNull()
-    }
-    val blocked = remember {
-        mutableStateListOf(
-            FriendEntry("🦝", "말많은 너구리 7791", "2026.07.28 차단 · 채팅방에서 신고와 함께 차단"),
-            FriendEntry("🪽", "청아한 두루미 2024", "2026.06.02 차단 · 프로필에서 차단")
-        )
     }
     ChangeLogScaffold(
         title = "차단한 사용자",
@@ -1975,99 +2203,50 @@ fun BlockedUsersScreen(onBack: () -> Unit) {
                     )
                 }
             }
-            val serverList = serverBlocked
-            if (serverList != null) {
-                if (serverList.isEmpty()) {
-                    item {
-                        Text(
-                            "차단한 사용자가 없어요.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 24.dp)
-                        )
-                    }
-                }
-                items(serverList, key = { it.userId }) { user ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().height(72.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        UserAvatar(
-                            imageUrl = user.profileImageUrl,
-                            nickname = user.nickname,
-                            modifier = Modifier.size(42.dp),
-                            fallbackFontSize = 19.sp
-                        )
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(user.nickname, fontWeight = FontWeight.ExtraBold)
-                            if (user.blockedAt.isNotBlank()) {
-                                Text(
-                                    "${user.blockedAt.take(10).replace('-', '.')} 차단",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-                        OutlinedButton(
-                            onClick = {
-                                blockScope.launch {
-                                    runCatching { server?.social?.unblock(user.userId) }
-                                        .onSuccess {
-                                            serverBlocked = serverBlocked?.filterNot { it.userId == user.userId }
-                                        }
-                                }
-                            },
-                            modifier = Modifier.height(34.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = Color.Transparent,
-                                contentColor = MaterialTheme.colorScheme.onSurface
-                            )
-                        ) {
+            val serverList = serverBlocked.orEmpty()
+            if (serverList.isEmpty()) {
+                item { MoyeoEmptyState("차단한 사용자가 없어요.", testTag = "blocked-users-empty") }
+            }
+            items(serverList, key = { it.userId }) { user ->
+                Row(
+                    modifier = Modifier.fillMaxWidth().height(72.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    UserAvatar(
+                        imageUrl = user.profileImageUrl,
+                        nickname = user.nickname,
+                        modifier = Modifier.size(42.dp),
+                        fallbackFontSize = 19.sp
+                    )
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(user.nickname, fontWeight = FontWeight.ExtraBold)
+                        if (user.blockedAt.isNotBlank()) {
                             Text(
-                                "차단 해제",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-                }
-            } else {
-                items(blocked, key = { it.name }) { user ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth().height(72.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
-                    ) {
-                        AnimalAvatar(user.emoji, modifier = Modifier.size(42.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(user.name, fontWeight = FontWeight.ExtraBold)
-                            Text(
-                                user.subtitle,
+                                "${user.blockedAt.take(10).replace('-', '.')} 차단",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
-                        OutlinedButton(
-                            onClick = { blocked.remove(user) },
-                            modifier = Modifier.height(34.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp),
-                            shape = RoundedCornerShape(10.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = Color.Transparent,
-                                contentColor = MaterialTheme.colorScheme.onSurface
-                            )
-                        ) {
-                            Text(
-                                "차단 해제",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
+                    }
+                    OutlinedButton(
+                        // 29-1a — 되돌리기 어려운 행동이라 확인 화면을 먼저 지난다(정본 §6-1).
+                        // 예전에는 여기서 바로 DELETE 가 나갔다.
+                        onClick = { onOpenUnblockConfirm(user.userId, user.nickname) },
+                        modifier = Modifier.height(34.dp).testTag("blocked-unblock-${user.userId}"),
+                        contentPadding = PaddingValues(horizontal = 12.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            containerColor = Color.Transparent,
+                            contentColor = MaterialTheme.colorScheme.onSurface
+                        )
+                    ) {
+                        Text(
+                            "차단 해제",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold
+                        )
                     }
                 }
             }
@@ -2083,14 +2262,45 @@ fun BlockedUsersScreen(onBack: () -> Unit) {
     }
 }
 
+/**
+ * 화면기획 27-3 여행 코스 공개.
+ *
+ * 미리보기 카드는 **가장 최근에 끝난 내 모임의 코스**(GET chat-rooms/my → travel-courses/chat-rooms/{id})와
+ * 내 서버 프로필이 채운다. 다녀온 여행이 없으면 공개할 코스가 없으므로 미리보기는 빈 상태이고 CTA 는 잠긴다.
+ *
+ * 공개(여행자 코스 등록) 자체는 서버 API 가 아직 없다 — §4 BE 요청 대상이다.
+ * 되돌릴 수 없는 동작이라 두 번 확인하는 흐름은 화면기획 그대로 남겨 둔다.
+ */
 @Composable
 fun CoursePublishScreen(onBack: () -> Unit, onPublished: () -> Unit) {
     var showConfirmation by rememberSaveable { mutableStateOf(false) }
     var showFinalConfirmation by rememberSaveable { mutableStateOf(false) }
     var credit by rememberSaveable { mutableStateOf(true) }
-    var title by rememberSaveable { mutableStateOf("주왕산 & 주산지 힐링 트레킹") }
-    var summary by rememberSaveable { mutableStateOf("기암절벽과 주산지 물안개를 천천히 걷는 코스") }
-    val course = remember { MockTripRepository.findCourse("cheongsong-juwangsan") }
+    var title by rememberSaveable { mutableStateOf("") }
+    var summary by rememberSaveable { mutableStateOf("") }
+    val server = LocalServerData.current
+    var course by remember(server) { mutableStateOf<TravelCourse?>(null) }
+    var myNickname by remember(server) { mutableStateOf<String?>(null) }
+    var myProfileImageUrl by remember(server) { mutableStateOf<String?>(null) }
+    var publishBusy by remember { mutableStateOf(false) }
+    var publishError by remember { mutableStateOf<String?>(null) }
+    val publishScope = rememberCoroutineScope()
+    LaunchedEffect(server) {
+        if (server == null) return@LaunchedEffect
+        // 불발된 방(`CANCELLED`)도 `ended` 다. 그 방의 코스를 공개하려 하면 서버가 409 40914
+        // ("공개 여부를 선택할 수 있는 완료 코스가 아닙니다")를 준다 — 공개할 수 있는 것은
+        // **확정돼서 끝난** 여행뿐이다. 27-1 여행 마무리와 같은 규칙이다.
+        val lastTrip = runCatching {
+            server.chatRooms.myRooms().firstOrNull { it.ended && it.status == "CONFIRMED" }
+        }.getOrNull()
+        course = lastTrip?.roomId?.let { runCatching { server.courses.roomCourse(it) }.getOrNull() }
+        // 코스 이름은 서버 코스 제목에서 시작하고, 사용자가 고칠 수 있다
+        course?.title?.let { if (title.isBlank()) title = it }
+        runCatching { server.userProfile.profile() }.getOrNull()?.let { profile ->
+            myNickname = profile.nickname
+            myProfileImageUrl = profile.profileImageUrl
+        }
+    }
     val warningContainer = MoyeoTheme.tints.warningTint
     val warningContent = MoyeoTheme.tints.onWarningTint
     ChangeLogScaffold(
@@ -2106,9 +2316,11 @@ fun CoursePublishScreen(onBack: () -> Unit, onPublished: () -> Unit) {
                     TextButton(onClick = onBack) { Text("지금은 안 할래요") }
                     Button(
                         onClick = { showConfirmation = true },
+                        // 공개할 코스가 없으면 누를 수 없다. 서버는 소개도 필수로 받는다(@NotBlank).
+                        enabled = course != null && title.isNotBlank() && summary.isNotBlank() && !publishBusy,
                         modifier = Modifier.weight(1f).height(50.dp).testTag("course-publish-start"),
                         shape = RoundedCornerShape(12.dp)
-                    ) { Text("코스 공개하기") }
+                    ) { Text(if (publishBusy) "공개하는 중..." else "코스 공개하기") }
                 }
             }
         }
@@ -2118,6 +2330,16 @@ fun CoursePublishScreen(onBack: () -> Unit, onPublished: () -> Unit) {
             contentPadding = PaddingValues(horizontal = 20.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            publishError?.let { message ->
+                item {
+                    Text(
+                        message,
+                        modifier = Modifier.testTag("course-publish-error"),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.error
+                    )
+                }
+            }
             item {
                 Text("이번 여행 코스,\n다른 여행자에게도 열어둘까요?", style = MaterialTheme.typography.headlineSmall)
                 Text(
@@ -2129,54 +2351,17 @@ fun CoursePublishScreen(onBack: () -> Unit, onPublished: () -> Unit) {
             }
             item {
                 Text("공개하면 이렇게 보여요", fontWeight = FontWeight.ExtraBold)
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    shape = RoundedCornerShape(14.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-                ) {
-                    Box(modifier = Modifier.fillMaxWidth().height(132.dp)) {
-                        CourseScenicPanel(course = course, modifier = Modifier.fillMaxSize(), cornerRadius = 0.dp)
-                        Surface(
-                            modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
-                            shape = RoundedCornerShape(50),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(5.dp)
-                            ) {
-                                Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(13.dp))
-                                Text(
-                                    "여행자 코스",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-                        }
-                    }
-                    Column(modifier = Modifier.padding(14.dp)) {
-                        Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
-                        Text(
-                            "청송 · 당일 6.2km · 방문지 4",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp)
-                        )
-                        Row(
-                            modifier = Modifier.padding(top = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(7.dp)
-                        ) {
-                            AnimalAvatar("🐻", modifier = Modifier.size(24.dp))
-                            Text(
-                                if (credit) "숲속여행자 님이 다녀온 코스" else "익명 여행자가 다녀온 코스",
-                                style = MaterialTheme.typography.labelMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
+                val loadedCourse = course
+                if (loadedCourse == null) {
+                    MoyeoEmptyState("아직 다녀온 여행 기록이 없어요.", testTag = "course-publish-empty")
+                } else {
+                    CoursePublishPreviewCard(
+                        course = loadedCourse,
+                        title = title,
+                        credit = credit,
+                        nickname = myNickname,
+                        profileImageUrl = myProfileImageUrl
+                    )
                 }
             }
             item {
@@ -2256,12 +2441,118 @@ fun CoursePublishScreen(onBack: () -> Unit, onPublished: () -> Unit) {
             dismissButton = { TextButton(onClick = { showFinalConfirmation = false }) { Text("다시 볼게요") } },
             confirmButton = {
                 Button(
-                    onClick = onPublished,
+                    // 여기서 **처음으로** 서버를 부른다. 예전에는 화면 상태만 바꾸고 끝나서
+                    // 공개했다고 알려놓고 실제로는 아무 데도 올라가지 않았다.
+                    onClick = {
+                        showFinalConfirmation = false
+                        val courseId = course?.courseId
+                        if (server == null || courseId == null) {
+                            publishError = "공개할 코스를 찾지 못했어요."
+                            return@Button
+                        }
+                        publishBusy = true
+                        publishError = null
+                        publishScope.launch {
+                            runCatching {
+                                server.courses.publishCourse(
+                                    courseId = courseId,
+                                    title = title.trim(),
+                                    description = summary.trim(),
+                                    showCreatorNickname = credit
+                                )
+                            }
+                                .onSuccess { onPublished() }
+                                .onFailure { publishError = it.message ?: "코스를 공개하지 못했어요." }
+                            publishBusy = false
+                        }
+                    },
+                    enabled = !publishBusy,
                     modifier = Modifier.testTag("course-publish-confirm-final"),
                     shape = RoundedCornerShape(12.dp)
                 ) { Text("공개할게요") }
             }
         )
+    }
+}
+
+/** 27-3 미리보기 카드 — 썸네일·메타·작성자는 모두 서버 값이다. */
+@Composable
+private fun CoursePublishPreviewCard(
+    course: TravelCourse,
+    title: String,
+    credit: Boolean,
+    nickname: String?,
+    profileImageUrl: String?
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+    ) {
+        Box(modifier = Modifier.fillMaxWidth().height(132.dp)) {
+            CachedRemoteImage(
+                url = course.thumbnail,
+                contentDescription = course.title,
+                modifier = Modifier.fillMaxSize(),
+                contentScale = ContentScale.Crop,
+                fallbackShape = MoyeoPlaceholderShape.LANDSCAPE
+            ) {
+                Box(modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
+            }
+            Surface(
+                modifier = Modifier.align(Alignment.BottomStart).padding(12.dp),
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(5.dp)
+                ) {
+                    Icon(Icons.Filled.Person, contentDescription = null, modifier = Modifier.size(13.dp))
+                    Text(
+                        "여행자 코스",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                }
+            }
+        }
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
+            // 서버가 주지 않는 조각은 빠진다 — 거리·소요 시간을 지어내지 않는다
+            val meta = listOfNotNull(
+                course.travelTime,
+                course.distanceKm?.let { "${it}km" },
+                "방문지 ${course.places.size}"
+            ).joinToString(" · ")
+            Text(
+                meta,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            Row(
+                modifier = Modifier.padding(top = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                if (credit && nickname != null) {
+                    UserAvatar(
+                        imageUrl = profileImageUrl,
+                        nickname = nickname,
+                        modifier = Modifier.size(24.dp),
+                        fallbackFontSize = 11.sp
+                    )
+                }
+                Text(
+                    if (credit && nickname != null) "$nickname 님이 다녀온 코스" else "익명 여행자가 다녀온 코스",
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
     }
 }
 
@@ -2295,6 +2586,16 @@ private fun CompactPublishField(
     }
 }
 
+/**
+ * 화면기획 20-5 여행 날 채팅방.
+ *
+ * 진행 위젯은 서버 로드맵(`GET chat-rooms/{id}/roadmap/current`)이 근거다 — 방문지마다
+ * `progress`(COMPLETED·CURRENT·UPCOMING)와 `scheduledAt` 이 함께 온다. 예전에는 "현재 방문지 2/4"를
+ * 앱이 지어내 그렸다. 로드맵이 없거나(`active=false`) 방문지가 비면 위젯 자체를 그리지 않는다.
+ *
+ * 대화는 채팅방(20)과 같은 메시지 API(POST chat-rooms/{id}/messages)를 쓴다 — 20-5 도 같은 방이라
+ * 여기서 보낸 메시지가 20 에도 그대로 보인다. 방을 모르면(캡처 라우트) 입력줄만 잠긴다.
+ */
 @Composable
 fun TripDayScreen(
     threadId: String,
@@ -2303,44 +2604,98 @@ fun TripDayScreen(
     onOpenAttachment: () -> Unit,
     onOpenRoute: () -> Unit
 ) {
-    val stops = listOf("청송터미널", "주왕산", "주산지", "달기약수탕")
-    val thread = MockTripRepository.findThread(threadId)
+    val server = LocalServerData.current
+    val roomId = threadId.serverRoomIdOrNull()
+    var detail by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
+    var members by remember(roomId) { mutableStateOf<RoomMembers?>(null) }
+    var roadmap by remember(roomId) { mutableStateOf<RoomRoadmap?>(null) }
+    var courseTitle by remember(roomId) { mutableStateOf<String?>(null) }
+    var messages by remember(roomId) { mutableStateOf<List<RoomMessage>?>(null) }
+    var draft by rememberSaveable(threadId) { mutableStateOf("") }
+    var sending by remember(roomId) { mutableStateOf(false) }
+    var sendError by remember(roomId) { mutableStateOf<String?>(null) }
+    val sendScope = rememberCoroutineScope()
+
+    LaunchedEffect(roomId, server) {
+        if (roomId == null || server == null) return@LaunchedEffect
+        detail = runCatching { server.chatRooms.room(roomId) }.getOrNull()
+        members = runCatching { server.chatRooms.members(roomId) }.getOrNull()
+        roadmap = runCatching { server.chatRooms.currentRoadmap(roomId) }.getOrNull()
+        courseTitle = runCatching { server.courses.roomCourse(roomId).title }.getOrNull()
+        messages = runCatching { server.chatRooms.messages(roomId).messages }.getOrNull()
+    }
+
+    // 채팅방(20)과 같은 이유로 내 id 는 액세스 토큰에서 동기로 읽는다 —
+    // 멤버 응답을 기다리면 내 메시지가 한 프레임 동안 왼쪽에 그려진다(정본 R6).
+    val myUserId = remember(server) { server?.signedInUserId?.invoke() }
+    val places = roadmap?.takeIf(RoomRoadmap::active)?.places.orEmpty()
+
     ChangeLogScaffold(
         // 여행 날 채팅방 제목은 코스 이름이다 (화면기획 20-5)
-        title = thread.courseLine.ifBlank { thread.title },
+        title = courseTitle ?: detail?.title.orEmpty(),
         onBack = onBack,
         modifier = Modifier.testTag("trip-day-screen"),
         actions = {
-            IconButton(onClick = {}, modifier = Modifier.size(48.dp)) {
-                Icon(Icons.Filled.Search, contentDescription = "채팅 검색")
-            }
             IconButton(onClick = onOpenMenu, modifier = Modifier.size(48.dp)) {
                 Icon(Icons.Filled.Menu, contentDescription = "모임 정보")
             }
         },
         bottomBar = {
             Surface(shadowElevation = 8.dp) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    IconButton(onClick = onOpenAttachment, modifier = Modifier.size(48.dp)) {
-                        // 화면기획 20-5의 입력창 좌측은 클립이 아니라 + 다
-                        Icon(Icons.Filled.Add, contentDescription = "첨부")
-                    }
-                    Surface(
-                        modifier = Modifier.weight(1f).height(44.dp),
-                        shape = RoundedCornerShape(50),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                Column(modifier = Modifier.fillMaxWidth().imePadding().navigationBarsPadding()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Box(contentAlignment = Alignment.CenterStart, modifier = Modifier.padding(horizontal = 14.dp)) {
-                            Text("메시지 입력", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        IconButton(onClick = onOpenAttachment, modifier = Modifier.size(48.dp)) {
+                            // 화면기획 20-5의 입력창 좌측은 클립이 아니라 + 다
+                            Icon(Icons.Filled.Add, contentDescription = "첨부")
+                        }
+                        // 예전에는 껍데기 입력줄 + 영구 비활성 보내기였다 — 첨부만 되고 말은 못 하는
+                        // 방이었다. 20-5 도 채팅방이라 대화는 20 과 같은 API(POST {id}/messages)로 보낸다.
+                        OutlinedTextField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            modifier = Modifier.weight(1f).testTag("trip-day-message-input"),
+                            placeholder = { Text("메시지 입력") },
+                            singleLine = true,
+                            enabled = roomId != null && server != null && !sending,
+                            shape = RoundedCornerShape(24.dp)
+                        )
+                        FilledIconButton(
+                            onClick = {
+                                val trimmed = draft.trim()
+                                if (trimmed.isEmpty() || sending || roomId == null || server == null) {
+                                    return@FilledIconButton
+                                }
+                                sending = true
+                                sendScope.launch {
+                                    runCatching { server.chatRooms.sendMessage(roomId, trimmed) }
+                                        .onSuccess { sent ->
+                                            messages = messages.orEmpty() + sent
+                                            draft = ""
+                                            sendError = null
+                                        }
+                                        .onFailure { error ->
+                                            sendError = error.message ?: "메시지를 보내지 못했어요."
+                                        }
+                                    sending = false
+                                }
+                            },
+                            enabled = draft.isNotBlank() && !sending && roomId != null && server != null,
+                            modifier = Modifier.size(48.dp).testTag("trip-day-message-send")
+                        ) {
+                            Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "보내기")
                         }
                     }
-                    // 빈 입력 진입 상태에서는 전송이 비활성이다 (changeLog16)
-                    FilledIconButton(onClick = {}, enabled = false, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "보내기")
+                    sendError?.let { message ->
+                        Text(
+                            text = message,
+                            modifier = Modifier.fillMaxWidth().padding(start = 16.dp, bottom = 8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
                     }
                 }
             }
@@ -2354,107 +2709,37 @@ fun TripDayScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("여행 중", color = MaterialTheme.colorScheme.primary, fontWeight = FontWeight.ExtraBold)
-                    Text(" · 5명 · 오늘 08:00 출발", style = MaterialTheme.typography.bodySmall)
-                }
-                Column(
-                    modifier = Modifier.fillMaxWidth().background(
-                        MaterialTheme.colorScheme.primaryContainer
-                    ).padding(16.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.LocationOn, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Text("현재 방문지 2/4 · 주왕산", modifier = Modifier.weight(1f), fontWeight = FontWeight.ExtraBold)
-                        TextButton(onClick = onOpenRoute) { Text("코스 전체") }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        verticalAlignment = Alignment.Top
-                    ) {
-                        stops.forEachIndexed { index, stop ->
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.width(58.dp)
-                            ) {
-                                Surface(
-                                    modifier = Modifier.size(22.dp),
-                                    shape = CircleShape,
-                                    color = if (index <
-                                        2
-                                    ) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.surface
-                                    }
-                                ) {
-                                    Box(contentAlignment = Alignment.Center) {
-                                        Text(if (index < 2) "✓" else "${index + 1}", fontSize = 10.sp)
-                                    }
-                                }
-                                Text(stop, style = MaterialTheme.typography.labelSmall, maxLines = 1)
-                            }
-                            if (index < stops.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.weight(1f).padding(top = 10.dp),
-                                    thickness = 2.dp,
-                                    color = if (index == 0) {
-                                        MaterialTheme.colorScheme.primary
-                                    } else {
-                                        MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
-                                    }
-                                )
-                            }
-                        }
-                    }
-                    Row(modifier = Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.AccessTime, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Text("다음 일정 · 14:00 주산지 왕버들 산책로", style = MaterialTheme.typography.bodySmall)
+                    // 인원·출발 시각은 서버가 준 값만 붙인다 — 없으면 그 조각이 빠진다
+                    val meta = listOfNotNull(
+                        members?.let { "${it.participantCount}명" },
+                        detail?.dayTripStartTime?.take(5)?.let { "$it 출발" }
+                    ).joinToString(" · ")
+                    if (meta.isNotBlank()) {
+                        Text(" · $meta", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
-            item {
-                // 시스템 안내는 연초록 pill 안에 들어간다 (화면기획 20-5)
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(18.dp),
-                    horizontalArrangement = Arrangement.Center
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = MoyeoTheme.tints.systemMessage
-                    ) {
-                        Text(
-                            "오늘 여행이 시작됐어요 🎒",
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+            if (places.isNotEmpty()) {
+                item { TripDayProgressPanel(places = places, onOpenRoute = onOpenRoute) }
+            }
+            when {
+                roomId == null || server == null -> item {
+                    MoyeoEmptyState(MoyeoEmptyText.NO_JOINED_ROOMS, testTag = "trip-day-empty")
                 }
-                RoundedPanel(modifier = Modifier.padding(horizontal = 18.dp)) {
-                    Text("엉뚱한 토끼 1457", style = MaterialTheme.typography.labelSmall)
-                    Text("주왕산 3폭포 도착! 생각보다 사람 적어요 👍", modifier = Modifier.padding(top = 4.dp))
+
+                messages == null -> item { MoyeoEmptyState(MoyeoEmptyText.LOADING) }
+
+                messages.orEmpty().isEmpty() -> item {
+                    MoyeoEmptyState(MoyeoEmptyText.NO_JOINED_ROOMS, testTag = "trip-day-empty")
                 }
-                RoundedPanel(modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp)) {
-                    TripDayMiniMap()
-                    Text("주산지 주차장", fontWeight = FontWeight.ExtraBold, modifier = Modifier.padding(top = 10.dp))
-                    Text("14:00 도착 예정 · 차로 22분", style = MaterialTheme.typography.bodySmall)
-                    Text(
-                        "길 찾기 →",
-                        modifier = Modifier.padding(top = 8.dp),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                }
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 18.dp),
-                    horizontalArrangement = Arrangement.End
-                ) {
-                    Surface(
-                        shape = RoundedCornerShape(16.dp, 16.dp, 4.dp, 16.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer
-                    ) {
-                        Text("저는 주차장에서 기다릴게요~", modifier = Modifier.padding(horizontal = 13.dp, vertical = 10.dp))
+
+                else -> items(messages.orEmpty(), key = { it.messageId }) { message ->
+                    Box(modifier = Modifier.padding(horizontal = 18.dp, vertical = 5.dp)) {
+                        if (message.type == "SYSTEM") {
+                            SystemPillMessage(message.content)
+                        } else {
+                            MessageBubble(message = message.toChatBubble(myUserId))
+                        }
                     }
                 }
             }
@@ -2462,25 +2747,82 @@ fun TripDayScreen(
     }
 }
 
+/** 20-5 진행 위젯 — 서버 로드맵의 `progress` 를 그대로 그린다. */
 @Composable
-private fun TripDayMiniMap() {
-    val line = MaterialTheme.colorScheme.primary
-    val canvas = MaterialTheme.colorScheme.surfaceVariant
-    Canvas(
-        modifier = Modifier.fillMaxWidth().height(92.dp).background(canvas, RoundedCornerShape(10.dp))
+private fun TripDayProgressPanel(places: List<RoadmapPlace>, onOpenRoute: () -> Unit) {
+    val currentIndex = places.indexOfFirst { it.progress == "CURRENT" }
+    val nextPlace = places.firstOrNull { it.progress == "UPCOMING" }
+
+    Column(
+        modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.primaryContainer).padding(16.dp)
     ) {
-        drawLine(
-            color = line,
-            start = androidx.compose.ui.geometry.Offset(size.width * 0.12f, size.height * 0.80f),
-            end = androidx.compose.ui.geometry.Offset(size.width * 0.88f, size.height * 0.18f),
-            strokeWidth = 8f,
-            cap = StrokeCap.Round
-        )
-        drawCircle(
-            color = line,
-            radius = 13f,
-            center = androidx.compose.ui.geometry.Offset(size.width * 0.16f, size.height * 0.75f)
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Filled.LocationOn, contentDescription = null, modifier = Modifier.size(18.dp))
+            Text(
+                // 현재 방문지는 서버가 CURRENT 로 알려줄 때만 적는다
+                text = if (currentIndex >= 0) {
+                    "현재 방문지 ${currentIndex + 1}/${places.size} · ${places[currentIndex].title}"
+                } else {
+                    "방문지 ${places.size}곳"
+                },
+                modifier = Modifier.weight(1f).padding(start = 6.dp),
+                fontWeight = FontWeight.ExtraBold
+            )
+            TextButton(onClick = onOpenRoute) { Text("코스 전체") }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            places.forEachIndexed { index, place ->
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.width(58.dp)
+                ) {
+                    val done = place.progress == "COMPLETED"
+                    Surface(
+                        modifier = Modifier.size(22.dp),
+                        shape = CircleShape,
+                        color = if (done) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.surface
+                        }
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(if (done) "✓" else "${index + 1}", fontSize = 10.sp)
+                        }
+                    }
+                    Text(place.title, style = MaterialTheme.typography.labelSmall, maxLines = 1)
+                }
+                if (index < places.lastIndex) {
+                    HorizontalDivider(
+                        modifier = Modifier.weight(1f).padding(top = 10.dp),
+                        thickness = 2.dp,
+                        color = if (places[index].progress == "COMPLETED") {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.35f)
+                        }
+                    )
+                }
+            }
+        }
+        // 다음 일정은 서버가 UPCOMING 으로 알려준 방문지다 — 없으면 줄째로 빠진다
+        nextPlace?.let { place ->
+            Row(modifier = Modifier.padding(top = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.AccessTime, contentDescription = null, modifier = Modifier.size(16.dp))
+                Text(
+                    text = listOfNotNull(
+                        "다음 일정",
+                        place.scheduledAt?.takeLast(8)?.take(5),
+                        place.title
+                    ).joinToString(" · "),
+                    modifier = Modifier.padding(start = 6.dp),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
     }
 }
 
@@ -2495,7 +2837,6 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
     )
     var mode by rememberSaveable { mutableStateOf(modes.first().first) }
     var dnd by rememberSaveable { mutableStateOf(true) }
-    var muted by rememberSaveable { mutableStateOf(setOf("경주 단풍·야경 1박 2일")) }
     val selectedDays = remember { mutableStateListOf("월", "화", "수", "목", "금") }
     var dndStart by rememberSaveable { mutableStateOf("22:30") }
     var dndEnd by rememberSaveable { mutableStateOf("07:00") }
@@ -2691,7 +3032,25 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
 fun AccountDeleteScreen(onBack: () -> Unit, onDelete: () -> Unit) {
     // 화면기획과 같은 사유·삭제범위·참여 목록
     val reasons = listOf("여행을 자주 가지 않게 됐어요", "마음에 드는 모집이 없어요", "불쾌한 경험이 있었어요", "알림이 너무 많아요", "기타")
-    val joinedTrips = listOf("주왕산 & 주산지 힐링 트레킹 · D-2", "포항·영덕 동해 드라이브 · D-9")
+    // 참여 중인 여행은 서버 내 모임(GET chat-rooms/my)이 근거다 — 목록이 비면 경고 카드도 사라진다
+    val server = LocalServerData.current
+    var joinedTrips by remember(server) { mutableStateOf<List<String>>(emptyList()) }
+    LaunchedEffect(server) {
+        joinedTrips = if (server == null) {
+            emptyList()
+        } else {
+            runCatching {
+                server.chatRooms.myRooms()
+                    .filterNot(kr.hanchae.moyeotrip.data.rooms.MyChatRoom::ended)
+                    .map { room ->
+                        listOfNotNull(
+                            room.title,
+                            recruitmentDDayText(room.recruitmentDDay)
+                        ).joinToString(" · ")
+                    }
+            }.getOrElse { emptyList() }
+        }
+    }
     val deletionScope = listOf(
         "피드·도감·친구·여행 기록이 모두 삭제돼요",
         "내가 공개한 여행자 코스는 남지만 닉네임은 지워져요",
@@ -2991,63 +3350,83 @@ fun SystemNoticeScreen(mode: SystemNoticeMode, onRetry: () -> Unit, onBack: () -
     }
 }
 
+/** 23-1 이 한 번에 받는 최상위 댓글 수. 서버 상한은 50 이다. */
+private const val FEED_COMMENTS_PAGE_SIZE = 20
+
+/**
+ * 23-1 댓글 — 서버 피드 댓글(GET feeds/{id}/comments)이다.
+ * 라우트 식별자는 `srv-{feedId}`. 그 형태가 아니거나 미로그인이면 빈 상태다.
+ *
+ * 2026-09-02 서버 변경으로 응답이 `{comments, nextId}` 객체가 되면서 **무한 스크롤**이 된다.
+ * 커서는 응답의 `nextId` 를 다음 요청의 `beforeCommentId` 로 넘기는 방식이고,
+ * `nextId` 가 `null` 이면 마지막 묶음이라 더 부르지 않는다(GET /feeds 와 같은 커서 규약).
+ */
 @Composable
 fun FeedCommentsScreen(postId: String, onBack: () -> Unit) {
-    // 댓글은 대댓글까지 보여야 구조가 검수된다 (화면기획 기준 목데이터)
-    val comments = remember {
-        mutableStateListOf(
-            FeedCommentItem(
-                avatar = "🐰",
-                author = "엉뚱한 토끼 1457",
-                badge = "함께 간 친구",
-                time = "2시간 전",
-                body = "이날 진짜 좋았어요! 주산지 물안개 사진 저도 올릴게요 📷",
-                likes = 4,
-                replies = listOf(
-                    FeedCommentItem(
-                        avatar = "🐻",
-                        author = "숲속여행자",
-                        badge = "작성자",
-                        time = "1시간 전",
-                        body = "토끼님 사진이 훨씬 잘 나왔어요 ㅎㅎ",
-                        likes = 0
-                    )
-                )
-            ),
-            FeedCommentItem(
-                avatar = "🐢",
-                author = "잔잔한 거북이 9032",
-                badge = "함께 간 친구",
-                time = "3시간 전",
-                body = "달기약수탕 백숙 진짜 맛있었죠",
-                likes = 2
-            ),
-            FeedCommentItem(
-                avatar = "🕊",
-                author = "고요한 두루미 1130",
-                time = "5시간 전",
-                body = "이 코스 저도 가보고 싶네요. 당일치기로 충분할까요?",
-                likes = 1,
-                replies = listOf(
-                    FeedCommentItem(
-                        avatar = "🐻",
-                        author = "숲속여행자",
-                        badge = "작성자",
-                        time = "4시간 전",
-                        body = "네 08시 출발이면 여유로워요!",
-                        likes = 0
-                    )
-                )
-            )
-        )
+    val server = LocalServerData.current
+    val feedId = postId.removePrefix("srv-").toLongOrNull()?.takeIf { postId.startsWith("srv-") }
+    var feed by remember(feedId) { mutableStateOf<ServerFeed?>(null) }
+    var comments by remember(feedId) { mutableStateOf<List<FeedComment>>(emptyList()) }
+    // 다음 묶음 커서. null 이면 더 받을 게 없다는 뜻이라 화면 끝에 닿아도 부르지 않는다.
+    var nextCommentCursor by remember(feedId) { mutableStateOf<Long?>(null) }
+    var loadingMoreComments by remember(feedId) { mutableStateOf(false) }
+    val commentListState = rememberLazyListState()
+    var loadFailed by remember(feedId) { mutableStateOf(false) }
+    var draft by rememberSaveable(postId) { mutableStateOf("") }
+    var myProfile by remember(server) { mutableStateOf<ServerUserProfile?>(null) }
+    // 댓글 「신고」 — 확인 단계를 거친다. 되돌리기 어려운 차단이 실제로 일어나는 자리다.
+    // 댓글 신고는 접수 API 가 없다 — 안내만 한다. 차단은 신고와 분리해 따로 확인받는다(정본 §3).
+    var showReportNotice by remember(feedId) { mutableStateOf(false) }
+    var blockTarget by remember(feedId) { mutableStateOf<FeedComment?>(null) }
+    var reportMessage by remember(feedId) { mutableStateOf<String?>(null) }
+    val commentScope = rememberCoroutineScope()
+
+    LaunchedEffect(feedId, server) {
+        if (feedId == null || server == null) return@LaunchedEffect
+        val loaded = runCatching { server.feeds.feed(feedId) }.getOrNull()
+        feed = loaded
+        loadFailed = loaded == null
+        val firstPage = runCatching { server.feeds.comments(feedId, limit = FEED_COMMENTS_PAGE_SIZE) }.getOrNull()
+        comments = firstPage?.comments.orEmpty()
+        nextCommentCursor = firstPage?.nextId
+        myProfile = runCatching { server.userProfile.profile() }.getOrNull()
     }
-    var draft by rememberSaveable { mutableStateOf("") }
-    // 제목의 숫자는 이 게시물의 전체 댓글 수다 (보이는 목록은 일부 샘플).
-    // 목록 길이를 세면 같은 게시물인데 플랫폼마다 다른 숫자가 나온다.
-    val totalCount = MockTripRepository.findFeedPost(postId).comments
+
+    // 목록 끝이 보이면 다음 묶음을 받는다. `nextId` 가 null 이면 아무 것도 하지 않는다.
+    val reachedCommentListEnd by remember(commentListState) {
+        derivedStateOf { !commentListState.canScrollForward }
+    }
+    LaunchedEffect(reachedCommentListEnd, nextCommentCursor, feedId, server) {
+        val cursor = nextCommentCursor ?: return@LaunchedEffect
+        if (!reachedCommentListEnd || feedId == null || server == null || loadingMoreComments) return@LaunchedEffect
+        loadingMoreComments = true
+        val page = runCatching {
+            server.feeds.comments(feedId, beforeCommentId = cursor, limit = FEED_COMMENTS_PAGE_SIZE)
+        }.getOrNull()
+        if (page != null) {
+            // 이미 가진 댓글과 겹치면 버린다 — 커서가 같은 값으로 되돌아와도 중복 키로 깨지지 않는다.
+            val known = comments.mapTo(mutableSetOf()) { it.commentId }
+            comments = comments + page.comments.filterNot { it.commentId in known }
+            // 커서가 앞으로 나아가지 못하면 멈춘다(같은 묶음을 무한히 다시 받지 않는다).
+            //
+            // 순수한 안전망이다. 예전 주석은 "서버가 페이지가 꽉 차면 다음 페이지 유무와
+            // 무관하게 마지막 ID 를 nextId 로 준다" 고 적혀 있었는데 **사실이 아니다** —
+            // 실서버로 끝까지 따라가 확인했다(2026-09-03, 피드 1 · limit=1):
+            //   ?limit=1                    → [3] nextId 3
+            //   ?beforeCommentId=3&limit=1  → [2] nextId 2
+            //   ?beforeCommentId=2&limit=1  → [1] nextId null   ← 정확히 끝난다
+            // `limit=3` (꽉 찬 마지막 페이지)에서도 nextId 는 null 이다.
+            // 그래도 커서가 되돌아오는 응답을 받으면 화면이 멈춰야 하므로 가드는 남긴다.
+            nextCommentCursor = page.nextId?.takeIf { it < cursor }
+        } else {
+            // 실패하면 커서를 버려 같은 요청을 스크롤마다 되풀이하지 않는다.
+            nextCommentCursor = null
+        }
+        loadingMoreComments = false
+    }
 
     ChangeLogScaffold(
-        title = "댓글 $totalCount",
+        title = "댓글 ${feed?.commentCount ?: 0}",
         onBack = onBack,
         modifier = Modifier.testTag("feed-comments-screen-$postId"),
         bottomBar = {
@@ -3057,7 +3436,12 @@ fun FeedCommentsScreen(postId: String, onBack: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    AnimalAvatar("🦌", modifier = Modifier.size(34.dp))
+                    UserAvatar(
+                        imageUrl = myProfile?.profileImageUrl,
+                        nickname = myProfile?.nickname,
+                        modifier = Modifier.size(34.dp),
+                        fallbackFontSize = 16.sp
+                    )
                     OutlinedTextField(
                         value = draft,
                         onValueChange = { draft = it },
@@ -3068,20 +3452,29 @@ fun FeedCommentsScreen(postId: String, onBack: () -> Unit) {
                     )
                     FilledIconButton(
                         onClick = {
-                            if (draft.isNotBlank()) {
-                                comments.add(
-                                    FeedCommentItem(
-                                        avatar = "🦌",
-                                        author = "따스한 사슴 3492",
-                                        time = "방금",
-                                        body = draft.trim(),
-                                        likes = 0
-                                    )
-                                )
-                                draft = ""
+                            val trimmed = draft.trim()
+                            if (trimmed.isNotEmpty() && feedId != null && server != null) {
+                                commentScope.launch {
+                                    runCatching { server.feeds.addComment(feedId, trimmed) }
+                                        .onSuccess {
+                                            // 댓글을 달면 **첫 묶음부터 다시 읽는다**(웹과 같은 결정).
+                                            // 이미 받아 둔 여러 묶음 사이에 새 댓글을 손으로 끼워
+                                            // 넣으면 서버 순서를 클라가 흉내내야 해서 어긋난다.
+                                            draft = ""
+                                            feed = feed?.let { it.copy(commentCount = it.commentCount + 1) }
+                                            val reloaded = runCatching {
+                                                server.feeds.comments(feedId, limit = FEED_COMMENTS_PAGE_SIZE)
+                                            }.getOrNull()
+                                            if (reloaded != null) {
+                                                comments = reloaded.comments
+                                                nextCommentCursor = reloaded.nextId
+                                                commentListState.scrollToItem(0)
+                                            }
+                                        }
+                                }
                             }
                         },
-                        enabled = draft.isNotBlank(),
+                        enabled = draft.isNotBlank() && feedId != null && server != null,
                         modifier = Modifier.size(48.dp)
                     ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "댓글 보내기") }
                 }
@@ -3089,143 +3482,191 @@ fun FeedCommentsScreen(postId: String, onBack: () -> Unit) {
         }
     ) { padding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize().padding(padding),
+            modifier = Modifier.fillMaxSize().padding(padding).testTag("feed-comments-scroll"),
+            state = commentListState,
             contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            item {
-                // 어떤 게시물의 댓글인지 위에서 알려준다 (화면기획 23-1)
-                val post = MockTripRepository.findFeedPost(postId)
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    CourseScenicPanel(
-                        course = MockTripRepository.findCourse("cheongsong-juwangsan"),
-                        modifier = Modifier.size(44.dp),
-                        cornerRadius = 10.dp
+            feed?.let { loadedFeed ->
+                item {
+                    // 어떤 게시물의 댓글인지 위에서 알려준다 (화면기획 23-1)
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        UserAvatar(
+                            imageUrl = loadedFeed.author.profileImageUrl,
+                            nickname = loadedFeed.author.nickname,
+                            modifier = Modifier.size(44.dp),
+                            fallbackFontSize = 20.sp
+                        )
+                        Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                            Text(
+                                loadedFeed.trip?.courseTitle ?: loadedFeed.content,
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.ExtraBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            Text(
+                                "${loadedFeed.author.nickname} · 좋아요 ${loadedFeed.likeCount}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+            reportMessage?.let { message ->
+                item {
+                    Text(
+                        message,
+                        modifier = Modifier.testTag("feed-comment-report-result"),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
                     )
-                    Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                        Text(
-                            post.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.ExtraBold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            "${post.author} · 좋아요 ${post.likes}",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
                 }
             }
-            items(comments) { comment ->
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    FeedCommentRow(comment)
-                    comment.replies.forEach { reply ->
-                        // 대댓글은 들여쓰기로 부모와의 관계를 보여준다
-                        Box(Modifier.padding(start = 34.dp)) { FeedCommentRow(reply, compact = true) }
+            when {
+                feedId == null || server == null -> item {
+                    MoyeoEmptyState(MoyeoEmptyText.NO_COMMENTS, testTag = "feed-comments-empty")
+                }
+
+                feed == null -> item {
+                    MoyeoEmptyState(if (loadFailed) MoyeoEmptyText.FAILED else MoyeoEmptyText.LOADING)
+                }
+
+                comments.isEmpty() -> item {
+                    MoyeoEmptyState(MoyeoEmptyText.NO_COMMENTS, testTag = "feed-comments-empty")
+                }
+
+                else -> {
+                    items(comments, key = { it.commentId }) { comment ->
+                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            FeedCommentRow(
+                                comment,
+                                onReport = { showReportNotice = true },
+                                onBlock = { blockTarget = comment }
+                            )
+                            comment.replies.forEach { reply ->
+                                // 대댓글은 들여쓰기로 부모와의 관계를 보여준다
+                                Box(Modifier.padding(start = 34.dp)) {
+                                    FeedCommentRow(
+                                        reply,
+                                        compact = true,
+                                        onReport = { showReportNotice = true },
+                                        onBlock = { blockTarget = reply }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    // 다음 묶음이 남아 있을 때만 꼬리 자리를 둔다. 이 자리가 보이면 위 커서가 돈다.
+                    if (nextCommentCursor != null) {
+                        item(key = "feed-comments-more") {
+                            MoyeoEmptyState(MoyeoEmptyText.LOADING, testTag = "feed-comments-loading-more")
+                        }
                     }
                 }
-            }
-            item {
-                Text(
-                    "함께 간 친구의 댓글이 먼저 보여요",
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
             }
         }
     }
+    if (showReportNotice) {
+        // 댓글 신고 접수 API 는 서버에 없다 — 접수된 것처럼 보이게 하지 않고 문의로 안내한다.
+        ReportUnsupportedDialog(onDismiss = { showReportNotice = false })
+    }
+    blockTarget?.let { comment ->
+        // 차단은 신고와 별개로 **실제로 반영된다**(POST users/me/blocks/{userId}).
+        AlertDialog(
+            onDismissRequest = { blockTarget = null },
+            modifier = Modifier.testTag("feed-comment-block-dialog"),
+            title = { Text("${comment.author.nickname}님을 차단할까요?") },
+            text = {
+                Text("차단하면 이 유저가 만들었거나 참여한 모집이 홈·탐색에서 모두 숨겨져요.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    blockTarget = null
+                    if (server != null) {
+                        commentScope.launch {
+                            runCatching { server.social.block(comment.author.userId) }
+                                .onSuccess {
+                                    reportMessage = "${comment.author.nickname}님을 차단했어요."
+                                    // 차단하면 목록이 달라질 수 있다 — 첫 묶음부터 다시 읽는다.
+                                    // 커서도 새 응답 값으로 되돌린다(예전 커서를 들고 있으면
+                                    // 사라진 댓글 뒤부터 이어 받아 구멍이 생긴다).
+                                    if (feedId != null) {
+                                        val reloaded = runCatching {
+                                            server.feeds.comments(feedId, limit = FEED_COMMENTS_PAGE_SIZE)
+                                        }.getOrNull()
+                                        if (reloaded != null) {
+                                            comments = reloaded.comments
+                                            nextCommentCursor = reloaded.nextId
+                                        }
+                                    }
+                                }
+                                .onFailure { error ->
+                                    reportMessage = error.message ?: "차단에 실패했어요."
+                                }
+                        }
+                    }
+                }) { Text("차단하기", color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = {
+                TextButton(onClick = { blockTarget = null }) { Text("취소") }
+            }
+        )
+    }
 }
-
-private data class FeedCommentItem(
-    val avatar: String,
-    val author: String,
-    val badge: String? = null,
-    val time: String,
-    val body: String,
-    val likes: Int,
-    val replies: List<FeedCommentItem> = emptyList()
-)
 
 /**
  * 댓글 한 줄.
  *
  * 우측 점 세 개 메뉴는 두지 않는다 — 메뉴 안에 숨으면 신고 경로가 있는지조차 알 수 없다.
- * 답글과 신고를 본문 아래 글자 동작으로 함께 노출한다.
+ * 좋아요·"함께 간 친구" 배지는 서버 댓글 응답에 없어 두지 않는다(§4 BE 요청).
  */
 @Composable
-private fun FeedCommentRow(comment: FeedCommentItem, compact: Boolean = false) {
+private fun FeedCommentRow(comment: FeedComment, compact: Boolean = false, onReport: () -> Unit, onBlock: () -> Unit) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
-        AnimalAvatar(comment.avatar, modifier = Modifier.size(if (compact) 28.dp else 36.dp))
+        UserAvatar(
+            imageUrl = comment.author.profileImageUrl,
+            nickname = comment.author.nickname,
+            modifier = Modifier.size(if (compact) 28.dp else 36.dp),
+            fallbackFontSize = if (compact) 13.sp else 16.sp
+        )
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Text(
-                    comment.author,
+                    comment.author.nickname,
                     fontWeight = FontWeight.ExtraBold,
                     style = MaterialTheme.typography.bodySmall
                 )
-                comment.badge?.let { badge ->
-                    Surface(
-                        shape = RoundedCornerShape(50),
-                        color = MoyeoTheme.tints.primaryTint
-                    ) {
-                        Text(
-                            badge,
-                            Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MoyeoTheme.tints.onPrimaryTint,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
                 Text(
-                    comment.time,
+                    comment.createdAt.take(10).replace('-', '.'),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Text(comment.body, style = MaterialTheme.typography.bodyMedium)
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    Icon(
-                        Icons.Filled.FavoriteBorder,
-                        contentDescription = "좋아요",
-                        modifier = Modifier.size(14.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    if (comment.likes > 0) {
-                        Text(
-                            comment.likes.toString(),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+            Text(comment.content, style = MaterialTheme.typography.bodyMedium)
+            // 신고와 차단은 결과가 다르다 — 한 줄에 섞지 않고 두 행동으로 나눈다(정본 §3).
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(
-                    "답글 달기",
-                    modifier = Modifier.clickable {},
+                    "신고",
+                    modifier = Modifier
+                        .clickable(role = Role.Button, onClick = onReport)
+                        .testTag("feed-comment-report"),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    "신고",
-                    modifier = Modifier.clickable {}.testTag("feed-comment-report"),
+                    "차단",
+                    modifier = Modifier
+                        .clickable(role = Role.Button, onClick = onBlock)
+                        .testTag("feed-comment-block"),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Bold

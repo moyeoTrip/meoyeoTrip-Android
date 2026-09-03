@@ -8,6 +8,7 @@ import java.net.URL
 import kotlinx.coroutines.runBlocking
 import kr.hanchae.moyeotrip.data.api.MoyeoApiClient
 import kr.hanchae.moyeotrip.data.api.MoyeoApiException
+import kr.hanchae.moyeotrip.data.api.MultipartFile
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -97,14 +98,21 @@ class ChatRoomRepositoryTest {
     }
 
     @Test
-    fun createRoomSendsJsonRequestPartAsMultipartAndReadsRoomId() = runBlocking {
+    fun createRoomSendsJsonAndThumbnailPartsAsMultipartAndReadsRoomId() = runBlocking {
         val connection = JsonConnection(
             URL("https://example.test/api/v1/chat-rooms"),
             """{"roomId":41}"""
         )
         val repository = HttpChatRoomRepository(client(connection))
 
-        val roomId = repository.createRoom(overnightRoom())
+        // 2026-08-26 서버 변경: thumbnail 파트가 필수다(없으면 400 40041).
+        val thumbnail = MultipartFile(
+            partName = "thumbnail",
+            fileName = "placeholder-landscape.webp",
+            mimeType = "image/webp",
+            bytes = byteArrayOf(0x52, 0x49, 0x46, 0x46)
+        )
+        val roomId = repository.createRoom(overnightRoom(), thumbnail)
 
         assertEquals(41L, roomId)
         assertEquals("POST", connection.requestMethod)
@@ -114,6 +122,9 @@ class ChatRoomRepositoryTest {
         assertTrue(body.contains("name=\"request\""))
         assertTrue(body.contains("Content-Type: application/json; charset=utf-8"))
         assertTrue(body.contains("\"courseType\":\"PUBLIC\""))
+        // 썸네일 파트가 실제로 붙는지 — 파트 이름·파일명·MIME 까지 본다
+        assertTrue(body.contains("name=\"thumbnail\"; filename=\"placeholder-landscape.webp\""))
+        assertTrue(body.contains("Content-Type: image/webp"))
     }
 
     @Test

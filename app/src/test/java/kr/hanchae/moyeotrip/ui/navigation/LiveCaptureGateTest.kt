@@ -20,16 +20,14 @@ class LiveCaptureGateTest {
             injectsServerData(
                 startScreen = "explore",
                 skipAuthentication = true,
-                liveCapture = false,
-                demoMode = false
+                liveCapture = false
             )
         )
         assertFalse(
             injectsServerData(
                 startScreen = "explore",
                 skipAuthentication = false,
-                liveCapture = false,
-                demoMode = false
+                liveCapture = false
             )
         )
     }
@@ -40,20 +38,7 @@ class LiveCaptureGateTest {
             injectsServerData(
                 startScreen = "explore",
                 skipAuthentication = true,
-                liveCapture = true,
-                demoMode = false
-            )
-        )
-    }
-
-    @Test
-    fun demoBuildStaysMockEvenWithLiveFlag() {
-        assertFalse(
-            injectsServerData(
-                startScreen = "explore",
-                skipAuthentication = true,
-                liveCapture = true,
-                demoMode = true
+                liveCapture = true
             )
         )
     }
@@ -64,44 +49,28 @@ class LiveCaptureGateTest {
             injectsServerData(
                 startScreen = null,
                 skipAuthentication = false,
-                liveCapture = false,
-                demoMode = false
+                liveCapture = false
             )
         )
-        // 데모 모드·인증 우회 실행은 예전대로 서버를 타지 않는다
+        // 인증 우회 실행은 예전대로 서버를 타지 않는다
         assertFalse(
             injectsServerData(
                 startScreen = null,
                 skipAuthentication = true,
-                liveCapture = false,
-                demoMode = false
-            )
-        )
-        assertFalse(
-            injectsServerData(
-                startScreen = null,
-                skipAuthentication = false,
-                liveCapture = false,
-                demoMode = true
+                liveCapture = false
             )
         )
     }
 
     @Test
-    fun planningMockDataOnlyInMockCapture() {
-        assertTrue(usesPlanningMockData(captureMode = true, liveCapture = false))
-        assertFalse(usesPlanningMockData(captureMode = true, liveCapture = true))
-        assertFalse(usesPlanningMockData(captureMode = false, liveCapture = false))
-    }
-
-    @Test
-    fun mockCaptureKeepsForcedOfflineOverride() {
-        // 35·36·37 목 캡처는 실제 네트워크가 붙어 있어도 강제 플래그대로 그린다
+    fun captureKeepsForcedOfflineOverrideEvenWhenLive() {
+        // 35·36·37 캡처는 실제 네트워크가 붙어 있어도 강제 플래그대로 그린다.
+        // 라이브 캡처는 서버를 타야 해서 네트워크를 켠 채 돌린다 — 여기서 플래그를 버리면
+        // 35·36 자리에 오프라인 표시가 없는 홈 화면이 찍힌다.
         assertEquals(
             OfflineExperience.NoCache,
             resolveNetworkExperience(
                 forcedOverride = QaStartRequest.parse("offline").offlineExperienceOverride,
-                liveCapture = false,
                 detectedOnline = true,
                 hasCachedContent = true
             )
@@ -109,8 +78,15 @@ class LiveCaptureGateTest {
         assertEquals(
             OfflineExperience.Cached,
             resolveNetworkExperience(
+                forcedOverride = QaStartRequest.parse("offlineCached").offlineExperienceOverride,
+                detectedOnline = true,
+                hasCachedContent = false
+            )
+        )
+        assertEquals(
+            OfflineExperience.Cached,
+            resolveNetworkExperience(
                 forcedOverride = QaStartRequest.parse("offlineChat").offlineExperienceOverride,
-                liveCapture = false,
                 detectedOnline = true,
                 hasCachedContent = false
             )
@@ -118,13 +94,12 @@ class LiveCaptureGateTest {
     }
 
     @Test
-    fun liveCaptureFollowsRealNetworkBlocking() {
-        // 라이브 캡처는 `svc wifi disable` 결과를 그대로 그린다 — 강제 플래그가 덮어쓰지 않는다
+    fun runsWithoutForcedFlagFollowRealNetwork() {
+        // 강제 플래그가 없는 실행은 실제 연결 상태를 그대로 그린다
         assertEquals(
             OfflineExperience.Online,
             resolveNetworkExperience(
-                forcedOverride = QaStartRequest.parse("offline").offlineExperienceOverride,
-                liveCapture = true,
+                forcedOverride = null,
                 detectedOnline = true,
                 hasCachedContent = true
             )
@@ -133,7 +108,6 @@ class LiveCaptureGateTest {
             OfflineExperience.NoCache,
             resolveNetworkExperience(
                 forcedOverride = null,
-                liveCapture = true,
                 detectedOnline = false,
                 hasCachedContent = false
             )
@@ -142,7 +116,6 @@ class LiveCaptureGateTest {
             OfflineExperience.Cached,
             resolveNetworkExperience(
                 forcedOverride = null,
-                liveCapture = true,
                 detectedOnline = false,
                 hasCachedContent = true
             )

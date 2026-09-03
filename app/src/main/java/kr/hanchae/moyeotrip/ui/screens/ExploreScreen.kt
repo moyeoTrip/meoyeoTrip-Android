@@ -1,7 +1,6 @@
 package kr.hanchae.moyeotrip.ui.screens
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -47,7 +46,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
@@ -57,22 +55,25 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
-import kr.hanchae.moyeotrip.data.MockTripRepository
-import kr.hanchae.moyeotrip.data.TripCourse
+import kr.hanchae.moyeotrip.data.api.MoyeoApiException
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomSearchResult
 import kr.hanchae.moyeotrip.data.rooms.RoomMeetingCluster
-import kr.hanchae.moyeotrip.data.rooms.RoomTag
 import kr.hanchae.moyeotrip.data.rooms.dayTripHoursText
 import kr.hanchae.moyeotrip.data.rooms.meetingClusters
 import kr.hanchae.moyeotrip.data.rooms.meetingText
-import kr.hanchae.moyeotrip.data.rooms.recruitmentDeadlineText
 import kr.hanchae.moyeotrip.data.rooms.statusLabel
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
 import kr.hanchae.moyeotrip.ui.components.MapMarker
 import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
+import kr.hanchae.moyeotrip.ui.components.MapUnavailablePlaceholder
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
+import kr.hanchae.moyeotrip.ui.components.ServerListState
+import kr.hanchae.moyeotrip.ui.state.LocalTabDataStore
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -84,51 +85,67 @@ fun ExploreScreen(
     startInMap: Boolean = false,
     onOpenRoom: (Long) -> Unit = {}
 ) {
-    val filters = listOf("전체", "자연", "역사", "체험", "힐링")
-    var selectedFilter by rememberSaveable { mutableStateOf(filters.first()) }
     var showingMap by rememberSaveable(startInMap) { mutableStateOf(startInMap) }
-    var likedCourseIds by rememberSaveable { mutableStateOf(listOf("cheongsong-juwangsan")) }
-    val courses = remember(selectedFilter) {
-        webExploreCourses().filter { it.matchesExploreFilter(selectedFilter) }
-    }
-    // 로그인 상태면 실서버 모집 목록(GET chat-rooms/search)으로 대체한다.
-    // 실패·미로그인 시에는 기존 목데이터 목록을 그대로 유지한다.
     val server = LocalServerData.current
-    var serverRooms by remember(server) { mutableStateOf<List<ChatRoomSearchResult>?>(null) }
-    // 테마 칩 후보는 서버 코스 태그(GET travel-courses/tags)를 쓴다 — 목데이터 분류를 서버 모드에 섞지 않는다
-    var serverTags by remember(server) { mutableStateOf<List<RoomTag>>(emptyList()) }
-    var selectedTagId by remember(server) { mutableStateOf<Long?>(null) }
-    // 찜은 검색 응답의 favorite 이 근거다. 토글 결과도 서버 응답값으로만 갱신한다.
-    var favoriteRoomIds by remember(server) { mutableStateOf<Set<Long>>(emptySet()) }
+    // 탐색은 "보던 상태 유지" 탭이다 — 목록·고른 필터·찜 상태를 탭 바깥 보관소에 두고
+    // 재진입할 때 다시 부르지 않는다(정본 R1·R3).
+    val explore = LocalTabDataStore.current.explore
+    val rooms = explore.rooms
+    val serverTags = explore.tags
+    val selectedTagId = explore.selectedTagId
+    val favoriteRoomIds = explore.favoriteRoomIds
     val favoriteScope = rememberCoroutineScope()
-    LaunchedEffect(server) {
+    LaunchedEffect(server, explore.reloadKey) {
         if (server == null) {
-            serverRooms = null
-            serverTags = emptyList()
-            favoriteRoomIds = emptySet()
+            explore.rooms = ServerListState.Loaded(emptyList())
+            explore.mapRooms = emptyList()
+            explore.mapAreaError = null
+            explore.tags = emptyList()
+            explore.favoriteRoomIds = emptySet()
             return@LaunchedEffect
         }
-        val rooms = runCatching { server.chatRooms.search() }.getOrNull()
-        serverRooms = rooms
-        favoriteRoomIds = rooms.orEmpty()
-            .filter(ChatRoomSearchResult::favorite)
-            .map(ChatRoomSearchResult::roomId)
-            .toSet()
-        serverTags = runCatching { server.courses.tags() }.getOrElse { emptyList() }
+        // 성공해서 보여줄 목록이 있을 때만 그대로 그린다 — 재진입에 다시 부르지 않는다(정본 R3).
+        // 직전 조회가 실패했으면 보여줄 게 없으므로 다시 부른다(R3-1).
+        if (explore.loaded) return@LaunchedEffect
+        // 여기까지 왔다는 것은 캐시가 없다는 뜻이라 로딩 문구가 맞다(정본 R2).
+        explore.rooms = ServerListState.Loading
+        val loaded = runCatching { server.chatRooms.search() }
+        explore.rooms = loaded.fold({ ServerListState.Loaded(it) }, { ServerListState.Failed })
+        // 지도에 찍을 모집. 좌표가 오는 것은 이 목록뿐이다 — 검색 응답에는 집합 좌표가 없다.
+        val mapLoaded = runCatching {
+            server.chatRooms.mapRooms(
+                latitude = GYEONGBUK_CENTER.latitude,
+                longitude = GYEONGBUK_CENTER.longitude,
+                radiusKm = GYEONGBUK_RADIUS_KM
+            )
+        }
+        // 400 40040 은 "모임이 없다"가 아니라 "검색 영역이 유효 범위를 벗어났다"다.
+        // 지금 보내는 값(120km)은 상한 200km 안이라 걸리지 않지만, 걸리면 조용히 빈 지도가 되면 안 된다.
+        explore.mapAreaError = (mapLoaded.exceptionOrNull() as? MoyeoApiException)
+            ?.takeIf(MoyeoApiException::invalidMapSearchArea)
+            ?.message
+        explore.mapRooms = mapLoaded.getOrElse { explore.mapRooms }
+        // 찜은 검색 응답의 favorite 이 근거다. 토글 결과도 서버 응답값으로만 갱신한다.
+        loaded.onSuccess { results ->
+            explore.favoriteRoomIds = results
+                .filter(ChatRoomSearchResult::favorite)
+                .map(ChatRoomSearchResult::roomId)
+                .toSet()
+        }
+        explore.tags = runCatching { server.courses.tags() }.getOrElse { explore.tags }
+        if (loaded.isSuccess) explore.markLoaded()
     }
     fun toggleRoomFavorite(roomId: Long) {
-        val rooms = server ?: return
+        val dependencies = server ?: return
         favoriteScope.launch {
-            runCatching { rooms.chatRooms.toggleFavorite(roomId) }.onSuccess { favorite ->
-                favoriteRoomIds = if (favorite) favoriteRoomIds + roomId else favoriteRoomIds - roomId
+            runCatching { dependencies.chatRooms.toggleFavorite(roomId) }.onSuccess { favorite ->
+                // 이 화면이 바꾼 값이라 해당 항목만 갱신한다 — 목록을 통째로 다시 부르지 않는다(정본 R4).
+                explore.favoriteRoomIds = if (favorite) {
+                    explore.favoriteRoomIds + roomId
+                } else {
+                    explore.favoriteRoomIds - roomId
+                }
             }
-        }
-    }
-    fun toggleFavorite(courseId: String) {
-        likedCourseIds = if (courseId in likedCourseIds) {
-            likedCourseIds - courseId
-        } else {
-            likedCourseIds + courseId
         }
     }
 
@@ -139,13 +156,11 @@ fun ExploreScreen(
     ) {
         if (showingMap) {
             ExploreMapView(
-                courses = webExploreCourses(),
-                likedCourseIds = likedCourseIds,
-                serverRooms = serverRooms.orEmpty(),
+                mapRooms = explore.mapRooms,
+                mapAreaError = explore.mapAreaError,
+                searchRooms = (rooms as? ServerListState.Loaded)?.items.orEmpty(),
                 favoriteRoomIds = favoriteRoomIds,
                 modifier = Modifier.fillMaxSize(),
-                onOpenCourse = onOpenCourse,
-                onToggleFavorite = ::toggleFavorite,
                 onOpenRoom = onOpenRoom,
                 onToggleRoomFavorite = ::toggleRoomFavorite
             )
@@ -162,77 +177,53 @@ fun ExploreScreen(
                 contentPadding = PaddingValues(start = 22.dp, top = 26.dp, end = 22.dp, bottom = 112.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                item {
-                    ExploreHeader(onMenuClick = { showingMap = true })
-                }
-                item {
-                    ExploreSearchSurface(onClick = onOpenSearch)
-                }
-                val allRooms = serverRooms
-                val rooms = allRooms?.filter { room ->
-                    selectedTagId == null || room.tags.any { it.tagId == selectedTagId }
-                }
-                if (rooms != null) {
-                    if (serverTags.isNotEmpty()) {
-                        item {
-                            LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                                item {
-                                    ExploreFilterChip(
-                                        text = "전체",
-                                        selected = selectedTagId == null,
-                                        onClick = { selectedTagId = null }
-                                    )
-                                }
-                                items(serverTags, key = { it.tagId }) { tag ->
-                                    ExploreFilterChip(
-                                        text = tag.name,
-                                        selected = selectedTagId == tag.tagId,
-                                        onClick = { selectedTagId = tag.tagId }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    if (rooms.isEmpty()) {
-                        item {
-                            Text(
-                                text = "지금 모집 중인 모임이 없어요.",
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 40.dp),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    } else {
-                        items(rooms, key = { it.roomId }) { room ->
-                            ExploreServerRoomRow(
-                                room = room,
-                                favorite = room.roomId in favoriteRoomIds,
-                                onClick = { onOpenRoom(room.roomId) },
-                                onFavoriteClick = { toggleRoomFavorite(room.roomId) }
-                            )
-                        }
-                    }
-                } else {
+                item { ExploreHeader(onMenuClick = { showingMap = true }) }
+                item { ExploreSearchSurface(onClick = onOpenSearch) }
+                if (serverTags.isNotEmpty()) {
                     item {
                         LazyRow(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
-                            items(filters) { filter ->
+                            item {
                                 ExploreFilterChip(
-                                    text = filter,
-                                    selected = selectedFilter == filter,
-                                    onClick = { selectedFilter = filter }
+                                    text = "전체",
+                                    selected = selectedTagId == null,
+                                    onClick = { explore.selectedTagId = null }
+                                )
+                            }
+                            items(serverTags, key = { it.tagId }) { tag ->
+                                ExploreFilterChip(
+                                    text = tag.name,
+                                    selected = selectedTagId == tag.tagId,
+                                    onClick = { explore.selectedTagId = tag.tagId }
                                 )
                             }
                         }
                     }
+                }
+                val state = rooms
+                val visibleRooms = (state as? ServerListState.Loaded)?.items?.filter { room ->
+                    selectedTagId == null || room.tags.any { it.tagId == selectedTagId }
+                }
+                when {
+                    server == null -> item {
+                        MoyeoEmptyState(MoyeoEmptyText.SIGN_IN_EXPLORE, testTag = "explore-signed-out")
+                    }
 
-                    items(courses, key = { it.id }) { course ->
-                        ExploreCourseRow(
-                            course = course,
-                            liked = course.id in likedCourseIds,
-                            onClick = { onOpenCourse(course.id) },
-                            onFavoriteClick = { toggleFavorite(course.id) }
+                    state is ServerListState.Loading -> item { MoyeoEmptyState(MoyeoEmptyText.LOADING) }
+
+                    state is ServerListState.Failed -> item {
+                        MoyeoEmptyState(MoyeoEmptyText.FAILED, onRetry = explore::reload)
+                    }
+
+                    visibleRooms.isNullOrEmpty() -> item {
+                        MoyeoEmptyState(MoyeoEmptyText.NO_ROOMS, testTag = "explore-empty")
+                    }
+
+                    else -> items(visibleRooms, key = { it.roomId }) { room ->
+                        ExploreServerRoomRow(
+                            room = room,
+                            favorite = room.roomId in favoriteRoomIds,
+                            onClick = { onOpenRoom(room.roomId) },
+                            onFavoriteClick = { toggleRoomFavorite(room.roomId) }
                         )
                     }
                 }
@@ -240,7 +231,7 @@ fun ExploreScreen(
         }
         if (!showingMap) {
             FloatingActionButton(
-                onClick = { onCreateRecruitment(courses.firstOrNull()?.id ?: "cheongsong-juwangsan") },
+                onClick = { onCreateRecruitment(NEW_RECRUITMENT_COURSE_KEY) },
                 modifier = Modifier
                     .align(Alignment.BottomEnd)
                     .padding(end = 22.dp, bottom = 14.dp)
@@ -379,89 +370,10 @@ private fun ExploreFilterChip(text: String, selected: Boolean, onClick: () -> Un
     }
 }
 
-@Composable
-private fun ExploreCourseRow(course: TripCourse, liked: Boolean, onClick: () -> Unit, onFavoriteClick: () -> Unit) {
-    val favoriteDescription = if (liked) "찜 해제" else "찜"
-
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(92.dp)
-            .testTag("explore-course-${course.id}")
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (MoyeoTheme.isDark) 0.dp else 1.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 10.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxSize(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                CoursePreview(
-                    course = course,
-                    modifier = Modifier.size(width = 88.dp, height = 68.dp)
-                )
-                Column(
-                    modifier = Modifier.weight(1f),
-                    verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)
-                ) {
-                    Text(
-                        text = course.title,
-                        fontSize = 15.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = course.exploreArea(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = "${course.participants}/${course.capacity}명",
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-            IconButton(
-                onClick = onFavoriteClick,
-                modifier = Modifier
-                    .size(44.dp)
-                    .testTag("explore-course-favorite-${course.id}")
-                    .semantics { contentDescription = favoriteDescription }
-            ) {
-                Icon(
-                    imageVector = if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = null,
-                    tint = if (liked) Coral else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(21.dp)
-                )
-            }
-        }
-    }
-}
-
 /**
  * 서버 모집(chat-rooms/search) 행 — 화면기획 10의 카드 구성을 그대로 쓴다.
- * 찜 하트·상태 배지·모집 마감 D-day 는 2026-08-24 서버 패치로 목록 응답에 근거가 생겨 되살렸다
+ * 찜 하트·상태 배지는 목록 응답에 근거가 있다. 모집 마감 D-day 는 쓰지 않는다 —
+ * 2026-08-26 검색 응답 축소로 빠졌고, 탐색 카드에 표시하지 않는 것이 기획상 정상이다.
  * (그 전까지는 근거가 없어 숨겨 뒀다). 값이 없으면 그 표기만 사라진다.
  */
 @Composable
@@ -518,11 +430,10 @@ private fun ExploreServerRoomRow(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                // 모집 마감 D-day 는 탐색 카드에 쓰지 않는다 — 기획상 정상이고 서버 검색 응답에도 없다
+                // (2026-08-26 확정). 마감 확인이 필요하면 모집 상세로 들어간다.
                 Text(
-                    text = listOfNotNull(
-                        "${room.participantCount}/${room.maxParticipants}명",
-                        room.recruitmentDeadlineText()
-                    ).joinToString(" · "),
+                    text = "${room.participantCount}/${room.maxParticipants}명",
                     fontSize = 13.sp,
                     lineHeight = 18.sp,
                     color = MaterialTheme.colorScheme.onSurface,
@@ -559,7 +470,8 @@ private fun ServerRoomThumbnail(room: ChatRoomSearchResult, modifier: Modifier =
             modifier = Modifier
                 .fillMaxSize()
                 .clip(RoundedCornerShape(8.dp)),
-            contentScale = ContentScale.Crop
+            contentScale = ContentScale.Crop,
+            fallbackShape = MoyeoPlaceholderShape.SQUARE
         ) {
             Box(
                 modifier = Modifier
@@ -588,73 +500,74 @@ private fun ServerRoomThumbnail(room: ChatRoomSearchResult, modifier: Modifier =
     }
 }
 
-@Composable
-private fun CoursePreview(course: TripCourse, modifier: Modifier = Modifier, showsBadge: Boolean = true) {
-    Box(
-        modifier = modifier
-    ) {
-        CourseScenicPanel(course = course, modifier = Modifier.fillMaxSize(), cornerRadius = 8.dp)
-        if (!showsBadge) return@Box
-        Surface(
-            modifier = Modifier
-                .align(Alignment.BottomStart)
-                .padding(start = 7.dp, bottom = 7.dp),
-            shape = RoundedCornerShape(6.dp),
-            color = MaterialTheme.colorScheme.primary
-        ) {
-            Text(
-                text = course.exploreStatus(),
-                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontWeight = FontWeight.ExtraBold
-            )
-        }
-    }
-}
+/**
+ * 지도 반경 조회의 기준점 — 경상북도 중심 근처.
+ *
+ * 화면 대각선으로 반경을 계산하는 방식은 지도 이동이 붙은 뒤에 쓴다. 지금은 경북 전역을 덮는
+ * 고정 반경으로 받는다(서버는 상한이 없지만 과도한 값을 보내지 않는다 — BE 요청 §4-2).
+ */
+private val GYEONGBUK_CENTER = MoyeoLatLng(36.4, 128.9)
+private const val GYEONGBUK_RADIUS_KM = 120.0
 
 @Composable
 private fun ExploreMapView(
-    courses: List<TripCourse>,
-    likedCourseIds: List<String>,
-    serverRooms: List<ChatRoomSearchResult>,
+    /** 지도 핀 전용 목록 — `GET /chat-rooms/map`. 검색 응답에는 좌표가 없다. */
+    mapRooms: List<ChatRoomSearchResult>,
+    /** `400 40040 INVALID_MAP_SEARCH_AREA` 일 때 서버 문구. 빈 지도와 구분해서 보여준다. */
+    mapAreaError: String?,
+    searchRooms: List<ChatRoomSearchResult>,
     favoriteRoomIds: Set<Long>,
     modifier: Modifier = Modifier,
-    onOpenCourse: (String) -> Unit,
-    onToggleFavorite: (String) -> Unit,
     onOpenRoom: (Long) -> Unit,
     onToggleRoomFavorite: (Long) -> Unit
 ) {
-    val selectedCourse = courses.first()
-    // 서버 모집의 집합 좌표(둘 다 있는 항목만)가 있으면 목데이터 코스 대신 실제 모임을 지도에 올린다.
-    val roomClusters = remember(serverRooms) { serverRooms.meetingClusters() }
-    val selectedRoom = remember(serverRooms, roomClusters) {
-        roomClusters.firstOrNull()?.roomIds?.firstOrNull()?.let { roomId ->
-            serverRooms.firstOrNull { it.roomId == roomId }
+    val roomClusters = remember(mapRooms) { mapRooms.meetingClusters() }
+    // 화면기획 11: 핀을 누르면 아래 카드가 그 모집으로 바뀌고, **카드를 눌러야** 모집 상세로 간다.
+    // 누른 적이 없으면 첫 묶음을 보여준다(웹 11과 같다).
+    var selectedClusterId by rememberSaveable(mapRooms) { mutableStateOf<String?>(null) }
+    val selectedRoom = remember(mapRooms, searchRooms, roomClusters, selectedClusterId) {
+        val cluster = roomClusters.firstOrNull { it.markerId() == selectedClusterId }
+            ?: roomClusters.firstOrNull()
+        // 묶음의 **첫 모집**을 카드에 올린다 — 웹·iOS 와 같은 선택 규칙이다.
+        cluster?.roomIds?.firstOrNull()?.let { roomId ->
+            // 지도 응답이 검색 응답의 상위집합이다 — 2026-08-26 응답 축소로 검색에서 집합 좌표와
+            // meetingDetails 가 빠졌다. 검색 쪽을 먼저 고르면 집합 안내 줄이 조용히 사라진다.
+            mapRooms.firstOrNull { it.roomId == roomId } ?: searchRooms.firstOrNull { it.roomId == roomId }
         }
     }
     Box(modifier = modifier) {
-        // 카카오 실지도 + 지역 묶음 마커. 폴백(키 없음·인증 실패·QA 캡처)에서는 기존 목업 판을 그린다.
-        val clusters = remember(courses, roomClusters) {
-            roomClusters.takeIf { it.isNotEmpty() }?.roomClusterMarkers() ?: courses.exploreClusterMarkers()
-        }
-        if (clusters.isEmpty()) {
-            // 좌표가 없으면 실지도를 띄울 근거가 없다 — 목업 유지
-            ExploreMapMockup(selectedCourse, Modifier.matchParentSize())
+        val clusters = remember(roomClusters) { roomClusters.roomClusterMarkers() }
+        if (mapAreaError != null) {
+            // 검색 영역이 유효 범위를 벗어난 것이지 모임이 없는 게 아니다 — 서버 문구를 그대로 보여준다.
+            MoyeoEmptyState(
+                mapAreaError,
+                modifier = Modifier.align(Alignment.Center),
+                testTag = "explore-map-area-error"
+            )
+        } else if (clusters.isEmpty()) {
+            // 좌표가 없으면 지도를 그릴 근거가 없다 — 가짜 지도를 대신 그리지 않는다
+            MoyeoEmptyState(
+                MoyeoEmptyText.NO_ROOMS,
+                modifier = Modifier.align(Alignment.Center),
+                testTag = "explore-map-empty"
+            )
         } else {
             KakaoMapView(
                 center = clusters.first().position,
                 modifier = Modifier.matchParentSize(),
                 markers = clusters,
                 zoomLevel = 9,
-                fallback = { fallbackModifier -> ExploreMapMockup(selectedCourse, fallbackModifier) }
+                onMarkerClick = { markerId -> selectedClusterId = markerId },
+                fallback = { fallbackModifier -> MapUnavailablePlaceholder(fallbackModifier) }
             )
         }
         // 화면기획 11의 내 위치 버튼 — 카드 위 우측
         Surface(
             modifier = Modifier
                 .align(Alignment.BottomEnd)
-                .padding(end = 18.dp, bottom = 176.dp)
+                // 화면기획 11에서 버튼은 카드 위로 한 칸 띄운 자리다(카드 상단에서 ≈100dp).
+                // 카드를 기획대로 내리면서(64 → 2) 같은 양만큼 함께 내린다 — 카드와의 간격은 그대로다.
+                .padding(end = 18.dp, bottom = 186.dp)
                 .size(44.dp)
                 .testTag("explore-map-my-location"),
             shape = CircleShape,
@@ -670,163 +583,41 @@ private fun ExploreMapView(
                 )
             }
         }
-        val cardModifier = Modifier
-            .align(Alignment.BottomCenter)
-            .padding(horizontal = 18.dp, vertical = 64.dp)
         if (selectedRoom != null) {
             SelectedMapRoom(
                 room = selectedRoom,
                 favorite = selectedRoom.roomId in favoriteRoomIds,
-                modifier = cardModifier,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    // 화면기획 11은 카드가 하단 탭바에 **붙어** 있다(카드 bottom 94 · 탭바 96 = 틈 2).
+                    // 이 화면은 스캐폴드 `innerPadding` 으로 탭바를 이미 비켜 있으므로 이 값이 곧 그 틈이다.
+                    .padding(horizontal = 18.dp, vertical = 2.dp),
                 onClick = { onOpenRoom(selectedRoom.roomId) },
                 onFavoriteClick = { onToggleRoomFavorite(selectedRoom.roomId) }
-            )
-        } else {
-            SelectedMapCourse(
-                course = selectedCourse,
-                liked = selectedCourse.id in likedCourseIds,
-                modifier = cardModifier,
-                onClick = { onOpenCourse(selectedCourse.id) },
-                onFavoriteClick = { onToggleFavorite(selectedCourse.id) }
             )
         }
     }
 }
 
 /**
- * 화면기획 11의 지역 묶음 마커 — 같은 지역의 코스를 하나의 초록 원 + 흰 개수로 묶는다.
- * 좌표가 없는 코스(latitude/longitude 0.0)는 지도에 올리지 않는다.
+ * 마커 id. **핀 탭이 이 값으로 묶음을 되찾으므로** 마커를 만드는 쪽과 찾는 쪽이 같은 함수를 쓴다 —
+ * 두 곳에서 따로 조립하면 규칙이 어긋나는 순간 탭이 조용히 아무 것도 못 찾는다.
  */
-private fun List<TripCourse>.exploreClusterMarkers(): List<MapMarker> = this
-    .filter { it.latitude != 0.0 && it.longitude != 0.0 }
-    .groupBy { it.region }
-    .map { (region, group) ->
-        MapMarker(
-            id = "explore-cluster-$region",
-            position = MoyeoLatLng(
-                latitude = group.sumOf { it.latitude } / group.size,
-                longitude = group.sumOf { it.longitude } / group.size
-            ),
-            shape = MapMarkerShape.Cluster,
-            badge = group.size.toString()
-        )
-    }
+private fun RoomMeetingCluster.markerId(): String = "explore-rooms-${roomIds.joinToString("-")}"
 
 /** 서버 모집의 집합 좌표 묶음을 화면기획 11과 같은 초록 원 + 개수 마커로 만든다. */
 private fun List<RoomMeetingCluster>.roomClusterMarkers(): List<MapMarker> = map { cluster ->
     MapMarker(
-        id = "explore-rooms-${cluster.roomIds.joinToString("-")}",
+        id = cluster.markerId(),
         position = MoyeoLatLng(cluster.point.latitude, cluster.point.longitude),
         shape = MapMarkerShape.Cluster,
         badge = cluster.roomIds.size.toString()
     )
 }
 
-/** 실지도를 쓸 수 없을 때(키 없음·인증 실패·QA 캡처) 그리는 기존 목업 지도 판. */
-@Composable
-private fun ExploreMapMockup(selectedCourse: TripCourse, modifier: Modifier = Modifier) {
-    Box(modifier = modifier) {
-        MapBackground()
-        MapCluster(
-            text = "1",
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(start = 74.dp, top = 230.dp)
-        )
-        MapCluster(
-            text = "6",
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 190.dp)
-        )
-        MapCluster(
-            text = "2",
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(end = 82.dp, top = 245.dp)
-        )
-        MapCluster(
-            text = "2",
-            modifier = Modifier
-                .align(Alignment.Center)
-                .padding(top = 80.dp)
-        )
-        MapLandmark(
-            course = selectedCourse,
-            modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 78.dp, bottom = 56.dp)
-        )
-    }
-}
-
-@Composable
-private fun MapBackground() {
-    val darkTheme = MoyeoTheme.isDark
-    val mapBase = if (darkTheme) Color(0xFF101B16) else Color(0xFFE6F1E5)
-    val hill = if (darkTheme) Color(0xFF182C22) else Color(0xFFD8E8D5)
-    val water = if (darkTheme) Color(0xFF17303B) else Color(0xFFC9E0E5)
-
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        drawRect(mapBase)
-        val hillPath = Path().apply {
-            moveTo(0f, size.height * 0.28f)
-            quadraticTo(size.width * 0.22f, size.height * 0.18f, size.width * 0.42f, size.height * 0.29f)
-            quadraticTo(size.width * 0.65f, size.height * 0.42f, size.width, size.height * 0.24f)
-            lineTo(size.width, size.height)
-            lineTo(0f, size.height)
-            close()
-        }
-        val waterPath = Path().apply {
-            moveTo(size.width * 0.67f, 0f)
-            quadraticTo(size.width * 0.88f, size.height * 0.20f, size.width, size.height * 0.24f)
-            lineTo(size.width, size.height)
-            lineTo(size.width * 0.80f, size.height)
-            quadraticTo(size.width * 0.78f, size.height * 0.66f, size.width * 0.73f, size.height * 0.48f)
-            quadraticTo(size.width * 0.67f, size.height * 0.24f, size.width * 0.67f, 0f)
-            close()
-        }
-        drawPath(hillPath, hill)
-        drawPath(waterPath, water)
-    }
-}
-
-@Composable
-private fun MapCluster(text: String, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.size(32.dp),
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.primary,
-        shadowElevation = if (MoyeoTheme.isDark) 0.dp else 4.dp
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                text = text,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onPrimary,
-                fontWeight = FontWeight.ExtraBold
-            )
-        }
-    }
-}
-
-@Composable
-private fun MapLandmark(course: TripCourse, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.size(52.dp),
-        shape = CircleShape,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(text = course.imageEmoji, fontSize = 25.sp)
-        }
-    }
-}
-
 /**
  * 화면기획 11의 지도 카드에 서버 모집을 올린 형태. 줄 구성(제목·안내·인원)은 그대로 두고
- * 목데이터의 "지역 · 테마" 자리에는 서버가 주는 **집합 안내**를, 인원 뒤에는 **당일 여행 시간**을 쓴다.
+ * 부제 자리에는 서버가 주는 **집합 안내**를, 인원 뒤에는 **당일 여행 시간**을 쓴다.
  * 집합 장소가 미정(null)이면 안내 줄이 사라지고, 숙박 방은 시간이 사라진다 — 문구를 지어내지 않는다.
  */
 @Composable
@@ -863,7 +654,8 @@ private fun SelectedMapRoom(
                 modifier = Modifier
                     .size(width = 84.dp, height = 76.dp)
                     .clip(RoundedCornerShape(10.dp)),
-                contentScale = ContentScale.Crop
+                contentScale = ContentScale.Crop,
+                fallbackShape = MoyeoPlaceholderShape.SQUARE
             ) {
                 Box(
                     modifier = Modifier
@@ -927,147 +719,8 @@ private fun SelectedMapRoom(
 }
 
 @Composable
-private fun SelectedMapCourse(
-    course: TripCourse,
-    liked: Boolean,
-    modifier: Modifier = Modifier,
-    onClick: () -> Unit,
-    onFavoriteClick: () -> Unit
-) {
-    val favoriteDescription = if (liked) "찜 해제" else "찜"
-
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .height(96.dp)
-            .testTag("explore-map-selected-course")
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = if (MoyeoTheme.isDark) 0.dp else 6.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Row(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxSize(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                // 화면기획 11의 지도 카드 썸네일에는 상태 배지가 없다
-                CoursePreview(
-                    course = course,
-                    modifier = Modifier.size(width = 84.dp, height = 76.dp),
-                    showsBadge = false
-                )
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = course.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = course.exploreArea(),
-                        modifier = Modifier.padding(top = 5.dp),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Text(
-                        text = "${course.participants}/${course.capacity}명",
-                        modifier = Modifier.padding(top = 4.dp),
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-            IconButton(
-                onClick = onFavoriteClick,
-                modifier = Modifier
-                    .size(44.dp)
-                    .testTag("explore-map-favorite-${course.id}")
-                    .semantics { contentDescription = favoriteDescription }
-            ) {
-                Icon(
-                    imageVector = if (liked) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                    contentDescription = null,
-                    tint = if (liked) Coral else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(21.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
 private fun explorePageColor(): Color = if (MoyeoTheme.isDark) {
     MaterialTheme.colorScheme.background
 } else {
     MaterialTheme.colorScheme.surface
 }
-
-private fun webExploreCourses(): List<TripCourse> {
-    val webPlanOrder = listOf(
-        "cheongsong-juwangsan",
-        "andong-hahoe",
-        "ulleung-island",
-        "gyeongju-healing",
-        "pohang-sea",
-        "mungyeong-saejae",
-        "yeongju-buseoksa",
-        "andong-dosan"
-    )
-    val byId = MockTripRepository.courses.associateBy { it.id }
-    val orderedCourses = webPlanOrder.mapNotNull(byId::get)
-    return orderedCourses + MockTripRepository.courses.filterNot { it.id in webPlanOrder }
-}
-
-private fun TripCourse.matchesExploreFilter(filter: String): Boolean = when (filter) {
-    "자연" -> {
-        region in listOf("청송", "울릉", "문경") ||
-            tags.any { it in listOf("숲길", "폭포", "섬", "트레킹", "바다", "단풍") }
-    }
-
-    "역사" -> {
-        region in listOf("안동", "경주", "영주") ||
-            tags.any { it.contains("역사") || it.contains("고택") || it.contains("사찰") }
-    }
-
-    "체험" -> tags.any { it in listOf("로컬간식", "피크닉", "사진") } || oneLine.contains("체험")
-
-    "힐링" -> title.contains("힐링") || oneLine.contains("천천히") || oneLine.contains("머무는")
-
-    else -> true
-}
-
-/**
- * 화면기획 10의 카드 부제("지역 · 테마") 테마 값. 코스마다 정해진 값이라 지역에서 기계적으로
- * 뽑으면 "역사, 문화"로 뭉개지거나 두 번째 테마가 사라진다.
- */
-private val exploreThemeByCourseId = mapOf(
-    "cheongsong-juwangsan" to "자연, 히든명소",
-    "andong-hahoe" to "역사, 문화",
-    "ulleung-island" to "자연, 힐링",
-    "gyeongju-healing" to "역사, 야경",
-    "pohang-sea" to "바다, 드라이브",
-    "mungyeong-saejae" to "자연, 단풍",
-    "yeongju-buseoksa" to "역사, 사찰",
-    "andong-dosan" to "역사, 그늘"
-)
-
-private fun TripCourse.exploreArea(): String {
-    val theme = exploreThemeByCourseId[id] ?: tags.take(2).joinToString(", ").ifBlank { "여행" }
-    return "$region · $theme"
-}
-
-private fun TripCourse.exploreStatus(): String = if (deadlineLabel.contains("확정")) "확정" else "진행중"

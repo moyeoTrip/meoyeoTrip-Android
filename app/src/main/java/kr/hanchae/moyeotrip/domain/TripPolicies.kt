@@ -1,8 +1,5 @@
 package kr.hanchae.moyeotrip.domain
 
-import kr.hanchae.moyeotrip.data.TripCourse
-import kr.hanchae.moyeotrip.data.TripRecruitment
-
 enum class RecruitmentState {
     BelowMinimum,
     Open,
@@ -20,37 +17,11 @@ data class RecruitmentSummary(
     val callToAction: String
 )
 
-fun TripCourse.remainingSeats(): Int = (capacity - participants).coerceAtLeast(0)
-
-fun TripCourse.recruitmentSummary(): RecruitmentSummary {
-    val remainingSeats = remainingSeats()
-    val shownParticipants = participants.coerceAtMost(capacity)
-    val minimumMet = participants >= minParticipants
-    val state = when {
-        remainingSeats == 0 -> RecruitmentState.Full
-        !minimumMet -> RecruitmentState.BelowMinimum
-        remainingSeats <= 3 -> RecruitmentState.FewSeats
-        else -> RecruitmentState.Open
-    }
-    val callToAction = when (state) {
-        RecruitmentState.BelowMinimum -> "함께 가기 신청"
-        RecruitmentState.Open -> "함께 가기 신청"
-        RecruitmentState.FewSeats -> "마감 임박"
-        RecruitmentState.Full -> "대기 신청"
-    }
-
-    return RecruitmentSummary(
-        remainingSeats = remainingSeats,
-        minimumMet = minimumMet,
-        progress = (shownParticipants.toFloat() / capacity.toFloat()).coerceIn(0f, 1f),
-        state = state,
-        displayText = "$shownParticipants/${capacity}명",
-        minimumText = "최소 ${minParticipants}명 ${if (minimumMet) "달성" else "필요"}",
-        callToAction = callToAction
-    )
-}
-
-fun TripRecruitment.recruitmentSummary(): RecruitmentSummary {
+/**
+ * 모집 인원 요약. 값은 전부 서버 모집(chat-rooms)에서 온 숫자다 —
+ * 최소 인원을 서버가 주지 않으면 [minParticipants] 를 0 으로 넘겨 "최소 인원" 문구가 빠지게 둔다.
+ */
+fun recruitmentSummary(joined: Int, capacity: Int, minParticipants: Int): RecruitmentSummary {
     val remainingSeats = (capacity - joined).coerceAtLeast(0)
     val shownParticipants = joined.coerceAtMost(capacity)
     val minimumMet = joined >= minParticipants
@@ -70,7 +41,7 @@ fun TripRecruitment.recruitmentSummary(): RecruitmentSummary {
     return RecruitmentSummary(
         remainingSeats = remainingSeats,
         minimumMet = minimumMet,
-        progress = (shownParticipants.toFloat() / capacity.toFloat()).coerceIn(0f, 1f),
+        progress = if (capacity <= 0) 0f else (shownParticipants.toFloat() / capacity.toFloat()).coerceIn(0f, 1f),
         state = state,
         displayText = "$shownParticipants/${capacity}명",
         minimumText = "최소 ${minParticipants}명 ${if (minimumMet) "달성" else "필요"}",
@@ -113,7 +84,7 @@ data class WeatherHero(
 object WeatherHeroPolicy {
     private const val DEFAULT_TITLE = "이번 주말,\n어디로 떠나볼까요?"
 
-    fun heroFor(signal: WeatherSignal, featuredCourse: TripCourse): WeatherHero {
+    fun heroFor(signal: WeatherSignal): WeatherHero {
         val routeMood = when (signal) {
             WeatherSignal.Clear -> RouteMood(
                 state = WeatherHeroState.Good,
@@ -229,30 +200,19 @@ object WeatherHeroPolicy {
     }
 }
 
-object WeatherCoursePolicy {
-    fun recommendedCourses(signal: WeatherSignal, courses: List<TripCourse>): List<TripCourse> {
-        val priorityIds = when (signal) {
-            WeatherSignal.Clear -> listOf("cheongsong-juwangsan", "andong-hahoe", "gyeongju-healing")
-            WeatherSignal.Cloud -> listOf("gyeongju-healing", "andong-hahoe", "cheongsong-juwangsan")
-            WeatherSignal.Rain -> listOf("andong-hahoe", "gyeongju-healing", "cheongsong-juwangsan")
-            WeatherSignal.Snow -> listOf("andong-hahoe", "gyeongju-healing", "cheongsong-juwangsan")
-            WeatherSignal.Fog -> listOf("gyeongju-healing", "andong-hahoe", "cheongsong-juwangsan")
-            WeatherSignal.Wind -> listOf("andong-hahoe", "gyeongju-healing", "cheongsong-juwangsan")
-            WeatherSignal.HeavyRain -> listOf("gyeongju-healing", "andong-hahoe", "cheongsong-juwangsan")
-            WeatherSignal.Heat -> listOf("andong-hahoe", "cheongsong-juwangsan", "gyeongju-healing")
-            WeatherSignal.Dust -> listOf("gyeongju-healing", "andong-hahoe", "cheongsong-juwangsan")
-        }
-        val byId = courses.associateBy { it.id }
-        val prioritized = priorityIds.mapNotNull(byId::get)
-        return prioritized + courses.filterNot { course -> course.id in priorityIds }
-    }
-}
-
 object ApplicationNotePolicy {
     const val MIN_LENGTH = 10
     const val MAX_LENGTH = 200
 
+    /**
+     * 저장·전송 직전에 다듬는다. **입력 중에는 쓰지 마라** —
+     * 키 입력마다 trim 하면 끝에 친 공백과 줄바꿈이 그 자리에서 지워져
+     * 사용자에게는 스페이스·엔터가 아예 안 먹는 것처럼 보인다.
+     */
     fun sanitize(input: String): String = input.trim().take(MAX_LENGTH)
+
+    /** 입력 중 길이 제한. 공백·줄바꿈은 건드리지 않는다. */
+    fun clampWhileTyping(input: String): String = input.take(MAX_LENGTH)
 
     fun isValid(input: String): Boolean = sanitize(input).length in MIN_LENGTH..MAX_LENGTH
 

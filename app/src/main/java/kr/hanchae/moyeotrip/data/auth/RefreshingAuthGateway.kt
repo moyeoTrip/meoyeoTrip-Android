@@ -46,6 +46,10 @@ class RefreshingAuthGateway(private val delegate: AuthGateway, private val sessi
     private suspend fun <T> authorized(accessToken: String, request: suspend (String) -> T): T = try {
         request(accessToken)
     } catch (error: AuthApiException) {
+        // 가입 게이트(40902·40918)와 "이미 설정 완료"(40919)는 토큰 문제가 아니다.
+        // 재발급 경로로 흘리면 새 토큰으로 같은 409 를 받아 무한 재시도가 된다(정본 R1).
+        // 상태 코드보다 오류 코드를 먼저 본다 — 서버가 401 로 감싸 보내도 여기서 멈춰야 한다.
+        if (error.signupGate != null || error.profileImageAlreadySet) throw error
         if (error.statusCode != 401) throw error
         val session = sessionStore.current
         val refreshToken = session.refreshToken ?: throw error

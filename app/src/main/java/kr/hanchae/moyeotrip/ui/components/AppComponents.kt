@@ -2,7 +2,6 @@ package kr.hanchae.moyeotrip.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,14 +31,11 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kr.hanchae.moyeotrip.data.TripCourse
 import kr.hanchae.moyeotrip.domain.RecruitmentSummary
-import kr.hanchae.moyeotrip.domain.recruitmentSummary
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 import kr.hanchae.moyeotrip.ui.theme.SunYellow
 
@@ -226,101 +222,6 @@ fun TagRow(tags: List<String>, modifier: Modifier = Modifier) {
                     fontWeight = FontWeight.Bold
                 )
             }
-        }
-    }
-}
-
-@Composable
-fun TripCourseCard(course: TripCourse, onClick: () -> Unit, modifier: Modifier = Modifier, highlight: Boolean = false) {
-    val containerColor = if (highlight) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.surface
-    val imageContainerColor = if (highlight) {
-        MaterialTheme.colorScheme.surface
-    } else {
-        MaterialTheme.colorScheme.surfaceVariant
-    }
-    val recruitment = course.recruitmentSummary()
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = containerColor),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(64.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(imageContainerColor),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(text = course.imageEmoji, fontSize = 30.sp)
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = "${course.region} · ${course.duration}",
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    Text(
-                        text = course.title,
-                        style = MaterialTheme.typography.titleLarge,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = course.oneLine,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            Spacer(modifier = Modifier.height(14.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    AnimalAvatar(
-                        emoji = course.hostAvatar,
-                        modifier = Modifier.size(34.dp),
-                        container = if (highlight) {
-                            MaterialTheme.colorScheme.surface
-                        } else {
-                            MaterialTheme.colorScheme.secondaryContainer
-                        }
-                    )
-                    Text(
-                        text = course.host,
-                        style = MaterialTheme.typography.labelLarge,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                }
-                InfoPill(
-                    text = "${recruitment.displayText} · ★ ${course.rating}",
-                    container = imageContainerColor,
-                    content = MaterialTheme.colorScheme.primary
-                )
-            }
-            Spacer(modifier = Modifier.height(12.dp))
-            RecruitmentProgress(
-                summary = recruitment,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Spacer(modifier = Modifier.height(12.dp))
-            TagRow(tags = course.tags.take(3))
         }
     }
 }

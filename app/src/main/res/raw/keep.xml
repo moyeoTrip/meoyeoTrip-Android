@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  리소스 축소(isShrinkResources)에서 지우면 안 되는 리소스 목록.
+
+  default_web_client_id 는 google-services 플러그인이 google-services.json 으로부터 생성하는
+  문자열이고, AuthDependencies.kt 가 Resources.getIdentifier() 로 "이름"을 통해 찾는다.
+  이름 기반 조회는 R8 이 참조로 인식하지 못해 release 빌드에서 통째로 제거되었고,
+  그 결과 Google 로그인이 "Google Web Client ID 설정이 필요해요." 로 실패했다.
+  (google_app_id 등 나머지 Firebase 리소스는 라이브러리 자체 keep 규칙이 지켜준다)
+
+  코드에서 R.string.default_web_client_id 를 직접 참조하면 이 파일이 필요 없지만,
+  google-services.json 이 없는 환경에서도 빌드되어야 해서(BuildConfig.FIREBASE_CONFIGURED)
+  이름 조회를 유지하고 여기서 리소스를 보존한다.
+-->
+<resources
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@string/default_web_client_id" />

@@ -221,13 +221,20 @@ private fun OfflineStateBanner() {
 }
 
 @Composable
-fun QaLeaveAlertScreen(onDismiss: () -> Unit, backdropThreadId: String = OVERLAY_BACKDROP_THREAD_ID) {
+fun QaLeaveAlertScreen(
+    onDismiss: () -> Unit,
+    backdropThreadId: String = OVERLAY_BACKDROP_THREAD_ID,
+    // 31 호스트 / 31-1 참가자. **결과가 전혀 다른데 문구가 호스트 기준으로 고정**돼 있어서
+    // 참가자가 이 화면을 보면 자기가 모임을 없애는 것으로 읽혔다 (정본 §6-5).
+    host: Boolean = true
+) {
     // 화면기획의 경고 팝업은 좌측 정렬 카드에 같은 너비의 두 버튼이다.
     // Material AlertDialog 는 제목을 가운데 두고 버튼을 우측에 몰아 다른 플랫폼과 어긋난다.
     // changeLog14 "오버레이 배경 일괄" — 빈 딤 대신 20-1 채팅방 사이드 메뉴 본문을 깐다.
     val colors = MaterialTheme.colorScheme
+    val copy = LeaveCopy.of(host)
     OverlayBackdrop(
-        modifier = Modifier.testTag("leave-alert-screen"),
+        modifier = Modifier.testTag(if (host) "leave-alert-screen" else "leave-member-alert-screen"),
         scrimAlpha = .48f,
         onScrimClick = onDismiss,
         background = { ChatMenuBody(threadId = backdropThreadId) }
@@ -254,31 +261,17 @@ fun QaLeaveAlertScreen(onDismiss: () -> Unit, backdropThreadId: String = OVERLAY
                     Icon(Icons.Filled.WarningAmber, null, tint = colors.error)
                 }
                 Text(
-                    "호스트가 나가면\n이 모임은 종료돼요",
-                    modifier = Modifier.padding(top = 16.dp),
+                    copy.title,
+                    modifier = Modifier.padding(top = 16.dp).testTag("leave-alert-title"),
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    "승인된 4명에게 알림이 가고, 채팅방은 14일 동안 읽기 전용으로 유지된 후 사라져요.",
+                    copy.description,
                     modifier = Modifier.padding(top = 10.dp),
                     style = MaterialTheme.typography.bodyMedium,
                     color = colors.onSurfaceVariant
                 )
-                Surface(
-                    modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    color = colors.surfaceVariant
-                ) {
-                    Column(Modifier.fillMaxWidth().padding(12.dp)) {
-                        Text(
-                            "나가는 이유 (필수)",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.onSurfaceVariant
-                        )
-                        Text("일정 변동으로 어렵게 됐어요...", modifier = Modifier.padding(top = 6.dp))
-                    }
-                }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -292,10 +285,10 @@ fun QaLeaveAlertScreen(onDismiss: () -> Unit, backdropThreadId: String = OVERLAY
                     ) { Text("취소") }
                     Button(
                         onClick = onDismiss,
-                        modifier = Modifier.weight(1f).height(44.dp),
+                        modifier = Modifier.weight(1f).height(44.dp).testTag("leave-alert-confirm"),
                         shape = RoundedCornerShape(10.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = colors.error)
-                    ) { Text("모임 종료") }
+                    ) { Text(copy.confirm) }
                 }
             }
         }

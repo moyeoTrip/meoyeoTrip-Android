@@ -6,6 +6,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kr.hanchae.moyeotrip.domain.auth.SignupGateStage
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -19,8 +20,26 @@ class MoyeoApiException(val statusCode: Int, override val message: String, val e
     /** `GET /chat-rooms/{id}/companions` 는 완료 여행 전용이다 — 권한 오류가 아니라 "아직 여행 전"이다. */
     val tripNotCompleted: Boolean get() = statusCode == 409 && errorCode == TRIP_NOT_COMPLETED_CODE
 
+    /**
+     * 지도 조회(`GET /chat-rooms/map`)의 위경도·반경이 유효 범위를 벗어난 것(`400 40040`).
+     *
+     * 서버가 2026-08-30 로 `radiusKm` 상한 200km 를 넣었다(실측: 500 → 400, 120 → 200).
+     * 안드로이드는 탐색 지도가 `GYEONGBUK_RADIUS_KM = 120.0` 을 고정으로 보내 지금은 걸리지 않지만,
+     * 범위를 벗어난 요청이 조용히 빈 지도로 보이면 원인을 알 수 없다 — 오류 문구로 갈라낸다.
+     */
+    val invalidMapSearchArea: Boolean get() = statusCode == 400 && errorCode == INVALID_MAP_SEARCH_AREA_CODE
+
+    /**
+     * 가입이 아직 안 끝나 일반 API 가 막힌 것(`40902`·`40918`).
+     * 토큰 만료가 아니므로 재발급이 아니라 해당 가입 단계로 돌아가야 한다(정본 R1).
+     */
+    val signupGate: SignupGateStage? get() = SignupGateStage.ofCode(errorCode)
+
     companion object {
         const val TRIP_NOT_COMPLETED_CODE = 40915
+
+        /** `40040 INVALID_MAP_SEARCH_AREA` — 위도·경도 범위 초과와 `radiusKm` 상한 초과가 같은 코드다. */
+        const val INVALID_MAP_SEARCH_AREA_CODE = 40040
     }
 }
 
@@ -28,11 +47,15 @@ class MoyeoApiException(val statusCode: Int, override val message: String, val e
  * 보호 API 공용 HTTP 클라이언트 — HttpAuthGateway·HttpTourismContentRepository 와 같은
  * HttpURLConnection + org.json 조합을 그대로 따른다. 401이면 [refreshAccessToken] 으로
  * 한 번 재발급을 시도한 뒤 같은 요청을 다시 보낸다.
+ *
+ * [onSignupGate] 는 가입이 안 끝나 서버가 막은 경우([MoyeoApiException.signupGate])에 불린다.
+ * 이 신호를 받은 쪽이 사용자를 해당 가입 단계로 되돌린다 — 클라이언트가 요청을 되풀이할 일이 아니다.
  */
 class MoyeoApiClient(
     baseUrl: String,
     private val accessToken: () -> String?,
     private val refreshAccessToken: suspend () -> String? = { null },
+    private val onSignupGate: (SignupGateStage) -> Unit = {},
     private val connectionFactory: (URL) -> HttpURLConnection = { url ->
         url.openConnection() as HttpURLConnection
     }
@@ -53,9 +76,11 @@ class MoyeoApiClient(
     }
 
     /**
-     * `multipart/form-data` 요청. 채팅방 생성(POST /chat-rooms)만 이 형태다 —
-     * `request` 파트가 `application/json` 이고 썸네일 파트는 선택이다.
-     * 파일을 붙이지 않아도 서버는 `request` 파트만으로 201을 준다.
+     * `multipart/form-data` 요청 — JSON 파트만 보낸다.
+     *
+     * 채팅방 생성에는 더 이상 쓰지 않는다: 2026-08-26 서버 변경으로 `thumbnail` 파트가
+     * **필수**가 됐다(없으면 400 `40041` "채팅방 썸네일 이미지는 필수입니다"). 실서버로 확인했다.
+     * 채팅방 생성은 [sendMultipartJsonAndFileForObject] 를 쓴다.
      */
     suspend fun sendMultipartForObject(
         method: String,
@@ -90,6 +115,14 @@ class MoyeoApiClient(
         return try {
             execute(method, path, payload, token)
         } catch (error: MoyeoApiException) {
+            // 가입 게이트는 재발급 경로보다 **먼저** 걸러야 한다. 새 토큰을 받아도 서버는 같은 409 를 돌려주므로
+            // 401 판정에 섞이는 순간 재발급 → 409 → 재발급 무한 재시도가 된다(정본 R1).
+            // 상태 코드가 아니라 오류 코드로 본다 — 서버가 401 에 실어 보내도 여기서 멈춘다.
+            val gate = error.signupGate
+            if (gate != null) {
+                onSignupGate(gate)
+                throw error
+            }
             if (error.statusCode != 401) throw error
             val refreshed = refreshAccessToken() ?: throw error
             execute(method, path, payload, refreshed)
@@ -154,6 +187,83 @@ class MoyeoApiClient(
         return RequestPayload(
             contentType = "multipart/form-data; boundary=$boundary",
             bytes = body.toByteArray(Charsets.UTF_8)
+        )
+    }
+
+    /**
+     * JSON 파트와 파일 파트를 함께 보내는 `multipart/form-data` — 채팅방 생성이 이 형태다.
+     * 서버 스펙의 파트 이름은 `request`(application/json) 와 `thumbnail`(바이너리)이고 둘 다 필수다.
+     */
+    suspend fun sendMultipartJsonAndFileForObject(
+        method: String,
+        path: String,
+        jsonPartName: String,
+        jsonPart: JSONObject,
+        file: MultipartFile
+    ): JSONObject {
+        val text = requestWithPayload(method, path, multipartJsonAndFilePayload(jsonPartName, jsonPart, file))
+        return if (text.isBlank()) JSONObject() else JSONObject(text)
+    }
+
+    /**
+     * JSON 파트 + **여러 개**의 파일 파트 — 피드 작성(POST feeds)이 이 형태다.
+     * 서버 스펙의 파트 이름은 `request`(application/json)와 `images`(바이너리, 최대 10장)이고 둘 다 필수다.
+     */
+    suspend fun sendMultipartJsonAndFilesForObject(
+        method: String,
+        path: String,
+        jsonPartName: String,
+        jsonPart: JSONObject,
+        files: List<MultipartFile>
+    ): JSONObject {
+        val text = requestWithPayload(method, path, multipartJsonAndFilesPayload(jsonPartName, jsonPart, files))
+        return if (text.isBlank()) JSONObject() else JSONObject(text)
+    }
+
+    private fun multipartJsonAndFilesPayload(
+        jsonPartName: String,
+        jsonPart: JSONObject,
+        files: List<MultipartFile>
+    ): RequestPayload {
+        val boundary = "moyeo-${System.nanoTime()}"
+        var bytes = buildString {
+            append("--$boundary\r\n")
+            append("Content-Disposition: form-data; name=\"$jsonPartName\"\r\n")
+            append("Content-Type: application/json; charset=utf-8\r\n\r\n")
+            append(jsonPart.toString())
+            append("\r\n")
+        }.toByteArray(Charsets.UTF_8)
+        files.forEach { file ->
+            val header = buildString {
+                append("--$boundary\r\n")
+                append("Content-Disposition: form-data; name=\"${file.partName}\"; filename=\"${file.fileName}\"\r\n")
+                append("Content-Type: ${file.mimeType}\r\n\r\n")
+            }.toByteArray(Charsets.UTF_8)
+            bytes = bytes + header + file.bytes + "\r\n".toByteArray(Charsets.UTF_8)
+        }
+        bytes = bytes + "--$boundary--\r\n".toByteArray(Charsets.UTF_8)
+        return RequestPayload(contentType = "multipart/form-data; boundary=$boundary", bytes = bytes)
+    }
+
+    private fun multipartJsonAndFilePayload(
+        jsonPartName: String,
+        jsonPart: JSONObject,
+        file: MultipartFile
+    ): RequestPayload {
+        val boundary = "moyeo-${System.nanoTime()}"
+        val prologue = buildString {
+            append("--$boundary\r\n")
+            append("Content-Disposition: form-data; name=\"$jsonPartName\"\r\n")
+            append("Content-Type: application/json; charset=utf-8\r\n\r\n")
+            append(jsonPart.toString())
+            append("\r\n--$boundary\r\n")
+            append("Content-Disposition: form-data; name=\"${file.partName}\"; filename=\"${file.fileName}\"\r\n")
+            append("Content-Type: ${file.mimeType}\r\n\r\n")
+        }
+        val epilogue = "\r\n--$boundary--\r\n"
+        return RequestPayload(
+            contentType = "multipart/form-data; boundary=$boundary",
+            bytes = prologue.toByteArray(Charsets.UTF_8) + file.bytes + epilogue.toByteArray(Charsets.UTF_8)
         )
     }
 

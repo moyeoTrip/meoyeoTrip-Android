@@ -6,6 +6,7 @@ import java.net.URL
 import java.net.URLEncoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kr.hanchae.moyeotrip.domain.auth.SignupGateStage
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -62,11 +63,21 @@ interface TourismContentRepository {
     suspend fun types(): List<TourismContentTypeOption>
 }
 
-class TourismContentApiException(val statusCode: Int, message: String) : Exception(message)
+class TourismContentApiException(val statusCode: Int, message: String, val errorCode: Int? = null) :
+    Exception(message) {
+    /** 가입이 안 끝나 서버가 막은 것(409 40902·40918) — 여행지 조회 실패가 아니다(정본 R1). */
+    val signupGate: SignupGateStage? get() = SignupGateStage.ofCode(errorCode)
+}
 
+/**
+ * 방문지 검색은 TourAPI 프록시이지만 **보호 API 라 가입 완료 검사를 받는다**.
+ * 그래서 여기서도 가입 게이트를 알아채야 한다 — 못 알아채면 "여행지 요청 실패"라는
+ * 엉뚱한 오류만 뜨고 사용자는 왜 막혔는지 알 수 없다.
+ */
 class HttpTourismContentRepository(
     baseUrl: String,
     private val accessToken: () -> String?,
+    private val onSignupGate: (SignupGateStage) -> Unit = {},
     private val connectionFactory: (URL) -> HttpURLConnection = { it.openConnection() as HttpURLConnection }
 ) : TourismContentRepository {
     private val rootUrl = baseUrl.trimEnd('/')
@@ -129,8 +140,16 @@ class HttpTourismContentRepository(
             val status = connection.responseCode
             val text = connection.responseStream(status)?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (status !in 200..299) {
-                val message = runCatching { JSONObject(text).optString("errorMessage") }.getOrNull()
-                throw TourismContentApiException(status, message?.takeIf(String::isNotBlank) ?: "여행지 요청 실패 ($status)")
+                val body = runCatching { JSONObject(text) }.getOrNull()
+                val message = body?.optString("errorMessage")
+                val errorCode = body?.takeIf { it.has("code") && !it.isNull("code") }?.optInt("code")
+                val failure = TourismContentApiException(
+                    status,
+                    message?.takeIf(String::isNotBlank) ?: "여행지 요청 실패 ($status)",
+                    errorCode
+                )
+                failure.signupGate?.let(onSignupGate)
+                throw failure
             }
             text
         } finally {
@@ -141,113 +160,10 @@ class HttpTourismContentRepository(
     private fun encode(value: String): String = URLEncoder.encode(value, Charsets.UTF_8.name())
 }
 
-class FallbackTourismContentRepository(
-    private val primary: TourismContentRepository,
-    private val fallback: TourismContentRepository
-) : TourismContentRepository {
-    override suspend fun contents(keyword: String?, contentTypeId: Int?, page: Int, size: Int): TourismContentPage =
-        runCatching { primary.contents(keyword, contentTypeId, page, size) }
-            .getOrElse { fallback.contents(keyword, contentTypeId, page, size) }
-
-    override suspend fun content(contentId: String): TourismContentDetail = runCatching { primary.content(contentId) }
-        .getOrElse { fallback.content(contentId) }
-
-    override suspend fun types(): List<TourismContentTypeOption> = runCatching { primary.types() }
-        .getOrElse { fallback.types() }
-}
-
-object SampleTourismContentRepository : TourismContentRepository {
-    private val details = listOf(
-        sample("2864117", 12, "주왕산국립공원", "경상북도 청송군 부동면 공원길 226", 36.3931, 129.1728),
-        sample("2871004", 12, "주산지", "경상북도 청송군 부동면 주산지길 259", 36.3494, 129.1436),
-        sample(
-            "2299341",
-            39,
-            "달기약수터 백숙거리",
-            "경상북도 청송군 청송읍 약수길 5",
-            36.427812,
-            129.048915,
-            zipcode = "37411",
-            telephone = "054-873-7777",
-            telephoneName = "달기약수터 관리사무소",
-            homepage = "https://www.cheongsong.go.kr/tour",
-            overview = "탄산이 섞인 달기약수로 끓여내는 백숙이 유명한 거리예요. 산행 뒤 늦은 점심 자리로 많이 찾아요.",
-            menuNames = listOf("닭백숙 정식", "오리 백숙", "한방 삼계탕", "더덕구이")
-        ),
-        sample("2740882", 32, "청송 솔기온천 한옥스테이", "경상북도 청송군 청송읍 금월로 273", 36.4361, 129.0573),
-        sample("2510773", 12, "청송 객주문학관", "경상북도 청송군 진보면 청송로 6359", 36.4739, 129.0093)
-    )
-
-    override suspend fun contents(keyword: String?, contentTypeId: Int?, page: Int, size: Int): TourismContentPage {
-        // 서버 `keyword` 와 같은 규칙으로 거른다(제목·기본주소·상세주소, 앞뒤 공백 제거).
-        val term = keyword?.trim().orEmpty()
-        val filtered = details.map(TourismContentDetail::summary).filter { summary ->
-            (contentTypeId == null || summary.contentTypeId == contentTypeId) &&
-                (
-                    term.isEmpty() ||
-                        summary.title.contains(term, true) ||
-                        listOfNotNull(summary.address1, summary.address2).any { it.contains(term, true) }
-                    )
-        }
-        return TourismContentPage(
-            filtered,
-            page = 0,
-            size = filtered.size,
-            totalElements = filtered.size.toLong(),
-            totalPages = 1
-        )
-    }
-
-    override suspend fun content(contentId: String): TourismContentDetail =
-        details.firstOrNull { it.summary.contentId == contentId } ?: details[2]
-
-    /** 캡처·미로그인용 후보 — 목데이터 방문지가 쓰는 세 타입만 둔다(화면기획 17-1a 칩과 같은 순서). */
-    override suspend fun types(): List<TourismContentTypeOption> = listOf(
-        TourismContentTypeOption(12, "관광지"),
-        TourismContentTypeOption(39, "식당"),
-        TourismContentTypeOption(32, "숙박")
-    )
-
-    private fun sample(
-        contentId: String,
-        contentTypeId: Int,
-        title: String,
-        address: String,
-        latitude: Double,
-        longitude: Double,
-        zipcode: String? = null,
-        telephone: String? = null,
-        telephoneName: String? = null,
-        homepage: String? = null,
-        overview: String? = null,
-        menuNames: List<String> = emptyList()
-    ) = TourismContentDetail(
-        summary = TourismContentSummary(
-            contentId = contentId,
-            contentTypeId = contentTypeId,
-            title = title,
-            address1 = address,
-            address2 = null,
-            thumbnailUrl = null,
-            longitude = longitude,
-            latitude = latitude
-        ),
-        zipcode = zipcode,
-        telephone = telephone,
-        telephoneName = telephoneName,
-        homepage = homepage,
-        bookTour = null,
-        overview = overview,
-        contentImageUrls = emptyList(),
-        menuImageUrls = emptyList(),
-        menuNames = menuNames
-    )
-}
-
 private fun JSONObject.toSummary() = TourismContentSummary(
-    contentId = getLong("contentId").toString(),
-    contentTypeId = getInt("contentTypeId"),
-    title = getString("title"),
+    contentId = optLong("contentId").takeIf { it != 0L }?.toString() ?: optString("contentId"),
+    contentTypeId = optInt("contentTypeId"),
+    title = optString("title"),
     address1 = stringOrNull("address1"),
     address2 = stringOrNull("address2"),
     thumbnailUrl = stringOrNull("thumbnail"),
@@ -255,32 +171,17 @@ private fun JSONObject.toSummary() = TourismContentSummary(
     latitude = doubleOrNull("latitude")
 )
 
-private val ANCHOR_HREF = Regex("""href\s*=\s*["']([^"']*)["']""", RegexOption.IGNORE_CASE)
-private val HTML_TAG = Regex("<[^>]*>")
-
 /**
- * `homepage` 정리 — 서버는 `<a href="…" target="_blank" …>표시 텍스트</a>` 를 그대로 준다.
- * href 를 우선 쓰고, 없으면 태그를 벗긴 표시 텍스트를 쓴다. 둘 다 없으면 null 이라 화면에서 줄이 사라진다.
+ * `contentImages` · `menuImages` 는 `{contentId, originalImageUrl}` 객체 배열이다.
+ * URL 이 비어 있는 항목은 화면에 그릴 수 없으므로 버린다.
  */
-internal fun tourismHomepageValue(raw: String?): String? {
-    val value = raw?.trim()?.takeIf(String::isNotEmpty) ?: return null
-    ANCHOR_HREF.find(value)
-        ?.groupValues
-        ?.get(1)
-        ?.unescapeHtml()
-        ?.takeIf(String::isNotEmpty)
-        ?.let { return it }
-    return HTML_TAG.replace(value, " ").unescapeHtml().takeIf(String::isNotEmpty)
-}
+private fun JSONArray?.imageUrls(): List<String> = this
+    ?.objects { image -> image.stringOrNull("originalImageUrl") }
+    ?.filterNotNull()
+    .orEmpty()
 
-private fun String.unescapeHtml(): String = replace("&nbsp;", " ")
-    .replace("&amp;", "&")
-    .replace("&quot;", "\"")
-    .replace("&#39;", "'")
-    .replace("&lt;", "<")
-    .replace("&gt;", ">")
-    .replace(Regex("\\s+"), " ")
-    .trim()
+private fun <T> JSONArray.objects(transform: (JSONObject) -> T): List<T> =
+    List(length()) { index -> transform(getJSONObject(index)) }
 
 private fun JSONObject.stringOrNull(key: String): String? =
     if (!has(key) || isNull(key)) null else optString(key).takeIf(String::isNotBlank)
@@ -288,17 +189,29 @@ private fun JSONObject.stringOrNull(key: String): String? =
 private fun JSONObject.doubleOrNull(key: String): Double? =
     if (!has(key) || isNull(key)) null else optDouble(key).takeUnless(Double::isNaN)
 
-/** `TourismContentImageResponse` — 서버가 주는 이미지 키는 `originalImageUrl` 하나다. */
-private fun JSONArray?.imageUrls(): List<String> = this
-    .objectsOrEmpty { value -> value.stringOrNull("originalImageUrl") }
-    .filterNotNull()
-    .distinct()
-
-private fun <T> JSONArray.objects(transform: (JSONObject) -> T): List<T> =
-    List(length()) { index -> transform(getJSONObject(index)) }
-
-private fun <T> JSONArray?.objectsOrEmpty(transform: (JSONObject) -> T): List<T?> =
-    if (this == null) emptyList() else List(length()) { index -> optJSONObject(index)?.let(transform) }
-
 private fun HttpURLConnection.responseStream(statusCode: Int): InputStream? =
     if (statusCode in 200..299) inputStream else errorStream
+
+/**
+ * TourAPI 의 `homepage` 는 앵커 태그가 통째로 오는 경우가 있다
+ * (`<a href="http://..." target="_blank">http://...</a>`). 화면에 태그가 그대로 나가지 않게
+ * href(없으면 표시 텍스트)만 남긴다. 남길 게 없으면 null 이라 화면이 그 줄을 숨긴다.
+ */
+internal fun tourismHomepageValue(raw: String?): String? {
+    val value = raw?.trim().orEmpty()
+    if (value.isEmpty()) return null
+    if (!value.contains('<')) return value.unescapeHtmlAmpersand()
+    val href = Regex("""href\s*=\s*["']([^"']*)["']""", RegexOption.IGNORE_CASE)
+        .find(value)
+        ?.groupValues
+        ?.get(1)
+        ?.trim()
+        ?.takeIf(String::isNotEmpty)
+    if (href != null) return href.unescapeHtmlAmpersand()
+    return value.replace(Regex("<[^>]*>"), "")
+        .trim()
+        .takeIf(String::isNotEmpty)
+        ?.unescapeHtmlAmpersand()
+}
+
+private fun String.unescapeHtmlAmpersand(): String = replace("&amp;", "&")

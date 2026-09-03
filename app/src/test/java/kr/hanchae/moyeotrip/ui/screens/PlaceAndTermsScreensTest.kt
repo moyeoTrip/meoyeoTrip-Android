@@ -6,24 +6,19 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class PlaceAndTermsScreensTest {
-    /** 검색은 서버(`GET tourism-contents?keyword=`)가 한다 — 목록 목데이터는 자리값으로만 남는다. */
+    /** 상세를 받기 전 자리값은 **빈 카드**다 — 예시 방문지를 잠깐이라도 그리지 않는다. */
     @Test
-    fun placeholderIsOnlyUsedForPlansMockContentIds() {
-        assertEquals("달기약수터 백숙거리", TourismPlaceCatalog.placeholder("2299341").title)
-        // 목데이터에 없는 서버 방문지는 남의 목데이터가 아니라 빈 카드로 시작한다.
-        val unknown = TourismPlaceCatalog.placeholder("2017064")
-        assertEquals("", unknown.title)
-        assertEquals("", unknown.address)
-    }
+    fun placeholderStartsEmptyForEveryContentId() {
+        listOf("2299341", "2864117", "2017064").forEach { contentId ->
+            val place = emptyTourismPlace(contentId)
 
-    @Test
-    fun onlyRestaurantDetailsExposeMenus() {
-        val restaurant = TourismPlaceCatalog.placeholder("2299341")
-        val landmark = TourismPlaceCatalog.placeholder("2864117")
-
-        assertEquals(TourismContentType.Food, restaurant.type)
-        assertTrue(restaurant.menuNames.isNotEmpty())
-        assertFalse(landmark.menuNames.isNotEmpty())
+            assertEquals(contentId, place.contentId)
+            assertEquals("", place.title)
+            assertEquals("", place.address)
+            assertEquals(0.0, place.latitude, 0.0)
+            assertTrue(place.menuNames.isEmpty())
+            assertTrue(place.photoUrls.isEmpty())
+        }
     }
 
     @Test

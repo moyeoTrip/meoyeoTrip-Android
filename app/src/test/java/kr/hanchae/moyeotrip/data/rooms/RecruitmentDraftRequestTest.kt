@@ -1,7 +1,7 @@
 package kr.hanchae.moyeotrip.data.rooms
 
 import kr.hanchae.moyeotrip.data.CourseSource
-import kr.hanchae.moyeotrip.data.MockTripRepository
+import kr.hanchae.moyeotrip.data.MeetingLocation
 import kr.hanchae.moyeotrip.data.RecruitmentDraft
 import kr.hanchae.moyeotrip.data.TripScheduleType
 import org.junit.Assert.assertEquals
@@ -114,7 +114,15 @@ class RecruitmentDraftRequestTest {
         recruitmentDeadline: String = "2026.05.22 (금) 23:59",
         endDate: String? = null,
         autoApproval: Boolean = true
-    ): RecruitmentDraft = MockTripRepository.beginRecruitmentDraft("cheongsong-juwangsan").copy(
+    ): RecruitmentDraft = RecruitmentDraft(
+        id = "draft-test",
+        meetingLocation = MeetingLocation(
+            name = "청송 시외버스터미널",
+            detail = "정문 앞",
+            latitude = 36.435612,
+            longitude = 129.057214,
+            meetingTime = "07:50"
+        ),
         serverCourseId = serverCourseId,
         scheduleType = scheduleType,
         travelDate = travelDate,

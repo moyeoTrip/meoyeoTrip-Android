@@ -78,8 +78,20 @@ class InMemoryUserProfileStore : UserProfileStore {
     }
 }
 
-internal fun String.nicknameClaim(): String? = runCatching {
+internal fun String.nicknameClaim(): String? = accessTokenClaims()?.optString("nickName")?.takeIf(String::isNotBlank)
+
+/**
+ * 액세스 토큰 페이로드의 `userId` 클레임. 서버는 문자열로 싣는다.
+ *
+ * 채팅에서 "내 메시지인가"를 판정하는 근거다. 멤버 목록 응답의 `me` 플래그를 기다리면
+ * 응답이 오기 전 한 프레임 동안 내 메시지가 남의 것처럼 왼쪽에 그려진다 —
+ * 이미 가진 값을 기다리지 않는다(정본 R6).
+ */
+internal fun String.userIdClaim(): Long? =
+    accessTokenClaims()?.optString("userId")?.takeIf(String::isNotBlank)?.toLongOrNull()
+
+/** JWT 페이로드(두 번째 조각)를 JSON 으로 편다. 형식이 다르면 null — 토큰을 해석하다 앱이 죽지 않게 한다. */
+private fun String.accessTokenClaims(): JSONObject? = runCatching {
     val payload = split('.').getOrNull(1) ?: return null
-    val decoded = Base64.getUrlDecoder().decode(payload)
-    JSONObject(decoded.toString(Charsets.UTF_8)).optString("nickName").takeIf(String::isNotBlank)
+    JSONObject(Base64.getUrlDecoder().decode(payload).toString(Charsets.UTF_8))
 }.getOrNull()

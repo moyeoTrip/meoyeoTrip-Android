@@ -1,6 +1,7 @@
 package kr.hanchae.moyeotrip.ui.navigation
 
 import android.content.res.Configuration
+import android.util.Log
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateDpAsState
@@ -23,11 +24,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.windowInsetsBottomHeight
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.Groups
@@ -61,7 +64,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.navigation.NavBackStackEntry
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavGraphBuilder
+import androidx.navigation.NavHostController
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
@@ -71,10 +77,7 @@ import androidx.navigation.navArgument
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kr.hanchae.moyeotrip.data.social.DexCompanion
 import kr.hanchae.moyeotrip.BuildConfig
-import kr.hanchae.moyeotrip.data.CourseSource
-import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.auth.AuthDependencies
 import kr.hanchae.moyeotrip.data.network.AndroidNetworkMonitor
@@ -85,23 +88,34 @@ import kr.hanchae.moyeotrip.data.oss.OssLicenseCatalog
 import kr.hanchae.moyeotrip.data.settings.ThemePreference
 import kr.hanchae.moyeotrip.data.settings.ThemePreferenceStore
 import kr.hanchae.moyeotrip.data.settings.resolveDarkTheme
-import kr.hanchae.moyeotrip.data.tourism.FallbackTourismContentRepository
+import kr.hanchae.moyeotrip.data.social.DexCompanion
 import kr.hanchae.moyeotrip.data.tourism.HttpTourismContentRepository
-import kr.hanchae.moyeotrip.data.tourism.SampleTourismContentRepository
-import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
+import kr.hanchae.moyeotrip.data.tourism.TourismContentRepository
+import kr.hanchae.moyeotrip.domain.auth.SignupGateStage
 import kr.hanchae.moyeotrip.notifications.PushNavigationEvent
-import kr.hanchae.moyeotrip.ui.LocalCaptureMode
 import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.LocalCaptureMode
 import kr.hanchae.moyeotrip.ui.components.LocalMapCaptureMode
+import kr.hanchae.moyeotrip.ui.components.ServerListState
 import kr.hanchae.moyeotrip.ui.screens.AccountDeleteScreen
+import kr.hanchae.moyeotrip.ui.screens.AccountProvidersScreen
+import kr.hanchae.moyeotrip.ui.screens.ApplyCancelScreen
+import kr.hanchae.moyeotrip.ui.screens.AttachMapScreen
+import kr.hanchae.moyeotrip.ui.screens.AttachNoticeScreen
+import kr.hanchae.moyeotrip.ui.screens.AttachPhotoScreen
+import kr.hanchae.moyeotrip.ui.screens.AttachPlaceScreen
+import kr.hanchae.moyeotrip.ui.screens.AttachPollScreen
+import kr.hanchae.moyeotrip.ui.screens.AttachSettlementScreen
 import kr.hanchae.moyeotrip.ui.screens.AuthFlowScreen
 import kr.hanchae.moyeotrip.ui.screens.BlockedUsersScreen
 import kr.hanchae.moyeotrip.ui.screens.ChatAttachmentScreen
 import kr.hanchae.moyeotrip.ui.screens.ChatListScreen
 import kr.hanchae.moyeotrip.ui.screens.ChatMenuScreen
+import kr.hanchae.moyeotrip.ui.screens.ChatMenuSheet
 import kr.hanchae.moyeotrip.ui.screens.ChatRoomScreen
 import kr.hanchae.moyeotrip.ui.screens.CourseDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.CoursePublishScreen
+import kr.hanchae.moyeotrip.ui.screens.CourseRatingScreen
 import kr.hanchae.moyeotrip.ui.screens.CourseRouteScreen
 import kr.hanchae.moyeotrip.ui.screens.CreateDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.CreateMeetPointScreen
@@ -111,35 +125,43 @@ import kr.hanchae.moyeotrip.ui.screens.CreateSummaryScreen
 import kr.hanchae.moyeotrip.ui.screens.CustomCourseScreen
 import kr.hanchae.moyeotrip.ui.screens.CustomerCenterScreen
 import kr.hanchae.moyeotrip.ui.screens.ExploreScreen
+import kr.hanchae.moyeotrip.ui.screens.FavoriteRoomsScreen
 import kr.hanchae.moyeotrip.ui.screens.FeedCommentsScreen
 import kr.hanchae.moyeotrip.ui.screens.FeedDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.FeedScreen
 import kr.hanchae.moyeotrip.ui.screens.FeedWriteScreen
 import kr.hanchae.moyeotrip.ui.screens.FriendDexScreen
+import kr.hanchae.moyeotrip.ui.screens.FriendManageScreen
 import kr.hanchae.moyeotrip.ui.screens.FriendsScreen
 import kr.hanchae.moyeotrip.ui.screens.HomeScreen
 import kr.hanchae.moyeotrip.ui.screens.HostManageScreen
+import kr.hanchae.moyeotrip.ui.screens.KickHistoryScreen
 import kr.hanchae.moyeotrip.ui.screens.MeetingChatTab
+import kr.hanchae.moyeotrip.ui.screens.MeetingEditScreen
 import kr.hanchae.moyeotrip.ui.screens.MeetingsScreen
 import kr.hanchae.moyeotrip.ui.screens.MyFeedScreen
 import kr.hanchae.moyeotrip.ui.screens.MyScreen
+import kr.hanchae.moyeotrip.ui.screens.NoticeEditScreen
 import kr.hanchae.moyeotrip.ui.screens.NoticeHistoryScreen
 import kr.hanchae.moyeotrip.ui.screens.NotificationCenterScreen
 import kr.hanchae.moyeotrip.ui.screens.NotificationDetailScreen
+import kr.hanchae.moyeotrip.ui.screens.OVERLAY_BACKDROP_THREAD_ID
 import kr.hanchae.moyeotrip.ui.screens.OfflineCachedBanner
 import kr.hanchae.moyeotrip.ui.screens.OfflineNoCacheScreen
 import kr.hanchae.moyeotrip.ui.screens.OssLicenseDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.OssLicensesScreen
 import kr.hanchae.moyeotrip.ui.screens.PlaceDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.PlaceSearchScreen
-import kr.hanchae.moyeotrip.ui.screens.ProfileEditScreen
 import kr.hanchae.moyeotrip.ui.screens.ProfileCardScreen
+import kr.hanchae.moyeotrip.ui.screens.ProfileEditScreen
 import kr.hanchae.moyeotrip.ui.screens.QaComponentStatesScreen
 import kr.hanchae.moyeotrip.ui.screens.QaDesignSystemOverviewScreen
 import kr.hanchae.moyeotrip.ui.screens.QaLeaveAlertScreen
 import kr.hanchae.moyeotrip.ui.screens.RecruitmentCourseSourceScreen
 import kr.hanchae.moyeotrip.ui.screens.RemovalReasonScreen
 import kr.hanchae.moyeotrip.ui.screens.ReportScreen
+import kr.hanchae.moyeotrip.ui.screens.RoomNotificationScreen
+import kr.hanchae.moyeotrip.ui.screens.SearchResultsScreen
 import kr.hanchae.moyeotrip.ui.screens.SearchScreen
 import kr.hanchae.moyeotrip.ui.screens.SettingsScreen
 import kr.hanchae.moyeotrip.ui.screens.SpecialMessagesScreen
@@ -151,6 +173,11 @@ import kr.hanchae.moyeotrip.ui.screens.TripConfirmedScreen
 import kr.hanchae.moyeotrip.ui.screens.TripDayScreen
 import kr.hanchae.moyeotrip.ui.screens.TripDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.TripMessageScreen
+import kr.hanchae.moyeotrip.ui.screens.TripStatusScreen
+import kr.hanchae.moyeotrip.ui.screens.UnblockConfirmScreen
+import kr.hanchae.moyeotrip.ui.screens.serverRoomIdOrNull
+import kr.hanchae.moyeotrip.ui.state.LocalTabDataStore
+import kr.hanchae.moyeotrip.ui.state.TabDataStore
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTripTheme
 
 private data class BottomDestination(val tab: BottomTab, val icon: ImageVector) {
@@ -179,46 +206,51 @@ private const val STARTUP_SPLASH_HOLD_MILLIS = 1_150L
 private const val STARTUP_SPLASH_TRANSITION_MILLIS = 420
 
 /**
+ * 캡처 라우트가 넘긴 식별자를 피드 화면이 아는 형태로 바꾼다.
+ *
+ * 숫자면 실서버 피드 ID 다 — 화면은 `srv-{id}` 접두사로만 실서버 상세를 연다.
+ * 그 밖의 값(목 ID)은 그대로 둔다.
+ */
+internal fun serverFeedRoute(identifier: String?): String? {
+    val value = identifier?.trim().orEmpty()
+    if (value.isEmpty()) return null
+    return if (value.toLongOrNull() != null) "srv-$value" else value
+}
+
+/**
  * 실서버 의존성(`LocalServerData`)을 만들지 판정한다.
  *
- * 목 캡처 라우트(`moyeo_screen` 단독)와 인증 우회 실행은 네트워크를 타지 않는다.
- * 라이브 캡처(`moyeo_live_data`)는 **그 차단만** 푼다 — 데모 빌드는 서버가 없으니 그대로 막는다.
+ * 캡처 라우트(`moyeo_screen` 단독)와 인증 우회 실행은 네트워크를 타지 않는다.
+ * 라이브 캡처(`moyeo_live_data`)는 **그 차단만** 푼다.
  */
-internal fun injectsServerData(
-    startScreen: String?,
-    skipAuthentication: Boolean,
-    liveCapture: Boolean,
-    demoMode: Boolean
-): Boolean {
-    if (demoMode) return false
+internal fun injectsServerData(startScreen: String?, skipAuthentication: Boolean, liveCapture: Boolean): Boolean {
     if (liveCapture) return true
     return startScreen == null && !skipAuthentication
 }
 
 /**
- * 기기 상태(최근 검색어)·실제 빌드 버전 대신 화면기획 목데이터를 그릴지.
- * 라이브 캡처는 실데이터를 보러 찍는 것이므로 목데이터 치환을 끈다.
- */
-internal fun usesPlanningMockData(captureMode: Boolean, liveCapture: Boolean): Boolean = captureMode && !liveCapture
-
-/**
- * 35·36·37 의 강제 오프라인 플래그는 목 캡처용으로 남겨 두고, 라이브 캡처에서는
- * 실제 차단(`adb shell svc wifi disable` · `svc data disable`) 결과를 그대로 그린다.
+ * 35·36·37 의 강제 오프라인 플래그(`moyeo_screen=offline|offlineCached|offlineChat`)는
+ * **라이브 캡처에서도** 그대로 이긴다.
+ *
+ * 예전에는 라이브 캡처에서 이 플래그를 버리고 실제 연결 상태만 따랐다. 그런데 라이브 캡처는
+ * 서버를 타야 하므로 네트워크를 켠 채 돌린다 — 그래서 35·36 자리에 오프라인 표시가 없는
+ * **홈 화면**이 찍혀 그대로 PDF 에 실렸다. iOS 도 `UITEST_OFFLINE_EMPTY`·`UITEST_OFFLINE_CACHED`
+ * 를 라이브 여부와 무관하게 적용한다 — 세 플랫폼이 같은 화면을 찍어야 한다.
+ *
+ * 플래그가 없는 실행에서는 예전과 같이 실제 연결 상태를 그린다.
  */
 internal fun resolveNetworkExperience(
     forcedOverride: OfflineExperience?,
-    liveCapture: Boolean,
     detectedOnline: Boolean,
     hasCachedContent: Boolean
-): OfflineExperience = forcedOverride.takeIf { !liveCapture }
-    ?: offlineExperience(detectedOnline, hasCachedContent)
+): OfflineExperience = forcedOverride ?: offlineExperience(detectedOnline, hasCachedContent)
 
 @Composable
 fun MoyeoTripApp(
     startScreen: String? = null,
     /**
      * 라이브 캡처(`moyeo_live_data`, 디버그 전용). 캡처 라우팅은 그대로 두고 **데이터 차단만** 푼다.
-     * false 면 기존 목 캡처 경로와 100% 동일하다.
+     * false 면 기존 캡처 경로와 100% 동일하다.
      */
     liveData: Boolean = false,
     pushNavigationEvent: PushNavigationEvent? = null,
@@ -260,13 +292,14 @@ fun MoyeoTripApp(
         val context = LocalContext.current
         CompositionLocalProvider(
             LocalDensity provides Density(currentDensity.density, fontScale = 1f),
-            // QA 캡처(moyeo_screen)로 들어온 실행에서는 실지도 대신 목업 지도를 그린다 — 타일 로딩이
-            // 비결정적이라 번호별 비교 캡처가 깨진다.
-            // 라이브 캡처에서도 목업 지도를 유지한다 — 타일이 비결정적이고 x86_64 는 SDK 미지원이다.
-            LocalMapCaptureMode provides captureMode,
-            // 저장된 최근 검색어·테마 설정·실제 빌드 버전 대신 화면기획 목데이터를 보여줘야 하는지.
-            // 라이브 캡처는 실데이터를 보러 찍는 것이므로 목데이터 치환을 끈다.
-            LocalCaptureMode provides usesPlanningMockData(captureMode, liveCapture)
+            // 캡처(moyeo_screen)에서는 실지도를 만들지 않는다 — 타일 로딩이 비결정적이라
+            // 번호별 비교 캡처가 깨진다. 그때는 지도 자리에 "표시할 수 없음"만 남는다.
+            //
+            // **라이브 캡처는 예외다.** 실데이터를 보려고 찍는 캡처에서 지도가 비면
+            // "지도가 되는지"를 확인할 수 없다.
+            LocalMapCaptureMode provides (captureMode && !liveCapture),
+            // 라이브 캡처에서도 움직임은 멈춘다.
+            LocalCaptureMode provides captureMode
         ) {
             var showStartupSplash by remember { mutableStateOf(!skipStartupSplash) }
             val qaStartRequest = remember(startScreen) { QaStartRequest.parse(startScreen) }
@@ -281,38 +314,19 @@ fun MoyeoTripApp(
             }
             val networkExperience = resolveNetworkExperience(
                 forcedOverride = qaStartRequest.offlineExperienceOverride,
-                liveCapture = liveCapture,
                 detectedOnline = detectedOnline,
                 hasCachedContent = cacheStore.hasCachedContent
             )
             val isOnline = networkExperience == OfflineExperience.Online
             val authDependencies = remember(context) { AuthDependencies.appDefault(context) }
-            val tourismRepository = remember(authDependencies, startScreen, liveCapture) {
-                if (startScreen != null && !liveCapture) {
-                    SampleTourismContentRepository
-                } else {
-                    FallbackTourismContentRepository(
-                        primary = HttpTourismContentRepository(
-                            baseUrl = BuildConfig.AUTH_API_BASE_URL,
-                            accessToken = { authDependencies.sessionStore.current.accessToken }
-                        ),
-                        fallback = SampleTourismContentRepository
-                    )
-                }
-            }
             val appScope = rememberCoroutineScope()
             val storedUserProfile by authDependencies.userProfileStore.profile.collectAsState()
             // 프로필 카드(25)가 누구의 카드인지. 도감에서 눌러 들어오면 그 동행자 정보를 그대로 넘겨
             // 카드 앞면의 '나와 N회 동행'과 뒷면의 '함께한 여행'을 추가 호출 없이 채운다.
             var profileCardTarget by remember { mutableStateOf<DexCompanion?>(null) }
-            // 목 캡처는 기기에 저장된 표시용 프로필(닉네임·프로필 사진)을 읽지 않는다.
-            // 로그인 실행이나 라이브 캡처가 남긴 값이 25·26·28 번호별 비교 캡처를 오염시킨다
-            // (docs/alignment/클라이언트-전용-기능.md §5 "캡처 모드에서는 기기 상태를 쓰지 않는다").
-            val userProfile = if (usesPlanningMockData(captureMode, liveCapture)) {
-                UserDisplayProfile()
-            } else {
-                storedUserProfile
-            }
+            // 표시용 프로필은 캡처에서도 기기에 저장된 실제 값이다 —
+            // 캡처 전용으로 빈 프로필을 끼워 넣으면 캡처가 실제 화면과 달라진다.
+            val userProfile = storedUserProfile
             val bypassAuthentication = skipAuthentication || startScreen != null
             var authenticationComplete by remember(authDependencies) {
                 // 라이브 캡처는 인증 UI 를 거치지 않으므로 이미 심어진 세션을 로그인 완료로 본다
@@ -320,10 +334,26 @@ fun MoyeoTripApp(
                 val liveSessionReady = liveCapture && authDependencies.sessionStore.current.accessToken != null
                 mutableStateOf(qaSessionInjected || liveSessionReady)
             }
-            // 목 캡처 라우트(startScreen)·데모 모드에서는 아예 만들지 않는다 — 네트워크 회귀 금지.
-            // 라이브 캡처는 이 차단만 푼다(라우팅·강제 테마·목업 지도는 캡처와 동일).
+            // 서버가 "가입이 아직 안 끝났다"(409 40902·40918)고 막으면 토큰을 다시 받아봐야 소용없다.
+            // 세션 자체는 유효하므로 지우지 않고 가입 플로우를 다시 연다 —
+            // 어느 단계로 갈지는 AuthFlowScreen 의 restoreSession 이 서버 signupState 로 정한다(정본 R3).
+            val returnToSignup: (SignupGateStage) -> Unit = { stage ->
+                Log.i("MoyeoAuth", "가입 미완료로 일반 API 차단 (${stage.name}) — 가입 단계로 복귀")
+                authenticationComplete = false
+            }
+            // 방문지 검색은 캡처에서도 실서버(TourAPI 프록시)를 그대로 탄다 —
+            // 캡처 전용 예시 방문지를 끼워 넣으면 "검색이 되는지"를 확인할 수 없다.
+            val tourismRepository = remember(authDependencies) {
+                HttpTourismContentRepository(
+                    baseUrl = BuildConfig.AUTH_API_BASE_URL,
+                    accessToken = { authDependencies.sessionStore.current.accessToken },
+                    onSignupGate = { stage -> returnToSignup(stage) }
+                )
+            }
+            // 캡처 라우트(startScreen)와 인증 우회 실행에서는 아예 만들지 않는다 — 네트워크 회귀 금지.
+            // 라이브 캡처는 이 차단만 푼다(라우팅·강제 테마는 캡처와 동일).
             val serverDataDependencies = remember(authDependencies, startScreen, liveCapture) {
-                if (!injectsServerData(startScreen, skipAuthentication, liveCapture, BuildConfig.AUTH_DEMO_MODE)) {
+                if (!injectsServerData(startScreen, skipAuthentication, liveCapture)) {
                     null
                 } else {
                     ServerDataDependencies.create(
@@ -341,9 +371,17 @@ fun MoyeoTripApp(
                                     .getOrNull()
                                     ?.accessToken
                             }
-                        }
+                        },
+                        onSignupGate = returnToSignup
                     )
                 }
+            }
+            // 탭 데이터는 탭 화면 바깥(여기)에 둔다 — 탭을 오갈 때마다 재조회하지 않기 위해서다(정본 R1).
+            val tabDataStore = remember(authDependencies) { TabDataStore() }
+            LaunchedEffect(tabDataStore, authenticationComplete) {
+                // 로그아웃·계정 전환·가입 게이트 복귀에서 보관소를 비운다 —
+                // 다른 사용자의 목록이 남아 있으면 안 된다(정본 R4).
+                if (!authenticationComplete) tabDataStore.clear()
             }
             LaunchedEffect(authDependencies, authenticationComplete) {
                 if (authenticationComplete) {
@@ -425,7 +463,8 @@ fun MoyeoTripApp(
             }
 
             CompositionLocalProvider(
-                LocalServerData provides serverDataDependencies?.takeIf { authenticationComplete }
+                LocalServerData provides serverDataDependencies?.takeIf { authenticationComplete },
+                LocalTabDataStore provides tabDataStore
             ) {
                 Box(modifier = Modifier.fillMaxSize()) {
                     Scaffold(
@@ -493,25 +532,18 @@ fun MoyeoTripApp(
                             }
                             composable(AppRoutes.MEETINGS) {
                                 MeetingsScreen(
-                                    onOpenRoom = {
-                                        navController.navigate(
-                                            if (it ==
-                                                "chat-cheongsong-juwangsan"
-                                            ) {
-                                                AppRoutes.tripDay(it)
-                                            } else {
-                                                AppRoutes.chatRoom(it)
-                                            }
-                                        )
-                                    },
+                                    onOpenRoom = { navController.navigate(AppRoutes.chatRoom(it)) },
                                     onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
-                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) }
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.specialMessages()) },
+                                    onOpenApplyCancel = { navController.navigate(AppRoutes.applyCancel(it)) }
                                 )
                             }
                             composable(AppRoutes.MEETINGS_APPLIED) {
                                 MeetingsScreen(
                                     onOpenRoom = { navController.navigate(AppRoutes.chatRoom(it)) },
                                     onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.specialMessages()) },
+                                    onOpenApplyCancel = { navController.navigate(AppRoutes.applyCancel(it)) },
                                     initialTab = MeetingChatTab.Applied
                                 )
                             }
@@ -525,7 +557,6 @@ fun MoyeoTripApp(
                                 MyScreen(
                                     userProfile = userProfile,
                                     onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
-                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
                                     // 내 카드로는 열지 못한다 — GET /users/me/profile 응답에 userId 가 없어
                                     // 공개 프로필 API 를 내 계정으로 호출할 수 없다(BE 에 요청함).
                                     // 그래서 내 프로필 요약은 28 프로필 수정으로 보낸다.
@@ -535,7 +566,7 @@ fun MoyeoTripApp(
                                     onOpenSettings = { navController.navigate(AppRoutes.SETTINGS) },
                                     onOpenCustomerCenter = { navController.navigate(AppRoutes.CUSTOMER_CENTER) },
                                     onOpenFriends = { navController.navigate(AppRoutes.FRIENDS) },
-                                    onOpenCoursePublish = { navController.navigate(AppRoutes.COURSE_PUBLISH) }
+                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) }
                                 )
                             }
                             composable(AppRoutes.PROFILE) {
@@ -593,6 +624,8 @@ fun MoyeoTripApp(
                                         navController.navigate(AppRoutes.NOTIFICATION_DETAIL)
                                     },
                                     onOpenBlockedUsers = { navController.navigate(AppRoutes.BLOCKED_USERS) },
+                                    onOpenAccountProviders = { navController.navigate(AppRoutes.ACCOUNT_PROVIDERS) },
+                                    onOpenKickHistory = { navController.navigate(AppRoutes.KICK_HISTORY) },
                                     onOpenAccountDelete = { navController.navigate(AppRoutes.ACCOUNT_DELETE) },
                                     onOpenTerms = { document ->
                                         navController.navigate(AppRoutes.termsDetail(document, "settings"))
@@ -606,6 +639,13 @@ fun MoyeoTripApp(
                                             launchSingleTop = true
                                         }
                                     }
+                                )
+                            }
+                            // 29-5 계정 연결 (정본 §6-1) — 설정 `로그인 방식 › 관리` 가 여기로 온다
+                            composable(AppRoutes.ACCOUNT_PROVIDERS) {
+                                AccountProvidersScreen(
+                                    accountService = authDependencies.accountService,
+                                    onBack = { navController.popBackStack() }
                                 )
                             }
                             composable(AppRoutes.CUSTOMER_CENTER) {
@@ -629,8 +669,8 @@ fun MoyeoTripApp(
                                 CourseDetailScreen(
                                     courseId = entry.arguments?.getString("courseId").orEmpty(),
                                     onBack = { navController.popBackStack() },
-                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
-                                    onCreateRecruitment = { navController.navigate(AppRoutes.createRecruitment(it)) }
+                                    onCreateRecruitment = { navController.navigate(AppRoutes.createRecruitment(it)) },
+                                    onOpenRoom = { navController.navigate(AppRoutes.tripDetail(it)) }
                                 )
                             }
                             composable(AppRoutes.TRIP_DETAIL) { entry ->
@@ -648,7 +688,9 @@ fun MoyeoTripApp(
                                         navController.navigate(
                                             AppRoutes.feedComments(entry.arguments?.getString("postId").orEmpty())
                                         )
-                                    }
+                                    },
+                                    // 30-2 피드 신고 — 서버가 접수하는 유일한 신고다(정본 §2)
+                                    onOpenReport = { navController.navigate(AppRoutes.report(it)) }
                                 )
                             }
                             composable(AppRoutes.CHAT_LIST) {
@@ -676,10 +718,22 @@ fun MoyeoTripApp(
                                     }
                                 )
                             }
-                            composable(AppRoutes.SPECIAL_MESSAGES) {
+                            composable(
+                                route = AppRoutes.SPECIAL_MESSAGES,
+                                arguments = listOf(
+                                    navArgument("threadId") {
+                                        type = NavType.StringType
+                                        nullable = true
+                                        defaultValue = null
+                                    }
+                                )
+                            ) { entry ->
+                                // 방을 지정해 들어오면(`msgs:room-121`) 그 방의 특수 메시지만 그린다.
                                 SpecialMessagesScreen(
+                                    threadId = entry.arguments?.getString("threadId"),
                                     onBack = { navController.popBackStack() },
-                                    onOpenTripConfirmed = { navController.navigate(AppRoutes.TRIP_CONFIRMED) }
+                                    onOpenTripConfirmed = { navController.navigate(AppRoutes.tripConfirmed()) },
+                                    onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) }
                                 )
                             }
                             composable(AppRoutes.NOTIFICATIONS) {
@@ -688,7 +742,7 @@ fun MoyeoTripApp(
                                     onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
                                     onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) },
                                     onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
-                                    onOpenTripConfirmed = { navController.navigate(AppRoutes.TRIP_CONFIRMED) },
+                                    onOpenTripConfirmed = { navController.navigate(AppRoutes.tripConfirmed()) },
                                     onOpenTripMessage = { navController.navigate(AppRoutes.TRIP_MESSAGE) },
                                     onOpenRemovalReason = { notificationId ->
                                         navController.navigate(AppRoutes.removalReason(notificationId))
@@ -763,9 +817,19 @@ fun MoyeoTripApp(
                                     onContinue = { navController.navigate(AppRoutes.createMeetPoint(it)) }
                                 )
                             }
-                            composable(AppRoutes.CREATE_PEOPLE) { entry ->
+                            composable(
+                                route = AppRoutes.CREATE_PEOPLE,
+                                arguments = listOf(
+                                    navArgument("capacity") {
+                                        type = NavType.IntType
+                                        // 0 = 지정 없음. 17-4a/17-4b 캡처만 4·10 을 넘긴다.
+                                        defaultValue = 0
+                                    }
+                                )
+                            ) { entry ->
                                 CreatePeopleScreen(
                                     draftId = entry.arguments?.getString("draftId").orEmpty(),
+                                    initialCapacity = entry.arguments?.getInt("capacity")?.takeIf { it > 0 },
                                     onBack = { navController.popBackStack() },
                                     onContinue = { navController.navigate(AppRoutes.createDetail(it)) }
                                 )
@@ -788,14 +852,9 @@ fun MoyeoTripApp(
                                 CreateSummaryScreen(
                                     draftId = entry.arguments?.getString("draftId").orEmpty(),
                                     onBack = { navController.popBackStack() },
-                                    onCreated = { trip ->
-                                        navController.navigate(AppRoutes.hostManage(trip.id)) {
-                                            popUpTo(AppRoutes.CREATE_RECRUITMENT) { inclusive = true }
-                                        }
-                                    },
-                                    // 실서버에 만든 방은 roomId 로 15 모집 상세를 연다 (18 모집 관리는 목데이터 전용 화면이다)
+                                    // 방을 만들면 호스트는 18 모집 관리(신청 승인)로 들어간다
                                     onCreatedRoom = { roomId ->
-                                        navController.navigate(AppRoutes.tripDetail("room-$roomId")) {
+                                        navController.navigate(AppRoutes.hostManage("room-$roomId")) {
                                             popUpTo(AppRoutes.CREATE_RECRUITMENT) { inclusive = true }
                                         }
                                     }
@@ -805,14 +864,22 @@ fun MoyeoTripApp(
                                 CourseRouteScreen(
                                     tripId = entry.arguments?.getString("tripId").orEmpty(),
                                     onBack = { navController.popBackStack() },
-                                    onOpenMeetingPoint = {},
+                                    // 「집합 정보 수정」 — 18-2 (PUT chat-rooms/{id}/meeting-info).
+                                    // 생성 플로우의 17-3 이 아니다. 빈 람다라 눌러도 아무 일이 없었다.
+                                    onOpenMeetingPoint = { navController.navigate(AppRoutes.meetingEdit(it)) },
                                     onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) }
                                 )
                             }
                             composable(AppRoutes.NOTICE_HISTORY) { entry ->
                                 NoticeHistoryScreen(
                                     tripId = entry.arguments?.getString("tripId").orEmpty(),
-                                    onBack = { navController.popBackStack() }
+                                    onBack = { navController.popBackStack() },
+                                    // 20-3 하단 CTA 는 20-2f 공지 작성 화면으로 간다 (정본 §1)
+                                    onOpenComposer = { navController.navigate(AppRoutes.attachNotice(it)) },
+                                    // 20-3a 공지 수정 · 삭제 (정본 §6-1)
+                                    onOpenNoticeEdit = { trip, noticeId ->
+                                        navController.navigate(AppRoutes.noticeEdit(trip, noticeId))
+                                    }
                                 )
                             }
                             composable(
@@ -823,7 +890,10 @@ fun MoyeoTripApp(
                                     tripId = entry.arguments?.getString("tripId").orEmpty(),
                                     onBack = { navController.popBackStack() },
                                     onOpenChat = { navController.navigate(AppRoutes.chatRoom(it)) },
-                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
+                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                    // 18-1 · 18-2 (정본 §6-1)
+                                    onOpenTripStatus = { navController.navigate(AppRoutes.tripStatus(it)) },
+                                    onOpenMeetingEdit = { navController.navigate(AppRoutes.meetingEdit(it)) }
                                 )
                             }
                             composable(
@@ -832,11 +902,13 @@ fun MoyeoTripApp(
                                     navArgument("step") {
                                         type = NavType.IntType
                                         defaultValue = 1
-                                    }
+                                    },
+                                    optionalArgument("roomId")
                                 )
                             ) { entry ->
                                 FeedWriteScreen(
                                     initialStep = entry.arguments?.getInt("step") ?: 1,
+                                    requestedRoomId = entry.arguments?.getString("roomId")?.toLongOrNull(),
                                     onBack = { navController.popBackStack() },
                                     onPostCreated = { postId ->
                                         navController.navigate(AppRoutes.feedDetail(postId)) {
@@ -851,31 +923,49 @@ fun MoyeoTripApp(
                             composable(AppRoutes.SEARCH) {
                                 SearchScreen(
                                     onBack = { navController.popBackStack() },
-                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail(it)) },
-                                    initialQuery = if (startScreen?.substringBefore(":") == "search") {
-                                        "경주 단풍"
-                                    } else {
-                                        ""
-                                    }
+                                    onOpenRoom = { navController.navigate(AppRoutes.tripDetail("room-$it")) },
+                                    // 12-1 검색 결과 — 검색어를 확정하면 코스·모집 탭을 가진 결과 화면으로 간다
+                                    onSubmitQuery = { navController.navigate(AppRoutes.searchResults(it)) }
                                 )
                             }
-                            composable(AppRoutes.TRIP_CONFIRMED) {
-                                TripConfirmedScreen(
-                                    onBack = { navController.popBackStack() },
-                                    onOpenChat = {
-                                        navController.navigate(AppRoutes.tripDay("chat-cheongsong-juwangsan"))
+                            composable(
+                                route = AppRoutes.SEARCH_RESULTS,
+                                arguments = listOf(
+                                    navArgument("keyword") {
+                                        type = NavType.StringType
+                                        nullable = true
+                                        defaultValue = null
                                     }
+                                )
+                            ) { entry ->
+                                SearchResultsScreen(
+                                    keyword = entry.arguments?.getString("keyword").orEmpty(),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenCourse = { navController.navigate(AppRoutes.courseDetail("srv-$it")) },
+                                    onOpenRoom = { navController.navigate(AppRoutes.tripDetail("room-$it")) }
+                                )
+                            }
+                            composable(
+                                AppRoutes.TRIP_CONFIRMED,
+                                listOf(optionalArgument("tripId"))
+                            ) { entry ->
+                                TripConfirmedScreen(
+                                    tripId = entry.arguments?.getString("tripId"),
+                                    onBack = { navController.popBackStack() },
+                                    onOpenChat = { roomId -> navController.navigate(AppRoutes.tripDay("room-$roomId")) }
                                 )
                             }
                             composable(AppRoutes.CHAT_MENU) { entry ->
+                                // 신고 시트는 배경에 이 방을 깔아야 한다 — 안 넘기면 배경이 빈 상태로 남는다.
+                                val chatMenuThreadId = entry.arguments?.getString("threadId").orEmpty()
                                 ChatMenuScreen(
-                                    threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                    threadId = chatMenuThreadId,
                                     onBack = { navController.popBackStack() },
-                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
-                                    onOpenNotificationSettings = {
-                                        navController.navigate(AppRoutes.NOTIFICATION_DETAIL)
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.specialMessages()) },
+                                    // 20-1c — "이 모임의 알림만 끄기" 가 전역 방해금지 화면으로 갔었다 (정본 §6-1)
+                                    onOpenNotificationSettings = { threadId ->
+                                        navController.navigate(AppRoutes.roomNotification(threadId))
                                     },
-                                    onOpenReport = { navController.navigate(AppRoutes.REPORT) },
                                     onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
                                     onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
                                 )
@@ -890,19 +980,29 @@ fun MoyeoTripApp(
                                     }
                                 )
                             ) { entry ->
-                                // 캡처 라우트는 threadId 없이 들어온다 — 배경·동작 모두 기존 목데이터 방이다
+                                // 캡처 라우트는 threadId 없이 들어온다 — 그때는 배경 채팅방이 빈 상태다
                                 val attachThreadId = entry.arguments?.getString("threadId")
                                 ChatAttachmentScreen(
                                     onBack = { navController.popBackStack() },
-                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
                                     isOnline = isOnline,
-                                    threadId = attachThreadId
+                                    threadId = attachThreadId,
+                                    // 20-2 타일 6개는 각자의 작성 화면으로 간다 (ATTACH-COMPOSER-CANON §0).
+                                    // 예전에는 여섯 개 전부 21 특수 메시지 견본으로 갔다.
+                                    onOpenComposer = { route -> navController.navigate(route) }
                                 )
                             }
+                            attachComposerDestinations(navController, tourismRepository)
+                            gapDestinations(navController)
                             composable(AppRoutes.FRIENDS) {
                                 FriendsScreen(
                                     onBack = { navController.popBackStack() },
-                                    onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) }
+                                    onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) },
+                                    // 27-2a 친구 정리 (정본 §6-5)
+                                    onOpenFriendManage = { userId, nickname, subtitle ->
+                                        navController.navigate(
+                                            AppRoutes.friendManage(userId, nickname, subtitle)
+                                        )
+                                    }
                                 )
                             }
                             composable(AppRoutes.TRIP_MESSAGE) {
@@ -910,21 +1010,32 @@ fun MoyeoTripApp(
                                     onBack = { navController.popBackStack() },
                                     onOpenFeedWrite = { navController.navigate(AppRoutes.feedWrite()) },
                                     onOpenCoursePublish = { navController.navigate(AppRoutes.COURSE_PUBLISH) },
-                                    onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) }
+                                    onOpenDex = { navController.navigate(AppRoutes.FRIEND_DEX) },
+                                    // 27-4 코스 평가 — 27-1 이 유일한 진입점이다 (정본 §6-4)
+                                    onOpenCourseRating = { navController.navigate(AppRoutes.courseRating(it)) }
                                 )
                             }
-                            composable(AppRoutes.REPORT) {
-                                ReportScreen(onBack = { navController.popBackStack() })
+                            composable(AppRoutes.REPORT, listOf(optionalArgument("feedId"))) { entry ->
+                                // 30-2 는 피드 전용이다 — 대상 피드를 안 넘기면 신고할 것이 없다(정본 §2).
+                                ReportScreen(
+                                    onBack = { navController.popBackStack() },
+                                    feedId = entry.arguments?.getString("feedId")?.toLongOrNull()
+                                )
                             }
                             composable(AppRoutes.BLOCKED_USERS) {
-                                BlockedUsersScreen(onBack = { navController.popBackStack() })
+                                BlockedUsersScreen(
+                                    onBack = { navController.popBackStack() },
+                                    // 29-1a — 차단 해제는 되돌리기 어려운 행동이라 확인을 먼저 지난다
+                                    onOpenUnblockConfirm = { userId, nickname ->
+                                        navController.navigate(AppRoutes.unblockConfirm(userId, nickname))
+                                    }
+                                )
                             }
                             composable(AppRoutes.COURSE_PUBLISH) {
                                 CoursePublishScreen(
                                     onBack = { navController.popBackStack() },
-                                    onPublished = {
-                                        navController.navigate(AppRoutes.courseDetail("cheongsong-juwangsan"))
-                                    }
+                                    // 공개 등록 API 가 아직 없다 — 목록으로 돌아가는 것까지만 한다(§4 BE 요청)
+                                    onPublished = { navController.popBackStack() }
                                 )
                             }
                             composable(AppRoutes.TRIP_DAY) { entry ->
@@ -933,13 +1044,8 @@ fun MoyeoTripApp(
                                     threadId = threadId,
                                     onBack = { navController.popBackStack() },
                                     onOpenMenu = { navController.navigate(AppRoutes.chatMenu(threadId)) },
-                                    onOpenAttachment = {
-                                        navController.navigate(AppRoutes.chatAttach(threadId))
-                                    },
-                                    onOpenRoute = {
-                                        val tripId = MockTripRepository.findThread(threadId).tripId
-                                        if (tripId != null) navController.navigate(AppRoutes.courseRoute(tripId))
-                                    }
+                                    onOpenAttachment = { navController.navigate(AppRoutes.chatAttach(threadId)) },
+                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(threadId)) }
                                 )
                             }
                             composable(AppRoutes.NOTIFICATION_DETAIL) {
@@ -985,8 +1091,21 @@ fun MoyeoTripApp(
                             composable(AppRoutes.QA_SPLASH) { StartupSplashScreen() }
                             composable(AppRoutes.QA_DESIGN_SYSTEM) { QaDesignSystemOverviewScreen() }
                             composable(AppRoutes.QA_STATES) { QaComponentStatesScreen() }
-                            composable(AppRoutes.QA_LEAVE) {
-                                QaLeaveAlertScreen(onDismiss = { navController.popBackStack() })
+                            composable(AppRoutes.QA_LEAVE, listOf(optionalArgument("threadId"))) { entry ->
+                                QaLeaveAlertScreen(
+                                    onDismiss = { navController.popBackStack() },
+                                    backdropThreadId = entry.arguments?.getString("threadId")
+                                        ?: OVERLAY_BACKDROP_THREAD_ID
+                                )
+                            }
+                            // 31-1 — 같은 화면을 참가자 역할로 연다. 문구와 확인 버튼이 달라진다.
+                            composable(AppRoutes.QA_LEAVE_MEMBER, listOf(optionalArgument("threadId"))) { entry ->
+                                QaLeaveAlertScreen(
+                                    onDismiss = { navController.popBackStack() },
+                                    backdropThreadId = entry.arguments?.getString("threadId")
+                                        ?: OVERLAY_BACKDROP_THREAD_ID,
+                                    host = false
+                                )
                             }
                             composable(AppRoutes.QA_APPLY) { entry ->
                                 TripDetailScreen(
@@ -996,32 +1115,36 @@ fun MoyeoTripApp(
                                     showApplicationSheetInitially = true
                                 )
                             }
+                            // 20-1a 멤버 액션 — 20-1 목록 위에 액션 시트가 열린 상태로 시작한다
                             composable(AppRoutes.QA_MEMBER_ACTIONS) { entry ->
+                                // 신고 시트는 배경에 이 방을 깔아야 한다 — 안 넘기면 배경이 빈 상태로 남는다.
+                                val chatMenuThreadId = entry.arguments?.getString("threadId").orEmpty()
                                 ChatMenuScreen(
-                                    threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                    threadId = chatMenuThreadId,
                                     onBack = { navController.popBackStack() },
-                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
-                                    onOpenNotificationSettings = {
-                                        navController.navigate(AppRoutes.NOTIFICATION_DETAIL)
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.specialMessages()) },
+                                    onOpenNotificationSettings = { threadId ->
+                                        navController.navigate(AppRoutes.roomNotification(threadId))
                                     },
-                                    onOpenReport = { navController.navigate(AppRoutes.REPORT) },
                                     onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
                                     onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
-                                    showActionsSheetInitially = true
+                                    initialSheet = ChatMenuSheet.MemberActions
                                 )
                             }
+                            // 20-1b 내보내기 사유 — 시트가 열린 상태로 시작한다
                             composable(AppRoutes.QA_MEMBER_REMOVE) { entry ->
+                                // 신고 시트는 배경에 이 방을 깔아야 한다 — 안 넘기면 배경이 빈 상태로 남는다.
+                                val chatMenuThreadId = entry.arguments?.getString("threadId").orEmpty()
                                 ChatMenuScreen(
-                                    threadId = entry.arguments?.getString("threadId").orEmpty(),
+                                    threadId = chatMenuThreadId,
                                     onBack = { navController.popBackStack() },
-                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.SPECIAL_MESSAGES) },
-                                    onOpenNotificationSettings = {
-                                        navController.navigate(AppRoutes.NOTIFICATION_DETAIL)
+                                    onOpenSpecialMessages = { navController.navigate(AppRoutes.specialMessages()) },
+                                    onOpenNotificationSettings = { threadId ->
+                                        navController.navigate(AppRoutes.roomNotification(threadId))
                                     },
-                                    onOpenReport = { navController.navigate(AppRoutes.REPORT) },
                                     onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
                                     onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
-                                    showRemoveSheetInitially = true
+                                    initialSheet = ChatMenuSheet.MemberRemove
                                 )
                             }
                             composable(AppRoutes.QA_PROFILE_TASTE_EDIT) {
@@ -1038,9 +1161,8 @@ fun MoyeoTripApp(
                                 )
                             }
                             composable(AppRoutes.MOCK_AUTH) {
-                                val mockAuthDependencies = remember { AuthDependencies.demo() }
                                 AuthFlowScreen(
-                                    providedDependencies = mockAuthDependencies,
+                                    providedDependencies = authDependencies,
                                     onExit = { navController.popBackStack() },
                                     onComplete = {
                                         navController.navigate(AppRoutes.HOME) {
@@ -1051,9 +1173,8 @@ fun MoyeoTripApp(
                                 )
                             }
                             composable(AppRoutes.MOCK_AUTH_STEP) { entry ->
-                                val mockAuthDependencies = remember { AuthDependencies.demo() }
                                 AuthFlowScreen(
-                                    providedDependencies = mockAuthDependencies,
+                                    providedDependencies = authDependencies,
                                     initialStepKey = entry.arguments?.getString("startStep"),
                                     onExit = { navController.popBackStack() },
                                     onComplete = {
@@ -1082,7 +1203,7 @@ fun MoyeoTripApp(
                         }
                     }
                     if (networkExperience == OfflineExperience.NoCache) {
-                        OfflineNoCacheScreen(onRetry = {})
+                        OfflineNoCacheScreen(onRetry = networkMonitor::retry)
                     }
                     AnimatedVisibility(
                         visible = showStartupSplash,
@@ -1111,8 +1232,8 @@ internal data class QaStartRequest(private val key: String, private val identifi
     val startsInExploreMap: Boolean = key in setOf("exploremap", "map")
 
     /** `profile:62` 처럼 대상 유저를 지정해 25 로 바로 들어올 때 쓴다.
-     *  인앱 진입은 도감·피드 작성자 등에서 대상을 들고 오지만, 화면으로 바로 여는
-     *  라이브 캡처·QA 에는 그 값이 없어 목데이터로 떨어졌다. */
+     *  인앱 진입은 도감·피드 작성자 등에서 대상을 들고 오고, 화면으로 바로 여는
+     *  라이브 캡처·QA 는 이 값으로 대상을 지정한다. */
     val profileUserId: Long? =
         if (key in setOf("profile", "publicprofile", "profileback", "publicprofileback")) {
             identifier?.toLongOrNull()
@@ -1126,11 +1247,14 @@ internal data class QaStartRequest(private val key: String, private val identifi
     }
 
     fun toRoute(): String? {
-        val courseId = identifier ?: "cheongsong-juwangsan"
-        val tripId = identifier ?: "trip-cheongsong-juwangsan"
-        // 모집 관리(18)의 기본 대상만 화면기획과 같은 경주 단풍·야경이다
-        val hostManageTripId = identifier ?: "trip-gyeongju-night"
-        val chatId = identifier ?: "chat-cheongsong-juwangsan"
+        // 화면을 직접 여는 진입 경로다. 대상이 지정되지 않으면 그 화면은 빈 상태로 열린다 —
+        // 예전처럼 목데이터 식별자를 기본값으로 끼워 넣지 않는다.
+        val courseId = identifier.orEmpty()
+        val tripId = identifier.orEmpty()
+        val chatId = identifier.orEmpty()
+        val draftKey = identifier ?: "new"
+        // 24 피드 글쓰기는 `room-101` 형태로 기록할 여행을 받는다 (다른 방 라우트와 같은 표기다)
+        val feedWriteRoomId = identifier?.serverRoomIdOrNull()
 
         return when (key) {
             "", "home" -> AppRoutes.HOME
@@ -1143,22 +1267,17 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "meetings" -> AppRoutes.MEETINGS
 
-            "meetingsapplied", "chatlistapplied" -> {
-                MockTripRepository.ensureQaApplications()
-                AppRoutes.MEETINGS_APPLIED
-            }
+            "meetingsapplied", "chatlistapplied" -> AppRoutes.MEETINGS_APPLIED
 
-            // 화면기획 19는 하단 탭바가 있는 "모임" 탭 화면이고, 신청중 세그먼트에 2건이 있다
-            "chatlist" -> {
-                MockTripRepository.ensureQaApplications()
-                AppRoutes.MEETINGS
-            }
+            // 화면기획 19는 하단 탭바가 있는 "모임" 탭 화면이다
+            "chatlist" -> AppRoutes.MEETINGS
 
             "feed" -> AppRoutes.FEED
 
             "my" -> AppRoutes.MY
 
             "profile", "publicprofile" -> AppRoutes.PROFILE
+
             // 25-1 · 카드 뒷면 (캡처 전용)
             "profileback", "profile-back", "publicprofileback" -> AppRoutes.PROFILE_CARD_BACK
 
@@ -1182,6 +1301,9 @@ internal data class QaStartRequest(private val key: String, private val identifi
             "notifications", "notification", "notif" -> AppRoutes.NOTIFICATIONS
 
             "search" -> AppRoutes.SEARCH
+
+            // 12-1 검색 결과. 검색어는 `searchresults:주왕산` 처럼 식별자로 넘긴다.
+            "searchresults" -> AppRoutes.searchResults(identifier.orEmpty())
 
             "auth", "onboarding", "mockauth", "signup" -> AppRoutes.MOCK_AUTH
 
@@ -1215,28 +1337,29 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "create", "createrecruitment", "createreview" -> AppRoutes.createRecruitment(courseId)
 
-            "customcourse" -> AppRoutes.customCourse(MockTripRepository.beginRecruitmentDraft(courseId).id)
+            "customcourse" -> AppRoutes.customCourse(draftKey)
 
-            "placesearch" -> AppRoutes.placeSearch(MockTripRepository.beginRecruitmentDraft(courseId).id)
+            "placesearch" -> AppRoutes.placeSearch(draftKey)
 
-            "placedetail" -> AppRoutes.placeDetail(
-                MockTripRepository.beginRecruitmentDraft(courseId).id,
-                identifier ?: "2299341"
-            )
+            "placedetail" -> AppRoutes.placeDetail(draftKey, identifier ?: "2299341")
 
-            "createschedule" -> AppRoutes.createSchedule(MockTripRepository.beginRecruitmentDraft(courseId).id)
+            "createschedule" -> AppRoutes.createSchedule(draftKey)
 
-            "createpeople" -> AppRoutes.createPeople(MockTripRepository.beginRecruitmentDraft(courseId).id)
+            "createpeople" -> AppRoutes.createPeople(draftKey)
 
-            "createmeet", "createmeetpoint" -> AppRoutes.createMeetPoint(
-                MockTripRepository.beginRecruitmentDraft(courseId).id
-            )
+            // 17-4a/17-4b 인원수별 멘트 변형. 화면은 하나이고 최대 인원만 다르다 —
+            // 4명 이하는 "말 트기 좋은 작은 그룹", 9명 이상은 친목 경고가 뜬다.
+            // 캡처 도구의 moyeo_screen="create-people-small"/"create-people-large" 는
+            // 하이픈이 제거되어 들어온다.
+            "createpeoplesmall" -> AppRoutes.createPeople(draftKey, capacity = 4)
 
-            "createdetail" -> AppRoutes.createDetail(MockTripRepository.beginRecruitmentDraft(courseId).id)
+            "createpeoplelarge" -> AppRoutes.createPeople(draftKey, capacity = 10)
 
-            "createsummary", "createsummarycustom" -> recruitmentSummaryRoute(courseId, CourseSource.Custom)
+            "createmeet", "createmeetpoint" -> AppRoutes.createMeetPoint(draftKey)
 
-            "createsummarylinked" -> recruitmentSummaryRoute(courseId, CourseSource.Linked)
+            "createdetail" -> AppRoutes.createDetail(draftKey)
+
+            "createsummary", "createsummarycustom", "createsummarylinked" -> AppRoutes.createSummary(draftKey)
 
             "termsdetail" -> AppRoutes.termsDetail("service", "signup")
 
@@ -1248,16 +1371,11 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "termssettings" -> AppRoutes.termsDetail(identifier ?: "service", "settings")
 
-            "courseedit", "courseeditcustom" -> AppRoutes.courseRoute("trip-cheongsong-juwangsan")
-
-            // 화면기획 18-2/18-3은 같은 주왕산 코스를 잠금 상태만 바꿔 보여준다
-            "courseeditlinked" -> AppRoutes.courseRoute("trip-cheongsong-juwangsan-linked")
-
-            "courseeditlocked" -> AppRoutes.courseRoute("trip-cheongsong-juwangsan-locked")
+            "courseedit", "courseeditcustom", "courseeditlinked", "courseeditlocked" -> AppRoutes.courseRoute(tripId)
 
             "noticehistory" -> AppRoutes.noticeHistory(tripId)
 
-            "hostmanage", "host" -> AppRoutes.hostManage(hostManageTripId)
+            "hostmanage", "host" -> AppRoutes.hostManage(tripId)
 
             "chat", "chatroom" -> AppRoutes.chatRoom(chatId)
 
@@ -1265,9 +1383,10 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "offlinechat" -> AppRoutes.chatRoom(chatId)
 
-            "specialmessages", "msgs" -> AppRoutes.SPECIAL_MESSAGES
+            "specialmessages", "msgs" -> AppRoutes.specialMessages(chatId.takeIf(String::isNotBlank))
 
-            "tripconfirmed", "confirmed" -> AppRoutes.TRIP_CONFIRMED
+            // `tripconfirmed:room-101` 처럼 확정된 방을 넘긴다. 없으면 내 모임에서 찾는다.
+            "tripconfirmed", "confirmed" -> AppRoutes.tripConfirmed(identifier ?: tripId.takeIf(String::isNotBlank))
 
             "chatmenu" -> AppRoutes.chatMenu(chatId)
 
@@ -1276,15 +1395,63 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "memberremove" -> AppRoutes.qaMemberRemove(chatId)
 
-            "chatattach", "attachment" -> AppRoutes.chatAttach()
+            "chatattach", "attachment" -> AppRoutes.chatAttach(chatId.takeIf(String::isNotBlank))
+
+            // 20-2a~20-2f 첨부 작성 화면. 캡처 도구의 하이픈은 제거되어 들어온다.
+            "attachphoto" -> AppRoutes.attachPhoto(chatId.takeIf(String::isNotBlank))
+
+            "attachplace" -> AppRoutes.attachPlace(chatId.takeIf(String::isNotBlank))
+
+            "attachmap" -> AppRoutes.attachMap(chatId.takeIf(String::isNotBlank))
+
+            "attachpoll" -> AppRoutes.attachPoll(chatId.takeIf(String::isNotBlank))
+
+            "attachsettlement" -> AppRoutes.attachSettlement(chatId.takeIf(String::isNotBlank))
+
+            "attachnotice" -> AppRoutes.attachNotice(chatId.takeIf(String::isNotBlank))
+
+            // ATTACH-COMPOSER-CANON §6 신설 화면. 캡처 도구의 하이픈은 제거되어 들어온다.
+            "courserating" -> AppRoutes.courseRating(chatId.takeIf(String::isNotBlank))
+
+            "tripstatus" -> AppRoutes.tripStatus(tripId.takeIf(String::isNotBlank))
+
+            "meetingedit" -> AppRoutes.meetingEdit(tripId.takeIf(String::isNotBlank))
+
+            "roomnotif" -> AppRoutes.roomNotification(chatId.takeIf(String::isNotBlank))
+
+            // `noticeedit:room-22/7` 처럼 방과 공지를 함께 넘긴다
+            "noticeedit" -> AppRoutes.noticeEdit(
+                tripId = identifier?.substringBefore('/').orEmpty(),
+                noticeId = identifier?.substringAfter('/', "")?.toLongOrNull() ?: 0L
+            )
+
+            "favoriterooms" -> AppRoutes.FAVORITE_ROOMS
+
+            "applycancel" -> AppRoutes.applyCancel(tripId.takeIf(String::isNotBlank))
+
+            // `unblockconfirm:62` — 대상이 없으면 확인 버튼만 잠긴 채 열린다
+            "unblockconfirm" -> AppRoutes.unblockConfirm(identifier?.toLongOrNull() ?: 0L, "")
+
+            "friendmanage" -> AppRoutes.friendManage(identifier?.toLongOrNull() ?: 0L, "", "")
+
+            "kickhistory" -> AppRoutes.KICK_HISTORY
+
+            "accountproviders" -> AppRoutes.ACCOUNT_PROVIDERS
+
+            // 08-B 비밀번호 재설정 — 08-A 이메일 로그인에서 갈라지는 보조 화면이다
+            "passwordreset" -> AppRoutes.mockAuth("password-reset")
+
+            // 31-1 참가자 나가기. 31 은 화면을 새로 만들지 않고 역할로 갈랐다(정본 §6-5).
+            "leavemember" -> AppRoutes.qaLeaveMember(chatId.takeIf(String::isNotBlank))
 
             "friends" -> AppRoutes.FRIENDS
 
             "tripmessage" -> AppRoutes.TRIP_MESSAGE
 
-            "report" -> AppRoutes.REPORT
+            // 30-2 는 피드 신고다 — 식별자는 방이 아니라 서버 피드 id(숫자)다.
+            "report" -> AppRoutes.report(identifier?.trim()?.toLongOrNull())
 
-            "leave" -> AppRoutes.QA_LEAVE
+            "leave" -> AppRoutes.qaLeave(chatId.takeIf(String::isNotBlank))
 
             "states" -> AppRoutes.QA_STATES
 
@@ -1305,34 +1472,30 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "systemerror", "error500" -> AppRoutes.SYSTEM_ERROR
 
-            "feedcomments" -> AppRoutes.feedComments(identifier ?: "feed-1")
+            // 라이브 캡처는 서버 feedId(숫자)를 넘긴다. 화면은 "srv-{id}" 형태만 실서버로 인식한다.
+            "feedcomments" -> AppRoutes.feedComments(serverFeedRoute(identifier).orEmpty())
 
-            "feeddetail", "feedpost" -> AppRoutes.feedDetail(identifier ?: "feed-1")
+            "feeddetail", "feedpost" -> AppRoutes.feedDetail(serverFeedRoute(identifier).orEmpty())
 
-            "feedwrite", "writefeed" -> AppRoutes.feedWrite()
+            "feedwrite", "writefeed" -> AppRoutes.feedWrite(roomId = feedWriteRoomId)
 
-            // 24-1~24-5 단계별 캡처 라우트
-            "feedwrite1" -> AppRoutes.feedWrite(1)
+            // 24-1~24-5 단계별 캡처 라우트. `feedwrite1:room-101` 처럼 기록할 여행을 지정할 수 있다 —
+            // 지정이 없으면 다녀온 여행 중 첫 후보를 고른다(웹 캡처도 방 101 을 쓴다).
+            "feedwrite1" -> AppRoutes.feedWrite(1, feedWriteRoomId)
 
-            "feedwrite2" -> AppRoutes.feedWrite(2)
+            "feedwrite2" -> AppRoutes.feedWrite(2, feedWriteRoomId)
 
-            "feedwrite3" -> AppRoutes.feedWrite(3)
+            "feedwrite3" -> AppRoutes.feedWrite(3, feedWriteRoomId)
 
-            "feedwrite4" -> AppRoutes.feedWrite(4)
+            "feedwrite4" -> AppRoutes.feedWrite(4, feedWriteRoomId)
 
-            "feedwrite5" -> AppRoutes.feedWrite(5)
+            "feedwrite5" -> AppRoutes.feedWrite(5, feedWriteRoomId)
 
             else -> null
         }
     }
 
     companion object {
-        private fun recruitmentSummaryRoute(courseId: String, source: CourseSource): String {
-            val draft = MockTripRepository.beginRecruitmentDraft(courseId)
-            MockTripRepository.updateRecruitmentDraft(draft.copy(courseSource = source))
-            return AppRoutes.createSummary(draft.id)
-        }
-
         fun parse(value: String?): QaStartRequest {
             val rawValue = value?.trim().orEmpty()
             if (rawValue.isEmpty()) {
@@ -1354,6 +1517,14 @@ internal data class QaStartRequest(private val key: String, private val identifi
 @Composable
 private fun MoyeoBottomBar(currentRoute: String?, onDestinationClick: (BottomDestination) -> Unit) {
     val colors = MaterialTheme.colorScheme
+    // `모임` 탭 알림 점 — 참여 중인 방에 **읽지 않은 메시지가 있을 때만** 켠다.
+    // 근거는 `GET /chat-rooms/my` 의 `unreadMessageCount` 하나뿐이고, 이미 받아 둔 목록을 읽는다
+    // (탭바가 따로 부르지 않는다 · 정본 R3). 목록이 아직 없으면 켜지 않는다 —
+    // 모르는 상태를 "알림 있음" 으로 보이면 안 된다.
+    // 웹·iOS 는 이 점을 **조건 없이 항상** 켜고 있었고, 안드로이드는 아예 없어 세 표면이 갈렸다.
+    val meetingRooms = LocalTabDataStore.current.meetings.rooms
+    val hasMeetingAlert = (meetingRooms as? ServerListState.Loaded)?.items
+        ?.any { (it.unreadMessageCount ?: 0) > 0 } == true
 
     Column(
         modifier = Modifier
@@ -1384,12 +1555,24 @@ private fun MoyeoBottomBar(currentRoute: String?, onDestinationClick: (BottomDes
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        Icon(
-                            imageVector = destination.icon,
-                            contentDescription = destination.label,
-                            tint = contentColor,
-                            modifier = Modifier.size(22.dp)
-                        )
+                        Box {
+                            Icon(
+                                imageVector = destination.icon,
+                                contentDescription = destination.label,
+                                tint = contentColor,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            if (destination.tab == BottomTab.Meetings && hasMeetingAlert) {
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.TopEnd)
+                                        .offset(x = 3.dp, y = (-1).dp)
+                                        .size(6.dp)
+                                        .background(colors.primary, CircleShape)
+                                        .testTag("bottom-meetings-alert")
+                                )
+                            }
+                        }
                         Text(
                             text = destination.label,
                             color = contentColor,
@@ -1401,5 +1584,163 @@ private fun MoyeoBottomBar(currentRoute: String?, onDestinationClick: (BottomDes
             }
         }
         Spacer(modifier = Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
+    }
+}
+
+/**
+ * 20-2a~20-2f 첨부 작성 화면 6종을 한 곳에 등록한다 (`ATTACH-COMPOSER-CANON.md`).
+ *
+ * 여섯 라우트가 `threadId` 선택 인자를 똑같이 쓴다 — 캡처 라우트는 인자 없이 들어오고,
+ * 그때 화면은 그대로 열리되 보내기만 잠긴다(목데이터를 대신 그리지 않는다).
+ */
+private fun NavGraphBuilder.attachComposerDestinations(
+    navController: NavHostController,
+    tourismRepository: TourismContentRepository
+) {
+    val threadArgument = listOf(
+        navArgument("threadId") {
+            type = NavType.StringType
+            nullable = true
+            defaultValue = null
+        }
+    )
+
+    fun NavBackStackEntry.threadId(): String? = arguments?.getString("threadId")
+
+    composable(AppRoutes.ATTACH_PHOTO, threadArgument) { entry ->
+        AttachPhotoScreen(threadId = entry.threadId(), onBack = { navController.popBackStack() })
+    }
+    composable(AppRoutes.ATTACH_PLACE, threadArgument) { entry ->
+        AttachPlaceScreen(
+            threadId = entry.threadId(),
+            onBack = { navController.popBackStack() },
+            repository = tourismRepository
+        )
+    }
+    composable(AppRoutes.ATTACH_MAP, threadArgument) { entry ->
+        AttachMapScreen(threadId = entry.threadId(), onBack = { navController.popBackStack() })
+    }
+    composable(AppRoutes.ATTACH_POLL, threadArgument) { entry ->
+        AttachPollScreen(threadId = entry.threadId(), onBack = { navController.popBackStack() })
+    }
+    composable(AppRoutes.ATTACH_SETTLEMENT, threadArgument) { entry ->
+        AttachSettlementScreen(threadId = entry.threadId(), onBack = { navController.popBackStack() })
+    }
+    composable(AppRoutes.ATTACH_NOTICE, threadArgument) { entry ->
+        AttachNoticeScreen(threadId = entry.threadId(), onBack = { navController.popBackStack() })
+    }
+}
+
+/** 선택 문자열 인자 하나를 선언한다 — 캡처 라우트는 인자 없이 들어온다. */
+private fun optionalArgument(name: String) = navArgument(name) {
+    type = NavType.StringType
+    nullable = true
+    defaultValue = null
+}
+
+/**
+ * `ATTACH-COMPOSER-CANON.md` §6 — 버튼은 있는데 이어지는 화면이 없던 자리 12종.
+ *
+ * 첨부 작성 6종과 같은 규칙이다: 대상(방·공지·사용자)이 지정되지 않으면 화면은 그대로 열리고
+ * 실행 버튼만 잠긴다. 예시 데이터를 대신 그리지 않는다(NO-MOCK-CANON R1).
+ */
+private fun NavGraphBuilder.gapDestinations(navController: NavHostController) {
+    composable(AppRoutes.COURSE_RATING, listOf(optionalArgument("threadId"))) { entry ->
+        CourseRatingScreen(
+            threadId = entry.arguments?.getString("threadId"),
+            onBack = { navController.popBackStack() }
+        )
+    }
+    composable(AppRoutes.TRIP_STATUS, listOf(optionalArgument("tripId"))) { entry ->
+        TripStatusScreen(
+            tripId = entry.arguments?.getString("tripId").orEmpty(),
+            onBack = { navController.popBackStack() },
+            // 확정하면 참가자가 보는 20-4 확정 모먼트와 같은 화면으로 이어진다
+            // 확정한 그 방의 확정 모먼트로 간다 — 다른 확정된 방을 찾아 헤매지 않는다
+            onConfirmed = { navController.navigate(AppRoutes.tripConfirmed(entry.arguments?.getString("tripId"))) },
+            onCancelled = { navController.popBackStack() }
+        )
+    }
+    composable(AppRoutes.MEETING_EDIT, listOf(optionalArgument("tripId"))) { entry ->
+        MeetingEditScreen(
+            tripId = entry.arguments?.getString("tripId").orEmpty(),
+            onBack = { navController.popBackStack() }
+        )
+    }
+    composable(AppRoutes.ROOM_NOTIFICATION, listOf(optionalArgument("threadId"))) { entry ->
+        RoomNotificationScreen(
+            threadId = entry.arguments?.getString("threadId"),
+            onBack = { navController.popBackStack() },
+            onOpenAppNotificationSettings = { navController.navigate(AppRoutes.NOTIFICATION_DETAIL) }
+        )
+    }
+    composable(
+        AppRoutes.NOTICE_EDIT,
+        listOf(
+            optionalArgument("tripId"),
+            navArgument("noticeId") {
+                type = NavType.LongType
+                defaultValue = 0L
+            }
+        )
+    ) { entry ->
+        NoticeEditScreen(
+            tripId = entry.arguments?.getString("tripId").orEmpty(),
+            noticeId = entry.arguments?.getLong("noticeId") ?: 0L,
+            onBack = { navController.popBackStack() }
+        )
+    }
+    composable(AppRoutes.FAVORITE_ROOMS) {
+        FavoriteRoomsScreen(
+            onBack = { navController.popBackStack() },
+            onOpenRoom = { navController.navigate(AppRoutes.tripDetail("room-$it")) }
+        )
+    }
+    composable(AppRoutes.APPLY_CANCEL, listOf(optionalArgument("tripId"))) { entry ->
+        ApplyCancelScreen(
+            tripId = entry.arguments?.getString("tripId").orEmpty(),
+            onBack = { navController.popBackStack() },
+            onCancelled = { navController.popBackStack() }
+        )
+    }
+    composable(
+        AppRoutes.UNBLOCK_CONFIRM,
+        listOf(
+            navArgument("userId") {
+                type = NavType.LongType
+                defaultValue = 0L
+            },
+            optionalArgument("nickname")
+        )
+    ) { entry ->
+        UnblockConfirmScreen(
+            userId = entry.arguments?.getLong("userId") ?: 0L,
+            nickname = entry.arguments?.getString("nickname").orEmpty(),
+            onBack = { navController.popBackStack() },
+            onUnblocked = { navController.popBackStack() }
+        )
+    }
+    composable(
+        AppRoutes.FRIEND_MANAGE,
+        listOf(
+            navArgument("userId") {
+                type = NavType.LongType
+                defaultValue = 0L
+            },
+            optionalArgument("nickname"),
+            optionalArgument("subtitle")
+        )
+    ) { entry ->
+        FriendManageScreen(
+            userId = entry.arguments?.getLong("userId") ?: 0L,
+            nickname = entry.arguments?.getString("nickname").orEmpty(),
+            subtitle = entry.arguments?.getString("subtitle").orEmpty(),
+            onBack = { navController.popBackStack() },
+            onOpenProfile = { navController.navigate(AppRoutes.PROFILE) },
+            onRemoved = { navController.popBackStack() }
+        )
+    }
+    composable(AppRoutes.KICK_HISTORY) {
+        KickHistoryScreen(onBack = { navController.popBackStack() })
     }
 }

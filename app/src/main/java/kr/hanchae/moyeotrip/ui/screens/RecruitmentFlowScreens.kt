@@ -1,9 +1,7 @@
 package kr.hanchae.moyeotrip.ui.screens
 
-import android.graphics.Paint
-import android.graphics.Typeface
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -37,7 +35,6 @@ import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Group
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.MyLocation
@@ -62,9 +59,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -73,14 +72,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.nativeCanvas
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -93,26 +87,36 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import java.util.Locale
 import kotlinx.coroutines.launch
+import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.CourseSource
-import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.RecruitmentDraft
-import kr.hanchae.moyeotrip.data.RecruitmentNotice
+import kr.hanchae.moyeotrip.data.RecruitmentDraftStore
 import kr.hanchae.moyeotrip.data.RouteStop
 import kr.hanchae.moyeotrip.data.ServerDataDependencies
-import kr.hanchae.moyeotrip.data.TripCourse
-import kr.hanchae.moyeotrip.data.TripRecruitment
 import kr.hanchae.moyeotrip.data.TripScheduleType
+import kr.hanchae.moyeotrip.data.api.MultipartFile
 import kr.hanchae.moyeotrip.data.courses.TravelCourse
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
 import kr.hanchae.moyeotrip.data.rooms.RoomNotice
 import kr.hanchae.moyeotrip.data.rooms.RoomNotices
+import kr.hanchae.moyeotrip.data.rooms.roomDateTimeClockText
 import kr.hanchae.moyeotrip.data.rooms.toNewChatRoom
 import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.CourseRouteMap
+import kr.hanchae.moyeotrip.ui.components.CourseRoutePoint
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
+import kr.hanchae.moyeotrip.ui.components.MapUnavailablePlaceholder
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
 import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
+import kr.hanchae.moyeotrip.ui.components.ServerListState
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
+/**
+ * 17-1 코스 선택. 후보는 서버 공개 코스(GET travel-courses/public)뿐이다 —
+ * 방 생성(POST chat-rooms)이 서버 `courseId` 를 요구하므로 그 밖의 코스로는 모집을 열 수 없다.
+ */
 @Composable
 fun RecruitmentCourseSourceScreen(
     courseId: String,
@@ -120,21 +124,24 @@ fun RecruitmentCourseSourceScreen(
     onOpenCustomCourse: (String) -> Unit,
     onOpenSchedule: (String) -> Unit
 ) {
-    var draft by remember(courseId) { mutableStateOf(MockTripRepository.beginRecruitmentDraft(courseId)) }
-    val selectedCourse = MockTripRepository.findCourse(draft.selectedCourseId)
-    // 로그인 상태에서는 "등록된 코스" 후보를 서버 공개 코스로 바꾼다 — 방 생성이 서버 courseId 를 요구한다.
+    var draft by remember(courseId) { mutableStateOf(RecruitmentDraftStore.draft(courseId)) }
     val server = LocalServerData.current
-    var serverCourses by remember(server) { mutableStateOf<List<TravelCourse>>(emptyList()) }
-    LaunchedEffect(server) {
-        serverCourses = if (server == null) {
-            emptyList()
-        } else {
-            runCatching { server.courses.publicCourses() }.getOrElse { emptyList() }
+    var serverCourses by remember(server) { mutableStateOf<ServerListState<TravelCourse>>(ServerListState.Loading) }
+    var reloadKey by remember(server) { mutableIntStateOf(0) }
+    LaunchedEffect(server, reloadKey) {
+        if (server == null) {
+            serverCourses = ServerListState.Loaded(emptyList())
+            return@LaunchedEffect
         }
-        // 목데이터 흐름처럼 첫 후보를 미리 골라 둔다 — 고르지 않으면 방을 만들 근거가 없다
-        val first = serverCourses.firstOrNull()
-        if (first != null && draft.serverCourseId == null) {
-            draft = draft.copy(serverCourseId = first.courseId, serverCourseTitle = first.title)
+        serverCourses = runCatching { server.courses.publicCourses() }
+            .fold({ ServerListState.Loaded(it) }, { ServerListState.Failed })
+        // 라우트가 `srv-{id}` 로 코스를 지정해 들어왔으면 그 코스를 미리 골라 둔다
+        val requested = courseId.removePrefix("srv-").toLongOrNull()
+        val preselected = (serverCourses as? ServerListState.Loaded)?.items
+            ?.firstOrNull { it.courseId == requested }
+        if (preselected != null && draft.serverCourseId == null) {
+            draft = draft.applyServerCourse(preselected)
+            RecruitmentDraftStore.update(draft)
         }
     }
 
@@ -144,13 +151,14 @@ fun RecruitmentCourseSourceScreen(
         bottom = {
             Button(
                 onClick = {
-                    MockTripRepository.updateRecruitmentDraft(draft)
+                    RecruitmentDraftStore.update(draft)
                     if (draft.courseSource == CourseSource.Custom) {
                         onOpenCustomCourse(draft.id)
                     } else {
                         onOpenSchedule(draft.id)
                     }
                 },
+                enabled = draft.courseSource == CourseSource.Custom || draft.serverCourseId != null,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(48.dp)
@@ -173,14 +181,9 @@ fun RecruitmentCourseSourceScreen(
                 source = CourseSource.Linked,
                 selected = draft.courseSource == CourseSource.Linked,
                 title = "등록된 코스로 떠나기",
-                body = "TourAPI·경북나드리 기반으로 검증된 동선을 그대로 가져와요.",
+                body = "·경북나드리 기반으로 검증된 동선을 그대로 가져와요.",
                 policy = "경로 수정 불가 · 집합 정보만 설정",
-                onClick = {
-                    draft = draft.copy(
-                        courseSource = CourseSource.Linked,
-                        routeStops = selectedCourse.stops.toRouteStops(selectedCourse.id)
-                    )
-                }
+                onClick = { draft = draft.copy(courseSource = CourseSource.Linked) }
             )
         }
         item {
@@ -194,11 +197,24 @@ fun RecruitmentCourseSourceScreen(
             )
         }
         if (draft.courseSource == CourseSource.Linked) {
-            item {
-                SearchLikeField("등록된 코스 검색")
-            }
-            if (serverCourses.isNotEmpty()) {
-                items(serverCourses, key = { it.courseId }) { course ->
+            item { SearchLikeField("등록된 코스 검색") }
+            val state = serverCourses
+            when {
+                server == null -> item {
+                    MoyeoEmptyState(MoyeoEmptyText.SIGN_IN_EXPLORE, testTag = "create-course-signed-out")
+                }
+
+                state is ServerListState.Loading -> item { MoyeoEmptyState(MoyeoEmptyText.LOADING) }
+
+                state is ServerListState.Failed -> item {
+                    MoyeoEmptyState(MoyeoEmptyText.FAILED, onRetry = { reloadKey++ })
+                }
+
+                state is ServerListState.Loaded && state.items.isEmpty() -> item {
+                    MoyeoEmptyState("아직 공개된 코스가 없어요.", testTag = "create-course-empty")
+                }
+
+                state is ServerListState.Loaded -> items(state.items, key = { it.courseId }) { course ->
                     CompactCourseChoice(
                         title = course.title,
                         subtitle = listOfNotNull(
@@ -209,41 +225,7 @@ fun RecruitmentCourseSourceScreen(
                         // 서버가 코스 작성자를 주면 화면기획의 "여행자 코스"에 해당한다
                         sourceLabel = if (course.creatorNickname != null) "여행자 코스" else "모여트립 추천",
                         selected = course.courseId == draft.serverCourseId,
-                        onClick = {
-                            draft = draft.copy(
-                                serverCourseId = course.courseId,
-                                serverCourseTitle = course.title,
-                                // 방문지 2개 미만이면 초안 검증(2~20)에 걸리므로 기존 값을 유지한다
-                                routeStops = course.places
-                                    .map { it.title }
-                                    .toRouteStops("srv-${course.courseId}")
-                                    .takeIf { it.size >= 2 }
-                                    ?: draft.routeStops
-                            )
-                        }
-                    )
-                }
-            } else {
-                items(MockTripRepository.courses.take(3), key = { it.id }) { course ->
-                    val selected = course.id == draft.selectedCourseId
-                    CompactCourseChoice(
-                        title = course.title,
-                        subtitle = "${course.region} · ${course.duration} ${course.distance} · " +
-                            "방문지 ${course.stops.size}",
-                        // 화면기획은 코스 출처(여행자 코스/모여트립 추천)를 함께 보여준다
-                        sourceLabel = if (course.publisher != null) "여행자 코스" else "모여트립 추천",
-                        selected = selected,
-                        course = course,
-                        onClick = {
-                            draft = draft.copy(
-                                selectedCourseId = course.id,
-                                travelDate = course.startLabel,
-                                meetingLocation = draft.meetingLocation.copy(name = course.meetingPoint),
-                                routeStops = course.stops.toRouteStops(course.id),
-                                capacity = course.capacity,
-                                note = course.recruitmentNote
-                            )
-                        }
+                        onClick = { draft = draft.applyServerCourse(course) }
                     )
                 }
             }
@@ -281,6 +263,23 @@ fun RecruitmentCourseSourceScreen(
     }
 }
 
+/** 서버 코스를 고른 초안. 방문지는 서버 방문지(좌표 포함)를 그대로 옮긴다. */
+private fun RecruitmentDraft.applyServerCourse(course: TravelCourse): RecruitmentDraft = copy(
+    serverCourseId = course.courseId,
+    serverCourseTitle = course.title,
+    routeStops = course.places.mapIndexed { index, place ->
+        RouteStop(
+            id = "srv-${course.courseId}-stop-${place.contentId}-$index",
+            day = place.dayNumber,
+            time = place.visitTime?.take(5).orEmpty(),
+            name = place.title,
+            memo = "",
+            latitude = place.latitude,
+            longitude = place.longitude
+        )
+    }
+)
+
 @Composable
 fun CustomCourseScreen(
     draftId: String,
@@ -288,7 +287,7 @@ fun CustomCourseScreen(
     onOpenPlaceSearch: (String) -> Unit,
     onContinue: (String) -> Unit
 ) {
-    var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
+    var draft by remember(draftId) { mutableStateOf(RecruitmentDraftStore.draft(draftId)) }
 
     RecruitmentScaffold(
         title = "코스 직접 만들기",
@@ -300,10 +299,10 @@ fun CustomCourseScreen(
                 }
                 Button(
                     onClick = {
-                        MockTripRepository.updateRecruitmentDraft(draft)
+                        RecruitmentDraftStore.update(draft)
                         onContinue(draft.id)
                     },
-                    enabled = draft.routeStops.size >= 2,
+                    enabled = draft.routeStops.size >= RecruitmentDraftStore.MIN_ROUTE_STOPS,
                     modifier = Modifier
                         .weight(1f)
                         .height(48.dp)
@@ -313,7 +312,8 @@ fun CustomCourseScreen(
             }
         }
     ) {
-        item { RouteMapPreview(stopCount = draft.routeStops.size, modifier = Modifier.height(160.dp)) }
+        // 방문지 좌표(TourAPI)를 그대로 실지도에 올린다. 좌표가 하나도 없으면 지도 자리를 비운다.
+        item { CourseRouteMap(points = draft.routeStops.toRoutePoints()) }
         item {
             Box(
                 Modifier
@@ -321,47 +321,62 @@ fun CustomCourseScreen(
                     .clickable { onOpenPlaceSearch(draft.id) }
                     .testTag("custom-course-place-search")
             ) {
-                SearchLikeField("방문지 검색 (TourAPI · 경북 22개 시·군)")
+                SearchLikeField("방문지 검색")
             }
         }
-        item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Day 1", fontWeight = FontWeight.ExtraBold)
-                Text(
-                    "${draft.routeStops.size}개 방문지 · 최소 2개",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+        // 방문지는 담긴 날(RouteStop.day)별로 묶어 보여준다. 예전에는 "Day 1" 머리글 하나에
+        // 전부 쏟아 넣고 "+ 다음 날 추가" 는 눌러도 아무 일이 없어서, 날을 나눌 방법이 없었다.
+        for (day in 1..draft.dayCount) {
+            val dayStops = draft.routeStops.filter { it.day == day }
+            item(key = "day-header-$day") {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Day $day", fontWeight = FontWeight.ExtraBold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            if (day == 1) {
+                                "${dayStops.size}개 방문지 · 최소 2개"
+                            } else {
+                                "${dayStops.size}개 방문지"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        // 잘못 늘린 날을 되돌릴 방법이 필요하다. 방문지가 남아 있는 날은
+                        // 지우면 그 방문지가 조용히 사라지므로 마지막 빈 날만 지울 수 있다.
+                        if (day == draft.dayCount && day > 1 && dayStops.isEmpty()) {
+                            TextButton(
+                                onClick = {
+                                    draft = draft.copy(dayCount = draft.dayCount - 1)
+                                    RecruitmentDraftStore.update(draft)
+                                },
+                                modifier = Modifier.testTag("custom-course-remove-day")
+                            ) { Text("이 날 삭제", style = MaterialTheme.typography.labelSmall) }
+                        }
+                    }
+                }
+            }
+            items(dayStops, key = { it.id }) { stop ->
+                RouteStopRow(
+                    stop = stop,
+                    // 순번은 코스 전체 기준이다 — 서버 로드맵도 전체 순서를 쓴다
+                    index = draft.routeStops.indexOfFirst { it.id == stop.id },
+                    editable = true,
+                    onRemove = {
+                        draft = draft.copy(routeStops = draft.routeStops.filterNot { it.id == stop.id })
+                        RecruitmentDraftStore.update(draft)
+                    }
                 )
             }
         }
-        items(draft.routeStops, key = { it.id }) { stop ->
-            RouteStopRow(
-                stop = stop,
-                index = draft.routeStops.indexOf(stop),
-                editable = true,
-                onRemove = {
-                    if (draft.routeStops.size > 2) {
-                        draft = draft.copy(routeStops = draft.routeStops.filterNot { it.id == stop.id })
-                    }
-                }
-            )
-        }
         item {
+            // 방문지는 예시 이름을 채우는 게 아니라 방문지 검색(TourAPI)에서 고른다.
+            // 담긴 방문지는 마지막 날(Day dayCount)로 들어간다.
             OutlinedButton(
                 onClick = {
-                    if (draft.routeStops.size < 20) {
-                        val next = draft.routeStops.size + 1
-                        draft = draft.copy(
-                            routeStops = draft.routeStops + RouteStop(
-                                id = "${draft.id}-custom-$next",
-                                time = if (next == 4) "16:30" else "17:30",
-                                name = if (next == 4) "달기약수탕" else "청송 객주문학관",
-                                memo = if (next == 4) "늦은 점심" else "실내 대체 코스"
-                            )
-                        )
-                    }
+                    RecruitmentDraftStore.update(draft)
+                    onOpenPlaceSearch(draft.id)
                 },
-                enabled = draft.routeStops.size < 20,
+                enabled = draft.routeStops.size < RecruitmentDraftStore.MAX_ROUTE_STOPS,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(46.dp)
@@ -369,13 +384,20 @@ fun CustomCourseScreen(
                 shape = RoundedCornerShape(8.dp)
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null)
-                Text("방문지 추가", modifier = Modifier.padding(start = 6.dp))
+                Text(
+                    if (draft.dayCount > 1) "Day ${draft.dayCount} 방문지 추가" else "방문지 추가",
+                    modifier = Modifier.padding(start = 6.dp)
+                )
             }
         }
         item {
             OutlinedButton(
-                onClick = {},
-                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    draft = draft.copy(dayCount = draft.dayCount + 1)
+                    RecruitmentDraftStore.update(draft)
+                },
+                enabled = draft.dayCount < RecruitmentDraftStore.MAX_COURSE_DAYS,
+                modifier = Modifier.fillMaxWidth().testTag("custom-course-add-day"),
                 shape = RoundedCornerShape(8.dp)
             ) { Text("+ 다음 날 추가 (1박 이상일 때)") } // 글자에 '+'가 있으니 아이콘은 두지 않는다
         }
@@ -390,7 +412,7 @@ fun CustomCourseScreen(
 
 @Composable
 fun CreateScheduleScreen(draftId: String, onBack: () -> Unit, onContinue: (String) -> Unit) {
-    var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
+    var draft by remember(draftId) { mutableStateOf(RecruitmentDraftStore.draft(draftId)) }
 
     RecruitmentScaffold(
         title = "모집 만들기 (2/5)",
@@ -402,7 +424,7 @@ fun CreateScheduleScreen(draftId: String, onBack: () -> Unit, onContinue: (Strin
                 }
                 Button(
                     onClick = {
-                        MockTripRepository.updateRecruitmentDraft(draft)
+                        RecruitmentDraftStore.update(draft)
                         onContinue(draft.id)
                     },
                     modifier = Modifier.weight(1f).height(48.dp).testTag("create-schedule-next"),
@@ -494,8 +516,29 @@ fun CreateScheduleScreen(draftId: String, onBack: () -> Unit, onContinue: (Strin
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CreatePeopleScreen(draftId: String, onBack: () -> Unit, onContinue: (String) -> Unit) {
-    var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
+fun CreatePeopleScreen(
+    draftId: String,
+    onBack: () -> Unit,
+    onContinue: (String) -> Unit,
+    /**
+     * 최대 인원을 미리 정해 두고 열 때 쓴다 (17-4a 4명 · 17-4b 10명).
+     * null 이면 초안에 저장된 값을 그대로 쓴다 — 17-4 기본 화면이 그렇다.
+     */
+    initialCapacity: Int? = null
+) {
+    var draft by remember(draftId, initialCapacity) {
+        val stored = RecruitmentDraftStore.draft(draftId)
+        val seeded = if (initialCapacity == null) {
+            stored
+        } else {
+            stored.copy(
+                capacity = initialCapacity,
+                // 최소 인원은 최대보다 최소 1 작아야 하고, 정책상 3명 아래로는 못 내려간다
+                minParticipants = stored.minParticipants.coerceAtMost((initialCapacity - 1).coerceAtLeast(3))
+            )
+        }
+        mutableStateOf(seeded)
+    }
     var showAgeSheet by rememberSaveable { mutableStateOf(false) }
 
     if (showAgeSheet) {
@@ -546,7 +589,7 @@ fun CreatePeopleScreen(draftId: String, onBack: () -> Unit, onContinue: (String)
                 }
                 Button(
                     onClick = {
-                        MockTripRepository.updateRecruitmentDraft(draft)
+                        RecruitmentDraftStore.update(draft)
                         onContinue(draft.id)
                     },
                     modifier = Modifier.weight(1f).height(48.dp).testTag("create-people-next"),
@@ -765,12 +808,18 @@ private fun ParticipantCounter(
 
 @Composable
 fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> Unit) {
-    var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
+    var draft by remember(draftId) { mutableStateOf(RecruitmentDraftStore.draft(draftId)) }
     var query by rememberSaveable { mutableStateOf(draft.meetingLocation.name) }
-    var detail by rememberSaveable { mutableStateOf("터미널 정문 앞") }
-    // 실지도에서는 지도를 끌면 중앙 좌표가 바뀐다. 목업 폴백일 때는 목데이터 좌표가 그대로 남는다.
+    var detail by rememberSaveable { mutableStateOf(draft.meetingLocation.detail) }
+    // 지도를 끌면 중앙 좌표가 바뀐다. 초안에 좌표가 없으면 경북 중심에서 시작한다.
     var pinned by remember(draftId) {
-        mutableStateOf(MoyeoLatLng(draft.meetingLocation.latitude, draft.meetingLocation.longitude))
+        mutableStateOf(
+            if (draft.meetingLocation.latitude == 0.0 && draft.meetingLocation.longitude == 0.0) {
+                GyeongbukMapCenter
+            } else {
+                MoyeoLatLng(draft.meetingLocation.latitude, draft.meetingLocation.longitude)
+            }
+        )
     }
 
     // 집합 장소는 일정 단계(2/5)에서 열리는 화면이라 다른 플랫폼처럼 단계 뷰를 함께 그린다
@@ -788,15 +837,16 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                     onClick = {
                         draft = draft.copy(
                             meetingLocation = draft.meetingLocation.copy(
-                                name = query.ifBlank { "청송 시외버스터미널" },
-                                detail = detail,
+                                name = query.trim(),
+                                detail = detail.trim(),
                                 latitude = pinned.latitude,
                                 longitude = pinned.longitude
                             )
                         )
-                        MockTripRepository.updateRecruitmentDraft(draft)
+                        RecruitmentDraftStore.update(draft)
                         onSave(draft.id)
                     },
+                    enabled = query.isNotBlank(),
                     modifier = Modifier.weight(1f).height(48.dp).testTag("meeting-point-save"),
                     shape = RoundedCornerShape(8.dp)
                 ) { Text("이 위치로 지정") }
@@ -814,13 +864,13 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                     zoomLevel = 16,
                     draggablePin = true,
                     onPinMove = { pinned = it },
-                    fallback = { fallbackModifier -> RouteMapPreview(stopCount = 1, modifier = fallbackModifier) }
+                    fallback = { fallbackModifier -> MapUnavailablePlaceholder(fallbackModifier) }
                 )
                 OutlinedTextField(
                     value = query,
                     onValueChange = { query = it },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                    placeholder = { Text("장소 검색 (TourAPI)") },
+                    placeholder = { Text("장소 검색") },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth().padding(12.dp).background(MaterialTheme.colorScheme.surface)
                         .testTag("meeting-point-search"),
@@ -857,7 +907,7 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                 }
             }
         }
-        item { LabeledValue("집합 장소 *", query.ifBlank { "청송 시외버스터미널" }, Icons.Filled.Place) }
+        item { LabeledValue("집합 장소 *", query, Icons.Filled.Place) }
         item {
             // changeLog15 — 상세 안내는 추천 칩이 아니라 자유 텍스트 입력이다
             Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
@@ -943,7 +993,7 @@ private fun ApprovalModeCard(
 
 @Composable
 fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> Unit) {
-    var draft by remember(draftId) { mutableStateOf(MockTripRepository.findRecruitmentDraft(draftId)) }
+    var draft by remember(draftId) { mutableStateOf(RecruitmentDraftStore.draft(draftId)) }
     var recruitmentName by rememberSaveable { mutableStateOf(draft.recruitmentName) }
     var introduction by rememberSaveable { mutableStateOf(draft.note) }
     var costText by rememberSaveable { mutableStateOf(draft.estimatedCostPerPerson.toString()) }
@@ -966,7 +1016,7 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
                                 estimatedCostPerPerson = costText.toIntOrNull()?.coerceAtLeast(0) ?: 0,
                                 autoApproval = approvalMode == "auto"
                             )
-                        MockTripRepository.updateRecruitmentDraft(draft)
+                        RecruitmentDraftStore.update(draft)
                         onSave(draft.id)
                     },
                     modifier = Modifier.weight(1f).height(48.dp).testTag("create-detail-save"),
@@ -980,7 +1030,7 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
         item {
             LabeledValue(
                 label = "코스",
-                value = draft.serverCourseTitle ?: MockTripRepository.findCourse(draft.selectedCourseId).title,
+                value = draft.serverCourseTitle.orEmpty(),
                 icon = Icons.Filled.Lock,
                 tag = "create-detail-course"
             )
@@ -1052,7 +1102,7 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
                     modifier = Modifier.fillMaxWidth().testTag("create-detail-cost")
                 )
                 Text(
-                    "TourAPI 기준 이 코스는 보통 4~5만원 내외예요. 참고용으로만 보여줘요.",
+                    " 기준 이 코스는 보통 4~5만원 내외예요. 참고용으로만 보여줘요.",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1083,26 +1133,22 @@ fun CreateDetailScreen(draftId: String, onBack: () -> Unit, onSave: (String) -> 
 }
 
 /**
- * 17-7 모집 만들기 마지막 단계.
+ * 17-7 모집 만들기 마지막 단계 — **실제로 방을 만든다**(POST chat-rooms, multipart).
  *
- * 로그인 상태에서 서버 공개 코스를 고른 초안이면 **실제로 방을 만든다**(POST chat-rooms, multipart).
- * 2026-08-24 패치로 201 응답이 `roomId` 를 주기 때문에 그 값으로 15 모집 상세([onCreatedRoom])까지
- * 이어진다. 미로그인·캡처·서버 코스 없음이면 기존 목데이터 흐름([onCreated])을 그대로 쓴다.
+ * 201 응답의 `roomId` 로 15 모집 상세([onCreatedRoom])까지 이어진다.
+ * 초안이 서버에 보낼 수 있는 상태가 아니면(코스 미선택·날짜 형식 등) 버튼을 막고 이유를 보여준다.
  */
 @Composable
-fun CreateSummaryScreen(
-    draftId: String,
-    onBack: () -> Unit,
-    onCreated: (TripRecruitment) -> Unit,
-    onCreatedRoom: (Long) -> Unit = {}
-) {
-    val draft = remember(draftId) { MockTripRepository.findRecruitmentDraft(draftId) }
-    val course = MockTripRepository.findCourse(draft.selectedCourseId)
+fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreatedRoom: (Long) -> Unit = {}) {
+    val context = LocalContext.current
+    val draft = remember(draftId) { RecruitmentDraftStore.draft(draftId) }
     val server = LocalServerData.current
     val newRoom = remember(draft, server) { if (server == null) null else draft.toNewChatRoom() }
     val submitScope = rememberCoroutineScope()
     var submitting by remember(draftId) { mutableStateOf(false) }
     var submitError by remember(draftId) { mutableStateOf<String?>(null) }
+    val blockingReason = RecruitmentDraftStore.validationError(draft)
+        ?: if (server == null) "로그인하면 모집을 열 수 있어요." else null
 
     RecruitmentScaffold(
         title = "모집 만들기 (5/5)",
@@ -1115,15 +1161,19 @@ fun CreateSummaryScreen(
                 Button(
                     onClick = {
                         if (server == null || newRoom == null) {
-                            onCreated(MockTripRepository.createRecruitmentFromDraft(draft.id))
+                            submitError = blockingReason ?: "모집을 열 수 없는 초안이에요. 앞 단계를 확인해 주세요."
                             return@Button
                         }
                         submitting = true
                         submitError = null
                         submitScope.launch {
-                            runCatching { server.chatRooms.createRoom(newRoom) }.fold(
+                            // 2026-08-26 서버 변경: 썸네일이 필수다(없으면 400 40041).
+                            // 17 모집 만들기에는 아직 사진 선택 단계가 없으므로 기본 플레이스홀더를 올린다.
+                            val thumbnail = defaultRoomThumbnail(context)
+                            runCatching { server.chatRooms.createRoom(newRoom, thumbnail) }.fold(
                                 onSuccess = { roomId ->
                                     submitting = false
+                                    RecruitmentDraftStore.remove(draft.id)
                                     onCreatedRoom(roomId)
                                 },
                                 onFailure = { error ->
@@ -1133,14 +1183,14 @@ fun CreateSummaryScreen(
                             )
                         }
                     },
-                    enabled = !submitting,
+                    enabled = !submitting && blockingReason == null && newRoom != null,
                     modifier = Modifier.weight(1f).height(48.dp).testTag("create-summary-submit"),
                     shape = RoundedCornerShape(8.dp)
                 ) { Text("모집 열기") }
             }
         }
     ) {
-        submitError?.let { message ->
+        (submitError ?: blockingReason)?.let { message ->
             item {
                 InfoBanner(icon = Icons.Filled.Notifications, text = message, warning = true)
             }
@@ -1161,9 +1211,8 @@ fun CreateSummaryScreen(
                         fontWeight = FontWeight.ExtraBold
                     )
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        // 서버 코스를 골랐다면 실제로 방에 연결되는 코스 이름을 보여준다
                         Text(
-                            text = draft.serverCourseTitle ?: course.title,
+                            text = draft.serverCourseTitle.orEmpty(),
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.weight(1f)
                         )
@@ -1236,6 +1285,12 @@ private fun summaryDeadlineText(deadline: String): String {
     return "${month.toInt()}/${day.toInt()}($weekday) $time · D-3"
 }
 
+/**
+ * 18-2 여행 경로 — 서버 모임(`room-{roomId}`)에 연결된 코스를 실지도로 보여준다.
+ *
+ * 방문지 수정은 서버 API 가 없어(코스 편집 엔드포인트 없음) 읽기 전용이다(§4 BE 요청).
+ * 집합 정보 수정은 PUT chat-rooms/{id}/meeting-info 로 이어진다.
+ */
 @Composable
 fun CourseRouteScreen(
     tripId: String,
@@ -1243,214 +1298,142 @@ fun CourseRouteScreen(
     onOpenMeetingPoint: (String) -> Unit,
     onOpenNotices: (String) -> Unit
 ) {
-    var trip by remember(tripId) { mutableStateOf(MockTripRepository.findTrip(tripId)) }
-    var stops by remember(tripId) {
-        mutableStateOf(
-            trip.routeStops.ifEmpty {
-                MockTripRepository.findCourseForTrip(trip).stops.toRouteStops(trip.id)
-            }
-        )
+    val server = LocalServerData.current
+    val roomId = tripId.serverRoomIdOrNull()
+    if (roomId == null || server == null) {
+        RecruitmentScaffold(title = "여행 경로", onBack = onBack) {
+            item { MoyeoEmptyState(MoyeoEmptyText.NO_JOINED_ROOMS, testTag = "course-route-empty") }
+        }
+        return
     }
-    val confirmed = trip.statusLabel in setOf("출발확정", "마감", "종료")
-    val routeEditable = trip.courseSource == CourseSource.Custom && !confirmed
+    var room by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
+    var course by remember(roomId) { mutableStateOf<TravelCourse?>(null) }
+    var loadFailed by remember(roomId) { mutableStateOf(false) }
+    var reloadKey by remember(roomId) { mutableIntStateOf(0) }
+    LaunchedEffect(roomId, server, reloadKey) {
+        loadFailed = false
+        room = runCatching { server.chatRooms.room(roomId) }.getOrNull()
+        course = runCatching { server.courses.roomCourse(roomId) }.getOrNull()
+        loadFailed = room == null
+    }
+
+    val detail = room
+    val confirmed = detail != null && detail.status != "RECRUITING"
 
     RecruitmentScaffold(
         title = "여행 경로",
         onBack = onBack,
-        action = if (routeEditable) "저장" else null,
-        onAction = {
-            MockTripRepository.updateCustomRoute(trip.id, stops)
-            trip = MockTripRepository.findTrip(trip.id)
-        },
         bottom = {
-            if (confirmed) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(
-                        onClick = {
-                            onOpenNotices(trip.id)
-                        },
-                        modifier = Modifier.weight(1f).height(48.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) { Text("공지로 알리기") }
-                    Button(
-                        onClick = {
-                        },
-                        enabled = false,
-                        modifier = Modifier.weight(.7f).height(48.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) { Text("경로 수정") }
-                }
-            } else if (routeEditable) {
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = onBack,
-                        modifier = Modifier.height(48.dp),
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Text("취소")
-                    }
-                    Button(
-                        onClick = {
-                            MockTripRepository.updateCustomRoute(trip.id, stops)
-                            onBack()
-                        },
-                        modifier = Modifier.weight(1f).height(48.dp).testTag("course-route-save"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) { Text("저장하고 멤버에게 알리기") }
-                }
-            } else {
-                // 등록 코스는 경로를 못 바꾸지만 코스 교체와 집합 정보 수정은 열려 있다 (화면기획)
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedButton(
-                        onClick = onBack,
-                        modifier = Modifier.height(48.dp).testTag("course-route-change-course"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) { Text("코스 바꾸기") }
-                    Button(
-                        onClick = { onOpenMeetingPoint(trip.id) },
-                        modifier = Modifier.weight(1f).height(48.dp).testTag("course-route-edit-meeting"),
-                        shape = RoundedCornerShape(12.dp)
-                    ) { Text("집합 정보 수정") }
-                }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(
+                    onClick = { onOpenNotices("room-$roomId") },
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("공지로 알리기") }
+                Button(
+                    onClick = { onOpenMeetingPoint("room-$roomId") },
+                    enabled = !confirmed,
+                    modifier = Modifier.weight(1f).height(48.dp).testTag("course-route-edit-meeting"),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("집합 정보 수정") }
             }
         }
     ) {
+        if (detail == null) {
+            item {
+                MoyeoEmptyState(
+                    if (loadFailed) MoyeoEmptyText.FAILED else MoyeoEmptyText.LOADING,
+                    onRetry = if (loadFailed) ({ reloadKey++ }) else null
+                )
+            }
+            return@RecruitmentScaffold
+        }
         item {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f)) {
-                    Text(trip.title, fontWeight = FontWeight.ExtraBold)
-                    Text(
-                        "${trip.scheduleDate} · ${trip.scheduleType.label} · 방문지 ${stops.size}개 · ${trip.joined}/${trip.capacity}명",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                SourceBadge(trip.courseSource)
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(detail.title, fontWeight = FontWeight.ExtraBold)
+                Text(
+                    listOfNotNull(
+                        detail.startDate.takeIf(String::isNotBlank)?.replace('-', '.'),
+                        course?.places?.size?.let { "방문지 ${it}개" },
+                        "${detail.participantCount}/${detail.maxParticipants}명"
+                    ).joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
         item {
             InfoBanner(
-                // 경로를 못 바꾸는 상태는 모두 자물쇠로 (화면기획)
-                icon = if (routeEditable) Icons.Filled.EditNote else Icons.Filled.Lock,
-                text = when {
-                    confirmed -> "여행이 확정돼 경로가 잠겼어요. 변경이 필요하면 채팅방 공지로 알려주세요."
-                    routeEditable -> "마감 전까지 경로를 바꿀 수 있어요. 저장하면 채팅방에 변경 내역이 공지로 남아요."
-                    else -> "등록된 코스의 경로는 고정돼요. 집합 정보와 모집 조건만 바꿀 수 있어요."
+                icon = Icons.Filled.Lock,
+                text = if (confirmed) {
+                    "여행이 확정돼 경로가 잠겼어요. 변경이 필요하면 채팅방 공지로 알려주세요."
+                } else {
+                    "등록된 코스의 경로는 고정돼요. 집합 정보와 모집 조건만 바꿀 수 있어요."
                 },
                 warning = confirmed
             )
         }
-        item { RouteMapPreview(stops.size, Modifier.height(150.dp)) }
-        item {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text("Day 1", fontWeight = FontWeight.ExtraBold)
-                if (!routeEditable) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(4.dp)
-                    ) {
-                        Icon(
-                            Icons.Filled.Lock,
-                            contentDescription = null,
-                            modifier = Modifier.size(12.dp),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Text(
-                            "수정 불가",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
+        item { CourseRouteMap(points = course?.places.orEmpty().toRoutePoints(), height = 150.dp) }
+        val places = course?.places.orEmpty()
+        if (places.isEmpty()) {
+            item { MoyeoEmptyState("방문지 정보가 없어요.", testTag = "course-route-no-places") }
+        } else {
+            item { Text("Day 1", fontWeight = FontWeight.ExtraBold) }
+            items(places.size) { index ->
+                val place = places[index]
+                RouteStopRow(
+                    stop = RouteStop(
+                        id = "room-$roomId-place-$index",
+                        time = place.visitTime?.take(5).orEmpty(),
+                        name = place.title,
+                        memo = "${place.dayNumber}일차"
+                    ),
+                    index = index,
+                    editable = false,
+                    locked = confirmed,
+                    onRemove = {}
+                )
             }
         }
-        items(stops, key = { it.id }) { stop ->
-            RouteStopRow(stop, stops.indexOf(stop), routeEditable, locked = confirmed) {
-                if (stops.size > 2) stops = stops.filterNot { item -> item.id == stop.id }
-            }
-        }
-        if (routeEditable) {
-            item {
-                OutlinedButton(onClick = {
-                }, modifier = Modifier.fillMaxWidth().height(46.dp), shape = RoundedCornerShape(12.dp)) {
-                    Icon(Icons.Filled.Add, contentDescription = null)
-                    Text("방문지 추가", Modifier.padding(start = 6.dp))
-                }
-            }
-        }
-        item {
-            Text("집합 정보", fontWeight = FontWeight.ExtraBold)
-        }
+        item { Text("집합 정보", fontWeight = FontWeight.ExtraBold) }
         item {
             LabeledValue(
                 "집합 장소 · 시간",
-                "${trip.meetingLocation.meetingTime} · ${trip.meetingLocation.name} ${trip.meetingLocation.detail}",
+                listOfNotNull(
+                    roomDateTimeClockText(detail.meetingDateTime),
+                    detail.meetingDetails?.takeIf(String::isNotBlank)
+                ).joinToString(" · "),
                 Icons.Filled.Place,
-                onClick = if (confirmed) {
-                    null
-                } else {
-                    { onOpenMeetingPoint(trip.id) }
-                }
+                onClick = if (confirmed) null else ({ onOpenMeetingPoint("room-$roomId") })
             )
         }
     }
 }
 
 @Composable
-fun NoticeHistoryScreen(tripId: String, onBack: () -> Unit) {
+fun NoticeHistoryScreen(
+    tripId: String,
+    onBack: () -> Unit,
+    onOpenComposer: (String) -> Unit = {},
+    /** 20-3a 공지 수정 · 삭제 — 카드마다 `수정` 이 있는데 갈 곳이 없었다(정본 §6-1). */
+    onOpenNoticeEdit: (String, Long) -> Unit = { _, _ -> }
+) {
     // "room-{id}" 는 실서버 모임이다 — GET chat-rooms/{id}/notices 를 그대로 보여준다
     val server = LocalServerData.current
     val serverRoomId = tripId.serverRoomIdOrNull()
-    if (serverRoomId != null && server != null) {
-        ServerNoticeHistory(roomId = serverRoomId, server = server, onBack = onBack)
+    if (serverRoomId == null || server == null) {
+        RecruitmentScaffold(title = "공지 이력", onBack = onBack) {
+            item { MoyeoEmptyState(MoyeoEmptyText.NO_NOTICES, testTag = "notice-history-empty") }
+        }
         return
     }
-    var notices by remember(tripId) { mutableStateOf(MockTripRepository.noticesForTrip(tripId)) }
-    val trip = remember(tripId) { MockTripRepository.findTrip(tripId) }
-    val pinned = notices.filter { it.isPinned }
-    val past = notices.filterNot { it.isPinned }
-    val toggle: (RecruitmentNotice) -> Unit = { notice ->
-        MockTripRepository.toggleNoticePinned(notice.id)
-        notices = MockTripRepository.noticesForTrip(tripId).toList()
-    }
-
-    // 화면기획은 코스 이름·공지 개수 → "상단 고정 중" / "지난 공지" → 하단 CTA 순서다
-    RecruitmentScaffold(
-        title = "공지 이력",
+    ServerNoticeHistory(
+        roomId = serverRoomId,
+        server = server,
         onBack = onBack,
-        bottom = {
-            Button(
-                onClick = {},
-                modifier = Modifier.fillMaxWidth().height(48.dp).testTag("notice-history-create"),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Icon(Icons.Filled.Add, null)
-                Text("새 공지 작성 (호스트)", Modifier.padding(start = 6.dp))
-            }
-        }
-    ) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(trip.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
-                Text(
-                    "공지 ${notices.size}개 · 고정 ${pinned.size} / 최대 3",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-        item { NoticeSectionTitle("상단 고정 중") }
-        items(pinned, key = { it.id }) { notice -> NoticeCard(notice) { toggle(notice) } }
-        item { NoticeSectionTitle("지난 공지") }
-        items(past, key = { it.id }) { notice -> NoticeCard(notice) { toggle(notice) } }
-        item {
-            Text(
-                "공지는 호스트만 올릴 수 있고, 고정은 최대 3개까지예요. 고정을 해제해도 이력에는 그대로 남아요.",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
+        onOpenComposer = { onOpenComposer(tripId) },
+        onOpenNoticeEdit = { noticeId -> onOpenNoticeEdit(tripId, noticeId) }
+    )
 }
 
 /**
@@ -1458,10 +1441,18 @@ fun NoticeHistoryScreen(tripId: String, onBack: () -> Unit) {
  *
  * 고정 토글은 PUT chat-rooms/{id}/notices/{noticeId} 다. 호스트만 보이는 동작이라
  * GET {id}/members 의 `me && host` 로 판정하고, 본문(`notice`)은 보내지 않아 고정 상태만 바뀐다.
- * 공지 등록(POST notices)은 화면기획 20-3 하단 CTA 자리는 있지만 이번 범위가 아니라 그대로 뒀다.
+ *
+ * 카드에 **제목 줄이 없다** — 서버 모델이 `notice` 하나뿐이라 본문이 카드의 주인공이다(정본 §2).
+ * 하단 CTA 는 20-2f 공지 작성 화면으로 간다. 상단 고정은 **최대 1개**다(R5-1).
  */
 @Composable
-private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, onBack: () -> Unit) {
+private fun ServerNoticeHistory(
+    roomId: Long,
+    server: ServerDataDependencies,
+    onBack: () -> Unit,
+    onOpenComposer: () -> Unit,
+    onOpenNoticeEdit: (Long) -> Unit
+) {
     var room by remember(roomId) { mutableStateOf<ChatRoomDetail?>(null) }
     var notices by remember(roomId) { mutableStateOf<RoomNotices?>(null) }
     var isHost by remember(roomId) { mutableStateOf(false) }
@@ -1491,7 +1482,27 @@ private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, on
         }
     }
 
-    RecruitmentScaffold(title = "공지 이력", onBack = onBack) {
+    RecruitmentScaffold(
+        title = "공지 이력",
+        onBack = onBack,
+        bottom = if (!isHost) {
+            null
+        } else {
+            {
+                Button(
+                    onClick = onOpenComposer,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp)
+                        .testTag("notice-create"),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
+                    Text("새 공지 작성 (호스트)", Modifier.padding(start = 6.dp), fontWeight = FontWeight.ExtraBold)
+                }
+            }
+        }
+    ) {
         item {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
@@ -1500,7 +1511,7 @@ private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, on
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    "공지 ${pinned.size + past.size}개 · 고정 ${pinned.size}",
+                    noticeHeaderText(total = pinned.size + past.size, pinned = pinned.size),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1523,7 +1534,8 @@ private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, on
                     notice = notice,
                     canPin = isHost,
                     pinBusy = pinBusy,
-                    onTogglePinned = { togglePinned(notice) }
+                    onTogglePinned = { togglePinned(notice) },
+                    onEdit = { onOpenNoticeEdit(notice.noticeId) }
                 )
             }
         }
@@ -1534,15 +1546,20 @@ private fun ServerNoticeHistory(roomId: Long, server: ServerDataDependencies, on
                     notice = notice,
                     canPin = isHost,
                     pinBusy = pinBusy,
-                    onTogglePinned = { togglePinned(notice) }
+                    onTogglePinned = { togglePinned(notice) },
+                    onEdit = { onOpenNoticeEdit(notice.noticeId) }
                 )
             }
         }
         if (notices != null && pinned.isEmpty() && past.isEmpty()) {
+            item { MoyeoEmptyState(MoyeoEmptyText.NO_NOTICES, testTag = "notice-history-empty") }
+        }
+        if (notices != null) {
             item {
                 Text(
-                    "등록된 공지가 없어요.",
-                    style = MaterialTheme.typography.bodyMedium,
+                    "공지는 호스트만 올릴 수 있고, 상단 고정은 하나만 둘 수 있어요. " +
+                        "새로 고정하면 먼저 고정된 공지가 풀려요. 고정을 해제해도 이력에는 그대로 남아요.",
+                    style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -1555,7 +1572,8 @@ private fun ServerNoticeCard(
     notice: RoomNotice,
     canPin: Boolean = false,
     pinBusy: Boolean = false,
-    onTogglePinned: () -> Unit = {}
+    onTogglePinned: () -> Unit = {},
+    onEdit: () -> Unit = {}
 ) {
     Surface(
         Modifier.fillMaxWidth().testTag("server-notice-${notice.noticeId}"),
@@ -1575,16 +1593,16 @@ private fun ServerNoticeCard(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     }
                 )
+                // 제목 줄이 없다 — 본문이 카드의 주인공이다(정본 §2). 그래서 제목체가 아니라 본문체로 쓴다.
                 Text(
                     notice.content.orEmpty(),
                     Modifier.weight(1f).padding(start = 6.dp),
-                    style = MaterialTheme.typography.labelLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     color = if (notice.pinned) {
                         MaterialTheme.colorScheme.primary
                     } else {
                         MaterialTheme.colorScheme.onSurface
-                    },
-                    fontWeight = FontWeight.ExtraBold
+                    }
                 )
                 if (notice.pinned) {
                     Surface(shape = RoundedCornerShape(50), color = MoyeoTheme.tints.primaryTint) {
@@ -1608,7 +1626,8 @@ private fun ServerNoticeCard(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                // 화면기획 20-3 카드 우측 동작 자리 — 호스트에게만 고정 토글로 쓴다
+                // 화면기획 20-3 카드 우측 동작 자리 — 호스트에게만 고정 토글과 수정을 둔다.
+                // `수정` 은 20-3a 로 간다. 예전에는 링크만 있고 목적지가 없었다(정본 §6-1).
                 if (canPin) {
                     Text(
                         if (notice.pinned) "고정 해제" else "다시 고정",
@@ -1619,31 +1638,17 @@ private fun ServerNoticeCard(
                         color = MaterialTheme.colorScheme.primary,
                         fontWeight = FontWeight.ExtraBold
                     )
+                    Text(
+                        "수정",
+                        modifier = Modifier
+                            .padding(start = 14.dp)
+                            .clickable(onClick = onEdit)
+                            .testTag("server-notice-edit-${notice.noticeId}"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
-            }
-        }
-    }
-}
-
-/** 집합 장소 공지의 지도 미리보기 — 화면기획 20-3의 초록 지도 판 + 가운데 핀. */
-@Composable
-private fun NoticeMapPreview() {
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(68.dp)
-            .background(MoyeoTheme.tints.mapGreen, RoundedCornerShape(10.dp))
-            .testTag("notice-map-preview"),
-        contentAlignment = Alignment.Center
-    ) {
-        Surface(modifier = Modifier.size(30.dp), shape = CircleShape, color = MaterialTheme.colorScheme.primary) {
-            Box(contentAlignment = Alignment.Center) {
-                Icon(
-                    Icons.Filled.LocationOn,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                    tint = MaterialTheme.colorScheme.onPrimary
-                )
             }
         }
     }
@@ -1850,7 +1855,6 @@ private fun CompactCourseChoice(
     title: String,
     subtitle: String,
     selected: Boolean,
-    course: TripCourse? = null,
     sourceLabel: String? = null,
     onClick: () -> Unit
 ) {
@@ -1864,15 +1868,7 @@ private fun CompactCourseChoice(
         )
     ) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (course != null) {
-                CourseScenicPanel(
-                    course = course,
-                    modifier = Modifier.size(54.dp),
-                    cornerRadius = 9.dp
-                )
-            } else {
-                Icon(Icons.Filled.Map, null, tint = MaterialTheme.colorScheme.primary)
-            }
+            Icon(Icons.Filled.Map, null, tint = MaterialTheme.colorScheme.primary)
             Column(Modifier.padding(start = 10.dp).weight(1f)) {
                 Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -1938,45 +1934,6 @@ private fun InfoBanner(icon: ImageVector?, text: AnnotatedString, warning: Boole
                 color = content,
                 lineHeight = 18.sp
             )
-        }
-    }
-}
-
-@Composable
-private fun RouteMapPreview(stopCount: Int, modifier: Modifier = Modifier) {
-    val tints = MoyeoTheme.tints
-    Canvas(modifier.fillMaxWidth().background(tints.mapGreen, RoundedCornerShape(12.dp)).padding(20.dp)) {
-        val count = stopCount.coerceAtLeast(1)
-        val points = (0 until count).map { i ->
-            Offset(
-                size.width * (.12f + .76f * i / count.coerceAtLeast(2)),
-                size.height * (.78f - .55f * i / count.coerceAtLeast(2))
-            )
-        }
-        val path = Path().apply {
-            moveTo(points.first().x, points.first().y)
-            points.drop(1).forEach { lineTo(it.x, it.y) }
-        }
-        drawPath(path, Color(0xFF4E9B6B), style = Stroke(width = 8f, cap = StrokeCap.Round))
-        // 화면기획 18-x — 경로 마커는 점이 아니라 순번 숫자가 들어간 원이다
-        val markerTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = Color.White.toArgb()
-            textAlign = Paint.Align.CENTER
-            textSize = 12.dp.toPx()
-            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
-        }
-        points.forEachIndexed { index, point ->
-            drawCircle(Color(0xFF4E9B6B), 15.dp.toPx(), point)
-            if (count >= 2) {
-                drawContext.canvas.nativeCanvas.drawText(
-                    (index + 1).toString(),
-                    point.x,
-                    point.y + markerTextPaint.textSize * 0.36f,
-                    markerTextPaint
-                )
-            } else {
-                drawCircle(Color(0xFFF4F8F5), 3.dp.toPx(), point)
-            }
         }
     }
 }
@@ -2205,93 +2162,16 @@ private fun LabeledValue(
     }
 }
 
-@Composable
-private fun NoticeCard(notice: RecruitmentNotice, onTogglePin: () -> Unit) {
-    Surface(
-        Modifier.fillMaxWidth(),
-        RoundedCornerShape(10.dp),
-        MaterialTheme.colorScheme.surfaceVariant,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Description,
-                    null,
-                    Modifier.size(14.dp),
-                    tint = if (notice.isPinned) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurfaceVariant
-                    }
-                )
-                Text(
-                    notice.title,
-                    Modifier.weight(1f).padding(start = 6.dp),
-                    style = MaterialTheme.typography.labelLarge,
-                    color = if (notice.isPinned) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.onSurface
-                    },
-                    fontWeight = FontWeight.ExtraBold
-                )
-                // 고정 여부는 배지로, 켜고 끄기는 아래 링크로 (화면기획과 같은 표기)
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (notice.isPinned) {
-                        MoyeoTheme.tints.primaryTint
-                    } else {
-                        MaterialTheme.colorScheme.surface
-                    }
-                ) {
-                    Text(
-                        if (notice.isPinned) "📌 고정" else "고정 해제됨",
-                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = if (notice.isPinned) {
-                            MoyeoTheme.tints.onPrimaryTint
-                        } else {
-                            MaterialTheme.colorScheme.onSurfaceVariant
-                        },
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-            Text(notice.body, style = MaterialTheme.typography.bodyMedium)
-            // 집합 장소 공지에는 지도 미리보기가 함께 붙는다 (화면기획 20-3)
-            if (notice.includesMap) {
-                NoticeMapPreview()
-            }
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "${notice.author} · ${notice.createdAt}",
-                    Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Text(
-                    if (notice.isPinned) "수정" else "다시 고정",
-                    Modifier.clickable(onClick = onTogglePin).padding(4.dp),
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.ExtraBold
-                )
-            }
-        }
-    }
+/** 초안 방문지 → 지도 순번 마커. 좌표가 없는 방문지는 지도에서 빠진다. */
+private fun List<RouteStop>.toRoutePoints(): List<CourseRoutePoint> = mapNotNull { stop ->
+    val latitude = stop.latitude ?: return@mapNotNull null
+    val longitude = stop.longitude ?: return@mapNotNull null
+    CourseRoutePoint(id = stop.id, title = stop.name, position = MoyeoLatLng(latitude, longitude))
 }
 
-private fun List<String>.toRouteStops(prefix: String): List<RouteStop> = mapIndexed { index, name ->
-    RouteStop(
-        "$prefix-stop-${index + 1}",
-        time = listOf("09:00", "10:30", "14:00", "16:30").getOrElse(index) {
-            "17:${index}0"
-        },
-        name = name,
-        memo = listOf("집합 장소", "대전사 - 제3폭포", "왕버들 산책로", "늦은 점심").getOrElse(index) { "자유 관람" }
-    )
-}
+/** 집합 장소를 아직 고르지 않았을 때 지도가 시작하는 지점 — 경상북도 중심 근처다. */
+private val GyeongbukMapCenter = MoyeoLatLng(36.4, 128.9)
+
 private fun scheduleSummary(draft: RecruitmentDraft): String = if (draft.scheduleType ==
     TripScheduleType.DayTrip
 ) {
@@ -2304,4 +2184,21 @@ private fun compactDate(value: String): String {
     val match = Regex("""\d{4}\.\s*(\d{1,2})\.\s*(\d{1,2})\s*(\([^)]+\))""").find(value)
         ?: return value
     return "${match.groupValues[1].toInt()}/${match.groupValues[2].toInt()}${match.groupValues[3]}"
+}
+
+/**
+ * 모집 만들기의 기본 썸네일.
+ *
+ * 2026-08-26 서버 변경으로 채팅방 생성에 `thumbnail` 파트가 필수가 됐다(없으면 400 `40041`).
+ * 17 모집 만들기에는 아직 사진 선택 단계가 없어서, 사진이 없을 때 쓰는 공용 플레이스홀더를 올린다.
+ * 카드형 목록에 쓰이는 16:9 쪽을 쓴다.
+ */
+private fun defaultRoomThumbnail(context: Context): MultipartFile {
+    val bytes = context.resources.openRawResource(R.drawable.placeholder_landscape).use { it.readBytes() }
+    return MultipartFile(
+        partName = "thumbnail",
+        fileName = "placeholder-landscape.webp",
+        mimeType = "image/webp",
+        bytes = bytes
+    )
 }

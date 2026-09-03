@@ -39,3 +39,6 @@ reports/
 .env
 .env.*
 !.env.example
+
+# QA 테스트 계정 자격 증명 (워크스페이스 루트에 있지만, 옮겨져도 커밋되지 않게)
+qa-accounts.local.json

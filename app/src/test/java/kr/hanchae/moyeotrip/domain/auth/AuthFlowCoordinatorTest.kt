@@ -1,6 +1,7 @@
 package kr.hanchae.moyeotrip.domain.auth
 
 import kotlinx.coroutines.runBlocking
+import kr.hanchae.moyeotrip.data.auth.AuthApiException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -55,6 +56,109 @@ class AuthFlowCoordinatorTest {
         assertEquals(1, gateway.profileListRequests)
     }
 
+    /**
+     * 40902 복귀(정본 R2-1). 세션은 살아 있으니 재로그인을 요구하지 않는다 —
+     * 기기에 남아 있는 Firebase 로그인으로 새 idToken 을 받아 회원 정보 입력으로 이어간다.
+     */
+    @Test
+    fun restoredSignupResumesWithFreshFirebaseTokenWithoutReLogin() = runBlocking {
+        val store = InMemoryAuthSessionStore().apply {
+            saveSignup(
+                AuthProvider.KAKAO,
+                ServiceSession("old-access", "old-refresh", SignupState.USER_INFO_REQUIRED)
+            )
+        }
+        val gateway = FakeAuthGateway(
+            refreshResult = ServiceSession("new-access", "new-refresh", SignupState.USER_INFO_REQUIRED)
+        )
+        val provider = RecordingIdentityTokenProvider()
+        val coordinator = AuthFlowCoordinator(provider, gateway, store)
+
+        coordinator.restoreSession()
+
+        assertEquals(AuthDestination.NICKNAME, coordinator.state.destination)
+        assertEquals(AuthProvider.KAKAO, provider.lastCurrentIdentityProvider)
+        assertEquals("firebase-current-id-token", coordinator.state.identity?.idToken)
+        assertEquals(3, coordinator.state.nickname.candidates.size)
+        // 로그인 화면을 다시 띄우지 않았으므로 세션도 지우지 않는다.
+        assertEquals("new-refresh", store.current.refreshToken)
+        assertNull(provider.lastProvider)
+    }
+
+    @Test
+    fun restoredSignupFallsBackToLoginOnlyWhenFirebaseUserIsGone() = runBlocking {
+        val store = InMemoryAuthSessionStore().apply {
+            saveSignup(
+                AuthProvider.GOOGLE,
+                ServiceSession("old-access", "old-refresh", SignupState.USER_INFO_REQUIRED)
+            )
+        }
+        val gateway = FakeAuthGateway(
+            refreshResult = ServiceSession("new-access", "new-refresh", SignupState.USER_INFO_REQUIRED)
+        )
+        val provider = RecordingIdentityTokenProvider(currentIdentityToken = null)
+        val coordinator = AuthFlowCoordinator(provider, gateway, store)
+
+        coordinator.restoreSession()
+
+        assertEquals(AuthDestination.LOGIN, coordinator.state.destination)
+        assertNull(store.current.refreshToken)
+        assertNull(coordinator.state.errorMessage)
+    }
+
+    /** 세션 만료(`400 40001`)는 정상 흐름이다 — 로그인 화면으로 보내되 오류 배너를 남기지 않는다(정본 R3·R4). */
+    @Test
+    fun expiredRefreshTokenReturnsToLoginWithoutErrorBanner() = runBlocking {
+        val store = InMemoryAuthSessionStore().apply {
+            saveSignup(
+                AuthProvider.KAKAO,
+                ServiceSession("old-access", "old-refresh", SignupState.SIGNUP_COMPLETE)
+            )
+        }
+        val gateway = FailingRefreshGateway(
+            AuthApiException(400, "유효하지 않은 RefreshToken 입니다.", errorCode = 40001)
+        )
+        val coordinator = coordinator(gateway, store)
+
+        coordinator.restoreSession()
+
+        assertEquals(AuthDestination.LOGIN, coordinator.state.destination)
+        assertNull(coordinator.state.errorMessage)
+        assertFalse(coordinator.state.isLoading)
+        assertNull(store.current.refreshToken)
+    }
+
+    /** 서버 5xx 는 사용자가 다시 시도할 수 있는 실패다 — 계속 오류로 보여준다(정본 §3). */
+    @Test
+    fun serverFailureDuringRestoreStillShowsError() = runBlocking {
+        val store = InMemoryAuthSessionStore().apply {
+            saveSignup(
+                AuthProvider.KAKAO,
+                ServiceSession("old-access", "old-refresh", SignupState.SIGNUP_COMPLETE)
+            )
+        }
+        val gateway = FailingRefreshGateway(AuthApiException(500, "서버 오류입니다.", errorCode = null))
+        val coordinator = coordinator(gateway, store)
+
+        coordinator.restoreSession()
+
+        assertEquals("서버 오류입니다.", coordinator.state.errorMessage)
+        assertEquals("old-refresh", store.current.refreshToken)
+    }
+
+    /** 소셜 로그인 취소는 실패가 아니다 — 로딩만 걷고 로그인 화면을 그대로 둔다(정본 R1·R2). */
+    @Test
+    fun cancelledSocialLoginLeavesLoginScreenUntouched() = runBlocking {
+        val provider = RecordingIdentityTokenProvider(cancelAcquire = true)
+        val coordinator = AuthFlowCoordinator(provider, FakeAuthGateway(), InMemoryAuthSessionStore())
+
+        coordinator.login(AuthProvider.KAKAO)
+
+        assertEquals(AuthDestination.LOGIN, coordinator.state.destination)
+        assertNull(coordinator.state.errorMessage)
+        assertFalse(coordinator.state.isLoading)
+    }
+
     @Test
     fun startupWithoutStoredRefreshTokenDoesNotCallServer() = runBlocking {
         val gateway = FakeAuthGateway()
@@ -77,7 +181,7 @@ class AuthFlowCoordinatorTest {
         assertEquals(AuthDestination.NICKNAME, coordinator.state.destination)
         assertEquals(3, coordinator.state.nickname.candidates.size)
         coordinator.selectNickname("따스한 사슴 3492")
-        coordinator.signup(Gender.FEMALE, "1998-04-12")
+        coordinator.signup(Gender.FEMALE, "1998-04-12", listOf(1L, 2L))
 
         assertEquals(AuthDestination.PROFILE_IMAGE, coordinator.state.destination)
         assertEquals("selection-token", gateway.lastSignupInput?.nicknameSelectionToken)
@@ -295,7 +399,7 @@ class AuthFlowCoordinatorTest {
             )
         )
         val coordinator = AuthFlowCoordinator(provider, gateway, InMemoryAuthSessionStore())
-        val request = emailRequest(EmailAuthAction.CREATE_ACCOUNT)
+        val request = emailRequest()
 
         coordinator.loginWithEmail(request)
 
@@ -325,10 +429,9 @@ class AuthFlowCoordinatorTest {
         onStateChange = onStateChange
     )
 
-    private fun emailRequest(action: EmailAuthAction = EmailAuthAction.SIGN_IN) = EmailAuthRequest(
+    private fun emailRequest() = EmailAuthRequest(
         email = "trip@example.com",
-        password = "password123",
-        action = action
+        password = "password123"
     )
 
     private fun profileRequiredEmailLogin() = LoginResult(
@@ -348,14 +451,25 @@ class AuthFlowCoordinatorTest {
         )
 }
 
-private class RecordingIdentityTokenProvider : IdentityTokenProvider {
+private class RecordingIdentityTokenProvider(
+    /** 기기에 남아 있는 Firebase 로그인. null 이면 로그아웃된 기기다(정본 R2-1). */
+    private val currentIdentityToken: String? = "firebase-current-id-token",
+    private val cancelAcquire: Boolean = false
+) : IdentityTokenProvider {
     var lastProvider: AuthProvider? = null
+    var lastCurrentIdentityProvider: AuthProvider? = null
     var lastEmailRequest: EmailAuthRequest? = null
     var lastResetEmail: String? = null
 
     override suspend fun acquire(provider: AuthProvider): IdentityToken {
+        if (cancelAcquire) throw SocialLoginCancelledException()
         lastProvider = provider
         return IdentityToken(provider, "firebase-id-token", "fcm-token")
+    }
+
+    override suspend fun currentIdentity(provider: AuthProvider): IdentityToken? {
+        lastCurrentIdentityProvider = provider
+        return currentIdentityToken?.let { IdentityToken(provider, it, "fcm-token") }
     }
 
     override suspend fun acquireEmail(request: EmailAuthRequest): IdentityToken {
@@ -432,5 +546,34 @@ private class FakeAuthGateway(
             selectedImage = ProfileImageCandidate(profileImageId, "https://cdn.example/$profileImageId.png", true),
             signupState = SignupState.SIGNUP_COMPLETE
         )
+    }
+}
+
+/** 세션 복원의 재발급만 실패시키는 게이트웨이. 만료(400)와 서버 오류(500)를 갈라 보려고 쓴다. */
+private class FailingRefreshGateway(private val error: Throwable) : AuthGateway {
+    override suspend fun login(identity: IdentityToken): LoginResult {
+        error("이 테스트는 로그인을 부르지 않는다.")
+    }
+
+    override suspend fun refresh(refreshToken: String): ServiceSession = throw error
+
+    override suspend fun nicknameCandidates(): NicknameCandidateResponse {
+        error("이 테스트는 닉네임 후보를 부르지 않는다.")
+    }
+
+    override suspend fun signup(identity: IdentityToken, input: SignupInput): ServiceSession {
+        error("이 테스트는 가입을 부르지 않는다.")
+    }
+
+    override suspend fun profileImages(accessToken: String): ProfileImageCandidates {
+        error("이 테스트는 프로필 이미지를 부르지 않는다.")
+    }
+
+    override suspend fun generateProfileImage(accessToken: String): ProfileImageCandidates {
+        error("이 테스트는 프로필 이미지 생성을 부르지 않는다.")
+    }
+
+    override suspend fun selectProfileImage(accessToken: String, profileImageId: Long): ProfileImageSelectionResult {
+        error("이 테스트는 프로필 이미지 선택을 부르지 않는다.")
     }
 }

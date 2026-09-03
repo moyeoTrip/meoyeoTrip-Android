@@ -42,6 +42,13 @@ class AndroidNetworkMonitor(context: Context) {
         _isOnline.value = connectivityManager.hasValidatedInternet()
     }
 
+    /**
+     * 오프라인 화면의 「다시 시도」. 콜백을 기다리지 않고 지금 상태를 다시 읽는다.
+     * 이 함수가 없어서 호출부가 `onRetry = {}` 를 넘기고 있었다 — 버튼이 아무 일도 안 했다.
+     * iOS 는 `MoyeoConnectivity.retry` 로 같은 일을 한다.
+     */
+    fun retry() = refresh()
+
     fun close() {
         runCatching { connectivityManager.unregisterNetworkCallback(callback) }
     }

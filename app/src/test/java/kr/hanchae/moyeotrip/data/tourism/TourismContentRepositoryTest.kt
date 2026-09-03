@@ -175,42 +175,6 @@ class TourismContentRepositoryTest {
         assertNull(tourismHomepageValue("   "))
         assertNull(tourismHomepageValue(null))
     }
-
-    @Test
-    fun sampleRepositoryMatchesKeywordOnTitleAndAddressLikeTheServer() = runBlocking {
-        val byTitle = SampleTourismContentRepository.contents(keyword = "주왕산")
-        val byAddress = SampleTourismContentRepository.contents(keyword = " 청송 ")
-        val withType = SampleTourismContentRepository.contents(keyword = "청송", contentTypeId = 39)
-
-        assertEquals(listOf("주왕산국립공원"), byTitle.items.map(TourismContentSummary::title))
-        assertEquals(1L, byTitle.totalElements)
-        assertEquals(5, byAddress.items.size)
-        assertEquals(listOf("달기약수터 백숙거리"), withType.items.map(TourismContentSummary::title))
-        assertTrue(SampleTourismContentRepository.contents(keyword = "없는 장소").items.isEmpty())
-    }
-
-    @Test
-    fun unauthorizedOrUnavailableApiFallsBackToDeterministicSample() = runBlocking {
-        val unauthorized = object : TourismContentRepository {
-            override suspend fun contents(
-                keyword: String?,
-                contentTypeId: Int?,
-                page: Int,
-                size: Int
-            ): TourismContentPage = throw TourismContentApiException(401, "Unauthorized")
-
-            override suspend fun content(contentId: String): TourismContentDetail =
-                throw TourismContentApiException(401, "Unauthorized")
-
-            override suspend fun types(): List<TourismContentTypeOption> =
-                throw TourismContentApiException(401, "Unauthorized")
-        }
-        val repository = FallbackTourismContentRepository(unauthorized, SampleTourismContentRepository)
-
-        assertTrue(repository.contents().items.isNotEmpty())
-        assertEquals("달기약수터 백숙거리", repository.content("2299341").summary.title)
-        assertEquals(listOf("관광지", "식당", "숙박"), repository.types().map(TourismContentTypeOption::contentTypeName))
-    }
 }
 
 private class TourismJsonConnection(url: URL, response: String, private val status: Int = HTTP_OK) :

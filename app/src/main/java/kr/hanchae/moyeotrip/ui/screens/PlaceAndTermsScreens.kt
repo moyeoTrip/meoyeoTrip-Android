@@ -1,16 +1,21 @@
 package kr.hanchae.moyeotrip.ui.screens
 
+import android.content.Context
+import android.content.Intent
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -47,6 +52,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -57,24 +63,30 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kr.hanchae.moyeotrip.data.RecruitmentDraftStore
+import kr.hanchae.moyeotrip.data.RouteStop
+import kr.hanchae.moyeotrip.data.auth.AuthDependencies
 import kr.hanchae.moyeotrip.data.terms.TermDetail
-import kr.hanchae.moyeotrip.data.tourism.SampleTourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.TourismContentDetail
 import kr.hanchae.moyeotrip.data.tourism.TourismContentRepository
 import kr.hanchae.moyeotrip.data.tourism.TourismContentSummary
 import kr.hanchae.moyeotrip.data.tourism.TourismContentTypeOption
-import kr.hanchae.moyeotrip.ui.LocalCaptureMode
-import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
 import kr.hanchae.moyeotrip.ui.components.MapMarker
 import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
+import kr.hanchae.moyeotrip.ui.components.MapUnavailablePlaceholder
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 /** 한 글자 칠 때마다 서버를 부르지 않도록 두는 최소 간격. */
@@ -95,6 +107,25 @@ internal enum class TourismContentType(val label: String, val icon: ImageVector)
     companion object {
         fun fromApiId(value: Int): TourismContentType = entries.firstOrNull { it.apiId == value } ?: Spot
     }
+}
+
+/**
+ * 우측 상단 공유(17-1b 방문지 상세 · 08-C 약관 상세) — 안드로이드 공유 시트를 띄운다.
+ *
+ * 웹은 같은 자리에서 `navigator.share`(없으면 클립보드)를 쓴다. 안드로이드에는 그에 대응하는
+ * `ACTION_SEND` 가 있어서 클립보드 대체가 필요하지 않다. 보내는 내용은 화면에 이미 보이는
+ * 값(제목 + 본문)뿐이다 — 좌표처럼 화면에서 뺀 값은 넣지 않는다.
+ *
+ * 받을 앱이 하나도 없으면(에뮬레이터에 공유 대상이 없을 수 있다) 조용히 넘어간다 —
+ * 웹도 사용자가 취소한 경우를 조용히 넘긴다.
+ */
+private fun shareText(context: Context, title: String, body: String) {
+    val send = Intent(Intent.ACTION_SEND).apply {
+        type = "text/plain"
+        putExtra(Intent.EXTRA_SUBJECT, title)
+        putExtra(Intent.EXTRA_TEXT, listOf(title, body).filter(String::isNotBlank).joinToString("\n\n"))
+    }
+    runCatching { context.startActivity(Intent.createChooser(send, title)) }
 }
 
 internal data class TourismPlace(
@@ -125,33 +156,9 @@ internal fun TourismPlace.withServerTypeLabel(options: List<TourismContentTypeOp
     return copy(typeLabel = name)
 }
 
-internal object TourismPlaceCatalog {
-    val places = listOf(
-        TourismPlace("2864117", TourismContentType.Spot, "주왕산국립공원", "경상북도 청송군 부동면 공원길 226", 36.3931, 129.1728),
-        TourismPlace("2871004", TourismContentType.Spot, "주산지", "경상북도 청송군 부동면 주산지길 259", 36.3494, 129.1436),
-        TourismPlace(
-            "2299341",
-            TourismContentType.Food,
-            "달기약수터 백숙거리",
-            "경상북도 청송군 청송읍 약수길 5",
-            36.427812,
-            129.048915,
-            postalCode = "37411",
-            phone = "054-873-7777",
-            phoneLabel = "달기약수터 관리사무소",
-            homepage = "cheongsong.go.kr/tour",
-            description = "탄산이 섞인 달기약수로 끓여내는 백숙이 유명한 거리예요. 산행 뒤 늦은 점심 자리로 많이 찾으며 방문 전 예약 여부를 확인하는 편이 좋아요.",
-            photoCount = 8,
-            menuNames = listOf("닭백숙 정식", "오리 백숙", "한방 삼계탕", "더덕구이")
-        ),
-        TourismPlace("2740882", TourismContentType.Stay, "청송 솔기온천 한옥스테이", "경상북도 청송군 청송읍 금월로 273", 36.4361, 129.0573),
-        TourismPlace("2510773", TourismContentType.Spot, "청송 객주문학관", "경상북도 청송군 진보면 청송로 6359", 36.4739, 129.0093)
-    )
-
-    /** 상세를 받아오기 전 자리값. 목데이터에 없는 서버 방문지면 빈 카드다. */
-    fun placeholder(contentId: String): TourismPlace = places.firstOrNull { it.contentId == contentId }
-        ?: TourismPlace(contentId, TourismContentType.Spot, "", "", 0.0, 0.0)
-}
+/** 상세를 받아오기 전 자리값. 서버 응답이 오기 전까지는 값이 없는 카드다. */
+internal fun emptyTourismPlace(contentId: String): TourismPlace =
+    TourismPlace(contentId, TourismContentType.Spot, "", "", 0.0, 0.0)
 
 @Composable
 fun PlaceSearchScreen(
@@ -159,25 +166,75 @@ fun PlaceSearchScreen(
     onBack: () -> Unit,
     onOpenDetail: (String, String) -> Unit,
     onDone: (String) -> Unit,
-    repository: TourismContentRepository = SampleTourismContentRepository
+    repository: TourismContentRepository
 ) {
-    var query by rememberSaveable { mutableStateOf("청송") }
+    var query by rememberSaveable { mutableStateOf("") }
     var selectedTypeId by rememberSaveable { mutableStateOf<Int?>(null) }
-    var addedIds by rememberSaveable { mutableStateOf(setOf("2864117", "2871004", "2299341")) }
     var showsMap by rememberSaveable { mutableStateOf(false) }
-    var results by remember { mutableStateOf(TourismPlaceCatalog.places) }
-    var totalCount by remember { mutableIntStateOf(TourismPlaceCatalog.places.size) }
-    // 타입 칩 후보는 서버(GET tourism-contents/types)에서 받는다 — 실패하면 목데이터 후보를 쓴다
+    var results by remember { mutableStateOf<List<TourismPlace>>(emptyList()) }
+    var totalCount by remember { mutableIntStateOf(0) }
+    var searchFailed by remember { mutableStateOf(false) }
+    // 담은 방문지는 초안이 근거다 — 화면 안에서만 사는 "이미 담긴 목록"을 미리 채우지 않는다
+    val draft = remember(draftId) { RecruitmentDraftStore.draft(draftId) }
+    val addedIds = remember(draftId) {
+        mutableStateListOf<String>().apply {
+            addAll(draft.routeStops.mapNotNull { it.id.substringAfterLast("place-", "").takeIf(String::isNotEmpty) })
+        }
+    }
+    // 타입 칩 후보는 서버(GET tourism-contents/types)에서 받는다 — 못 받으면 칩 줄이 사라진다
     var typeOptions by remember(repository) { mutableStateOf<List<TourismContentTypeOption>>(emptyList()) }
     LaunchedEffect(repository) {
-        typeOptions = runCatching { repository.types() }.getOrElse { emptyList() }
+        // 위와 같은 이유로 취소를 실패로 보지 않는다 — 보면 칩 줄이 잠깐 사라진다.
+        typeOptions = try {
+            repository.types()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Throwable) {
+            emptyList()
+        }
     }
     // 검색은 서버가 한다(GET tourism-contents?keyword=&contentTypeId=) — 클라이언트에서 다시 거르지 않는다.
     LaunchedEffect(repository, selectedTypeId, typeOptions, query) {
         delay(SEARCH_DEBOUNCE_MILLIS)
-        val page = repository.contents(keyword = query, contentTypeId = selectedTypeId)
-        results = page.items.map { summary -> summary.toPlace().withServerTypeLabel(typeOptions) }
-        totalCount = page.totalElements.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        // `runCatching` 을 쓰면 안 된다 — **코루틴 취소(`CancellationException`)까지 잡아
+        // 실패로 만든다.** 이 효과는 `typeOptions` 가 도착하거나 검색어·타입이 바뀌면 다시
+        // 실행되고, 그때 진행 중이던 요청이 취소되면서 「불러오지 못했어요」가 잠깐 떴다.
+        // 캡처가 그 창을 찍어 매 회차마다 다른 페이지가 실패로 기록됐다(서버는 12회 연속 200).
+        try {
+            val page = repository.contents(keyword = query, contentTypeId = selectedTypeId)
+            searchFailed = false
+            results = page.items.map { summary -> summary.toPlace().withServerTypeLabel(typeOptions) }
+            totalCount = page.totalElements.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        } catch (cancelled: CancellationException) {
+            throw cancelled          // 취소는 실패가 아니다 — 상태를 건드리지 않고 그대로 넘긴다
+        } catch (error: Throwable) {
+            searchFailed = true
+            results = emptyList()
+            totalCount = 0
+        }
+    }
+
+    /** 담기/빼기는 초안 방문지에 바로 반영한다 — 좌표까지 함께 넣어야 코스 미리보기 지도가 그려진다. */
+    fun toggleAdded(place: TourismPlace) {
+        val current = RecruitmentDraftStore.draft(draftId)
+        val stopId = "$draftId-place-${place.contentId}"
+        val updated = if (place.contentId in addedIds) {
+            addedIds.remove(place.contentId)
+            current.routeStops.filterNot { it.id == stopId }
+        } else {
+            addedIds.add(place.contentId)
+            current.routeStops + RouteStop(
+                id = stopId,
+                // 17-1 이 나눠 둔 마지막 날에 담는다 — 날을 늘렸는데 Day 1 로 들어가면 되돌릴 수 없다
+                day = current.dayCount,
+                time = "",
+                name = place.title,
+                memo = place.address,
+                latitude = place.latitude.takeIf { it != 0.0 },
+                longitude = place.longitude.takeIf { it != 0.0 }
+            )
+        }
+        RecruitmentDraftStore.update(current.copy(routeStops = updated))
     }
 
     Scaffold(
@@ -209,86 +266,100 @@ fun PlaceSearchScreen(
             }
         }
     ) { padding ->
-        LazyColumn(
-            Modifier.fillMaxSize().padding(padding).testTag("place-search-screen"),
-            contentPadding = PaddingValues(bottom = 20.dp)
-        ) {
-            item {
-                Column(
-                    Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+        // 검색 입력과 분류 칩은 **고정**이다 — 웹·iOS 처럼 목록만 스크롤된다.
+        // 이전에는 둘을 LazyColumn 의 첫 item 으로 넣어 결과와 함께 밀려 올라갔다.
+        Column(Modifier.fillMaxSize().padding(padding).testTag("place-search-screen")) {
+            Column(
+                Modifier.padding(horizontal = 20.dp, vertical = 8.dp).testTag("place-search-sticky-header"),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth().testTag("place-search-query"),
+                    leadingIcon = { Icon(Icons.Filled.Search, null) },
+                    placeholder = { Text("지역이나 장소 이름") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    OutlinedTextField(
-                        value = query,
-                        onValueChange = { query = it },
-                        modifier = Modifier.fillMaxWidth().testTag("place-search-query"),
-                        leadingIcon = { Icon(Icons.Filled.Search, null) },
-                        placeholder = { Text("지역이나 장소 이름") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp)
-                    )
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        PlaceTypeChip("전체", selectedTypeId == null) { selectedTypeId = null }
-                        typeOptions.forEach { type ->
-                            PlaceTypeChip(type.contentTypeName, selectedTypeId == type.contentTypeId) {
-                                selectedTypeId = type.contentTypeId
-                            }
+                    PlaceTypeChip("전체", selectedTypeId == null) { selectedTypeId = null }
+                    typeOptions.forEach { type ->
+                        PlaceTypeChip(type.contentTypeName, selectedTypeId == type.contentTypeId) {
+                            selectedTypeId = type.contentTypeId
                         }
                     }
-                    if (showsMap) {
-                        // "지도에서 보기" — TourAPI 방문지 좌표를 그대로 실지도 순번 마커로 올린다
-                        val placeMarkers = results
-                            .filter { it.latitude != 0.0 && it.longitude != 0.0 }
-                            .mapIndexed { index, place ->
-                                MapMarker(
-                                    id = "place-${place.contentId}",
-                                    position = MoyeoLatLng(place.latitude, place.longitude),
-                                    shape = MapMarkerShape.Numbered,
-                                    badge = "${index + 1}"
+                }
+            }
+            LazyColumn(
+                Modifier.fillMaxWidth().weight(1f).testTag("place-search-results"),
+                contentPadding = PaddingValues(bottom = 20.dp)
+            ) {
+                item {
+                    Column(
+                        Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (showsMap) {
+                            // "지도에서 보기" — TourAPI 방문지 좌표를 그대로 실지도 순번 마커로 올린다
+                            val placeMarkers = results
+                                .filter { it.latitude != 0.0 && it.longitude != 0.0 }
+                                .mapIndexed { index, place ->
+                                    MapMarker(
+                                        id = "place-${place.contentId}",
+                                        position = MoyeoLatLng(place.latitude, place.longitude),
+                                        shape = MapMarkerShape.Numbered,
+                                        badge = "${index + 1}"
+                                    )
+                                }
+                            // 좌표가 하나도 없으면 지도를 그리지 않는다
+                            if (placeMarkers.isNotEmpty()) {
+                                KakaoMapView(
+                                    center = placeMarkers.first().position,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(150.dp)
+                                        .clip(RoundedCornerShape(12.dp)),
+                                    markers = placeMarkers,
+                                    fallback = { fallbackModifier -> MapUnavailablePlaceholder(fallbackModifier) }
                                 )
                             }
-                        KakaoMapView(
-                            center = placeMarkers.firstOrNull()?.position ?: MoyeoLatLng(36.4361, 129.0573),
-                            modifier = Modifier.fillMaxWidth().height(150.dp).clip(RoundedCornerShape(12.dp)),
-                            markers = placeMarkers,
-                            fallback = { fallbackModifier ->
-                                PlaceScenicPanel(
-                                    kind = PlaceScenicKind.Forest,
-                                    modifier = fallbackModifier,
-                                    cornerRadius = 12.dp
-                                )
-                            }
+                        }
+                        Text(
+                            // 개수는 서버 totalElements 다 — 화면에 그려진 페이지 크기가 아니다.
+                            "${totalCount}곳",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                }
+                if (results.isEmpty()) {
+                    item {
+                        MoyeoEmptyState(
+                            if (searchFailed) MoyeoEmptyText.FAILED else MoyeoEmptyText.NO_SEARCH_RESULTS,
+                            testTag = "place-search-empty"
+                        )
+                    }
+                }
+                items(results, key = TourismPlace::contentId) { place ->
+                    PlaceResultRow(
+                        place = place,
+                        added = place.contentId in addedIds,
+                        onOpen = { onOpenDetail(draftId, place.contentId) },
+                        onToggle = { toggleAdded(place) }
+                    )
+                }
+                item {
                     Text(
-                        // 개수는 서버 totalElements 다 — 화면에 그려진 페이지 크기가 아니다.
-                        "${totalCount}곳 · 주왕산 코스 근처순",
+                        "목록에는 제목·주소·썸네일·좌표만 표시해요. 전화번호와 소개는 상세에서 확인할 수 있어요.",
+                        modifier = Modifier.padding(20.dp),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            }
-            items(results, key = TourismPlace::contentId) { place ->
-                PlaceResultRow(
-                    place = place,
-                    added = place.contentId in addedIds,
-                    onOpen = { onOpenDetail(draftId, place.contentId) },
-                    onToggle = {
-                        addedIds =
-                            if (place.contentId in addedIds) addedIds - place.contentId else addedIds + place.contentId
-                    }
-                )
-            }
-            item {
-                Text(
-                    "목록에는 제목·주소·썸네일·좌표만 표시해요. 전화번호와 소개는 상세에서 확인할 수 있어요.",
-                    modifier = Modifier.padding(20.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }
@@ -319,11 +390,9 @@ private fun PlaceResultRow(place: TourismPlace, added: Boolean, onOpen: () -> Un
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2
             )
-            Text(
-                "${place.latitude}, ${place.longitude}",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // 좌표는 적지 않는다 — 주소 줄이 바로 위에 있고 기획에도 없다.
+            // 웹·iOS 도 목록에서 뺐는데 안드로이드만 `36.5732488352, 128.7683329532` 처럼
+            // 소수점 열 자리를 그대로 보여주고 있었다(핀을 잡는 17-3·18-5·20-2c 만 예외다).
         }
         IconButton(
             onClick = onToggle,
@@ -341,23 +410,35 @@ fun PlaceDetailScreen(
     contentId: String,
     onBack: () -> Unit,
     onAdd: (String) -> Unit,
-    repository: TourismContentRepository = SampleTourismContentRepository
+    repository: TourismContentRepository
 ) {
-    // 로딩 전 자리값은 화면기획 목데이터에 같은 contentId 가 있을 때만 쓴다 —
-    // 서버 방문지에 남의 목데이터를 잠깐이라도 그리지 않는다.
-    var place by remember(contentId) { mutableStateOf(TourismPlaceCatalog.placeholder(contentId)) }
+    var place by remember(contentId) { mutableStateOf(emptyTourismPlace(contentId)) }
     LaunchedEffect(repository, contentId) {
         val types = runCatching { repository.types() }.getOrElse { emptyList() }
         place = repository.content(contentId).toPlace().withServerTypeLabel(types)
     }
     var menuSelected by rememberSaveable { mutableStateOf(false) }
-    // 캡처 라우트에서만 화면기획 목데이터의 사진 수 표기를 유지한다(네트워크를 타지 않는 경로다).
-    val captureMode = LocalCaptureMode.current
+    val shareContext = LocalContext.current
     Scaffold(
         topBar = {
             ChangeLogTopBar("방문지 상세", onBack) {
                 // 화면기획·웹의 우측 상단 공유
-                IconButton(onClick = {}, modifier = Modifier.testTag("place-detail-share")) {
+                IconButton(
+                    onClick = {
+                        // 아직 상세를 못 받았으면 보낼 내용이 없다 — 빈 공유 시트를 띄우지 않는다
+                        if (place.title.isNotBlank()) {
+                            shareText(
+                                context = shareContext,
+                                title = place.title,
+                                body = listOf(place.address, place.description)
+                                    .filter(String::isNotBlank)
+                                    .joinToString("\n\n")
+                            )
+                        }
+                    },
+                    enabled = place.title.isNotBlank(),
+                    modifier = Modifier.testTag("place-detail-share")
+                ) {
                     Icon(Icons.Filled.Share, "방문지 공유", tint = MaterialTheme.colorScheme.onSurface)
                 }
             }
@@ -368,6 +449,27 @@ fun PlaceDetailScreen(
                     OutlinedButton(onBack, Modifier.height(48.dp), shape = RoundedCornerShape(12.dp)) { Text("목록으로") }
                     Button(
                         {
+                            // 예전에는 화면만 되돌리고 초안은 그대로였다 — "담기" 를 눌러도
+                            // 코스에 아무것도 늘지 않았다. 방문지 검색(담기/빼기)과 같은 규칙으로 넣는다.
+                            val current = RecruitmentDraftStore.draft(draftId)
+                            val stopId = "$draftId-place-${place.contentId}"
+                            if (current.routeStops.none { it.id == stopId } &&
+                                current.routeStops.size < RecruitmentDraftStore.MAX_ROUTE_STOPS
+                            ) {
+                                RecruitmentDraftStore.update(
+                                    current.copy(
+                                        routeStops = current.routeStops + RouteStop(
+                                            id = stopId,
+                                            day = current.dayCount,
+                                            time = "",
+                                            name = place.title,
+                                            memo = place.address,
+                                            latitude = place.latitude.takeIf { it != 0.0 },
+                                            longitude = place.longitude.takeIf { it != 0.0 }
+                                        )
+                                    )
+                                )
+                            }
                             onAdd(draftId)
                         },
                         Modifier.weight(
@@ -385,21 +487,28 @@ fun PlaceDetailScreen(
         LazyColumn(Modifier.fillMaxSize().padding(padding).testTag("place-detail-screen")) {
             item {
                 Box {
-                    PlaceImage(Modifier.fillMaxWidth().aspectRatio(1.7f), place)
+                    PlaceImage(
+                        Modifier.fillMaxWidth().aspectRatio(1.7f),
+                        place,
+                        fallbackShape = MoyeoPlaceholderShape.LANDSCAPE
+                    )
                     // 화면기획·웹의 사진 카운터
-                    Surface(
-                        modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
-                        shape = RoundedCornerShape(50),
-                        color = Color.Black.copy(alpha = 0.46f)
-                    ) {
-                        Text(
-                            text = "1/${maxOf(place.photoCount, 1)}",
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                .testTag("place-detail-photo-counter"),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
-                        )
+                    // 사진 카운터는 서버가 준 사진 장수가 근거다 — 사진이 없으면 붙이지 않는다
+                    if (place.photoUrls.isNotEmpty()) {
+                        Surface(
+                            modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                            shape = RoundedCornerShape(50),
+                            color = Color.Black.copy(alpha = 0.46f)
+                        ) {
+                            Text(
+                                text = "1/${place.photoUrls.size}",
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                    .testTag("place-detail-photo-counter"),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color.White,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
                 }
             }
@@ -435,7 +544,9 @@ fun PlaceDetailScreen(
                                 )
                             }
                             if (place.latitude != 0.0 || place.longitude != 0.0) {
-                                DetailInfo(Icons.Filled.Map, "${place.latitude}, ${place.longitude}", "지도에서 열기")
+                                // 좌표가 있을 때만 줄을 그리되 **보여주는 것은 동작 문구**다 —
+                                // 웹·iOS 와 같은 처리. 예전에는 소수점 열 자리가 그대로 보였다.
+                                DetailInfo(Icons.Filled.Map, "지도에서 열기", null)
                             }
                             if (place.homepage.isNotBlank()) {
                                 DetailInfo(Icons.Filled.Share, place.homepage, "홈페이지")
@@ -451,7 +562,7 @@ fun PlaceDetailScreen(
                     val menuCount = place.menuNames.size.takeIf { it > 0 } ?: place.menuImageUrls.size
                     val showsMenu = place.type == TourismContentType.Food && menuCount > 0
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        PlaceTypeChip("사진 ${place.photoLabelCount(captureMode)}", !menuSelected || !showsMenu) {
+                        PlaceTypeChip("사진 ${place.photoUrls.size}", !menuSelected || !showsMenu) {
                             menuSelected = false
                         }
                         if (showsMenu) {
@@ -468,10 +579,10 @@ fun PlaceDetailScreen(
                             }
                         }
                         if (place.menuNames.isEmpty()) {
-                            PlacePhotoRow(place, place.menuImageUrls, captureMode)
+                            PlacePhotoRow(place, place.menuImageUrls)
                         }
                     } else {
-                        PlacePhotoRow(place, place.photoUrls, captureMode)
+                        PlacePhotoRow(place, place.photoUrls)
                     }
                 }
             }
@@ -567,21 +678,34 @@ internal enum class TermsDocument(
 }
 
 @Composable
-fun TermsDetailScreen(documentKey: String, source: String, onBack: () -> Unit, onAgree: () -> Unit = onBack) {
+fun TermsDetailScreen(
+    documentKey: String,
+    source: String,
+    onBack: () -> Unit,
+    onAgree: () -> Unit = onBack,
+    /**
+     * 약관 화면에서 넘겨준 서버 약관 ID. 있으면 이 ID 로 바로 본문을 받는다 —
+     * 제목 키워드로 찾지 않는다. 서버가 약관을 새로 추가해도 키워드 표에 없다는 이유로
+     * 본문을 못 여는 일이 없어야 한다.
+     */
+    serverTermId: Long? = null
+) {
     val document = remember(documentKey) { TermsDocument.fromRoute(documentKey) }
-    // 로그인 상태면 실서버 약관(GET terms → terms/{id})으로 대체한다 — 본문은 마크다운
-    val server = LocalServerData.current
-    var serverTerm by remember(server, documentKey) { mutableStateOf<TermDetail?>(null) }
-    LaunchedEffect(server, documentKey) {
-        serverTerm = if (server == null) {
-            null
-        } else {
-            runCatching {
-                server.terms.terms()
+    val context = LocalContext.current
+    // 약관은 서버가 공개로 열어둔 엔드포인트라 로그인 전에도 받을 수 있다.
+    // 가입 플로우(LocalServerData == null)에서도 본문을 보여줘야 한다.
+    val termsRepository = remember(context) { AuthDependencies.appDefault(context).terms }
+    var serverTerm by remember(documentKey, serverTermId) { mutableStateOf<TermDetail?>(null) }
+    LaunchedEffect(documentKey, serverTermId) {
+        serverTerm = runCatching {
+            if (serverTermId != null) {
+                termsRepository.term(serverTermId)
+            } else {
+                termsRepository.terms()
                     .firstOrNull { it.title.matchesTermsDocument(documentKey) }
-                    ?.let { server.terms.term(it.termId) }
-            }.getOrNull()
-        }
+                    ?.let { termsRepository.term(it.termId) }
+            }
+        }.getOrNull()
     }
     val isRequired = serverTerm?.required ?: document.required
     // 화면기획 08-C~08-G는 흰 페이지 위에 회색 채움 요약 박스다. 기본 배경(#F7F8F7)은
@@ -589,9 +713,23 @@ fun TermsDetailScreen(documentKey: String, source: String, onBack: () -> Unit, o
     Scaffold(
         containerColor = MoyeoTheme.pageSurface,
         topBar = {
-            ChangeLogTopBar(serverTerm?.displayTitle() ?: document.title, onBack) {
-                // 화면기획의 우측 상단 공유
-                IconButton(onClick = {}, modifier = Modifier.testTag("terms-detail-share")) {
+            val shareTitle = serverTerm?.displayTitle() ?: document.title
+            ChangeLogTopBar(shareTitle, onBack) {
+                // 화면기획의 우측 상단 공유. 웹과 같이 화면에 보이는 본문을 그대로 보낸다 —
+                // 서버 약관을 받았으면 그 본문, 못 받았으면 앱에 내장한 조항들이다.
+                IconButton(
+                    onClick = {
+                        shareText(
+                            context = context,
+                            title = shareTitle,
+                            body = serverTerm?.content
+                                ?: document.sections.joinToString("\n\n") { (heading, body) ->
+                                    "## $heading\n\n$body"
+                                }
+                        )
+                    },
+                    modifier = Modifier.testTag("terms-detail-share")
+                ) {
                     Icon(Icons.Filled.Share, "약관 공유", tint = MaterialTheme.colorScheme.onSurface)
                 }
             }
@@ -667,6 +805,19 @@ fun TermsDetailScreen(documentKey: String, source: String, onBack: () -> Unit, o
 
                         is TermBlock.Paragraph ->
                             Text(block.text, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                        is TermBlock.Bullets -> Column(
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            block.items.forEach { item ->
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Text("•", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(item, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+
+                        is TermBlock.Table -> TermTable(block)
                     }
                 }
             } else {
@@ -712,27 +863,87 @@ private fun String.matchesTermsDocument(routeKey: String): Boolean = when (route
     else -> false
 }
 
-/** 서버 약관 본문(마크다운)의 최소 렌더 단위 — 소제목(##)과 문단만 구분한다. */
+/**
+ * 서버 약관 본문(마크다운)의 렌더 단위.
+ *
+ * 이전에는 소제목과 문단만 구분해서, 개인정보 동의의 표가
+ * `| 구분 | 수집 항목 |` 과 구분선 그대로 본문에 노출됐다.
+ */
 private sealed interface TermBlock {
     data class Heading(val text: String) : TermBlock
 
     data class Paragraph(val text: String) : TermBlock
+
+    data class Bullets(val items: List<String>) : TermBlock
+
+    data class Table(val header: List<String>, val rows: List<List<String>>) : TermBlock
 }
 
-private fun String.toTermBlocks(): List<TermBlock> = lineSequence()
-    .map(String::trim)
-    .filter(String::isNotBlank)
-    .mapNotNull { line ->
-        when {
-            line.startsWith("## ") -> TermBlock.Heading(line.removePrefix("## ").trim())
+private fun String.isTableSeparatorLine(): Boolean = startsWith("|") && contains("-") && all { it in " |-:" }
 
-            // 문서 제목(#)은 상단 바가 이미 보여준다
-            line.startsWith("#") -> null
+private fun String.toTableCells(): List<String> = trim('|').split("|").map(String::trim)
 
-            else -> TermBlock.Paragraph(line)
+private fun String.toTermBlocks(): List<TermBlock> {
+    val blocks = mutableListOf<TermBlock>()
+    val bullets = mutableListOf<String>()
+    val tableRows = mutableListOf<List<String>>()
+
+    fun flushBullets() {
+        if (bullets.isNotEmpty()) {
+            blocks += TermBlock.Bullets(bullets.toList())
+            bullets.clear()
         }
     }
-    .toList()
+    fun flushTable() {
+        if (tableRows.isNotEmpty()) {
+            blocks += TermBlock.Table(tableRows.first(), tableRows.drop(1))
+            tableRows.clear()
+        }
+    }
+
+    lineSequence().map(String::trim).forEach { line ->
+        when {
+            line.isBlank() -> {
+                flushBullets()
+                flushTable()
+            }
+
+            // `|---|---|` 는 그리지 않는다. 표가 이어지고 있다는 신호일 뿐이다.
+            line.isTableSeparatorLine() -> Unit
+
+            line.startsWith("|") -> {
+                flushBullets()
+                tableRows += line.toTableCells()
+            }
+
+            line.startsWith("## ") -> {
+                flushBullets()
+                flushTable()
+                blocks += TermBlock.Heading(line.removePrefix("## ").trim())
+            }
+
+            // 문서 제목(#)은 상단 바가 이미 보여준다
+            line.startsWith("#") -> {
+                flushBullets()
+                flushTable()
+            }
+
+            line.startsWith("- ") || line.startsWith("* ") -> {
+                flushTable()
+                bullets += line.drop(2).trim()
+            }
+
+            else -> {
+                flushBullets()
+                flushTable()
+                blocks += TermBlock.Paragraph(line)
+            }
+        }
+    }
+    flushBullets()
+    flushTable()
+    return blocks
+}
 
 @Composable
 private fun ChangeLogTopBar(title: String, onBack: () -> Unit, action: (@Composable () -> Unit)? = null) {
@@ -803,36 +1014,35 @@ private fun PlaceTypeChip(label: String, selected: Boolean, onClick: () -> Unit)
 }
 
 @Composable
-private fun PlaceImage(modifier: Modifier, place: TourismPlace) {
+private fun PlaceImage(
+    modifier: Modifier,
+    place: TourismPlace,
+    // 관광 데이터는 이미지가 간헐적으로 비어 있다. 자리 비율에 맞는 마스코트로 채운다.
+    fallbackShape: MoyeoPlaceholderShape = MoyeoPlaceholderShape.SQUARE
+) {
     CachedRemoteImage(
         url = place.thumbnailUrl ?: place.photoUrls.firstOrNull(),
         contentDescription = place.title,
         modifier = modifier.clip(RoundedCornerShape(10.dp)),
-        contentScale = ContentScale.Crop
+        contentScale = ContentScale.Crop,
+        fallbackShape = fallbackShape
     ) {
         ScenicPlaceholder(modifier, place.type)
     }
 }
 
 /**
- * 사진 개수 표기. 서버 모드에서는 `contentImages` 장수를 그대로 쓴다(없으면 0).
- * 캡처 라우트에서만 화면기획 목데이터의 사진 수를 유지한다.
- */
-private fun TourismPlace.photoLabelCount(captureMode: Boolean): Int =
-    if (captureMode) photoCount.coerceAtLeast(6) else photoUrls.size
-
-/**
- * 사진·메뉴판 타일. 사진 자리표시자는 캡처 라우트(화면기획 목데이터)에서만 채운다 —
- * 서버가 사진을 주지 않은 방문지를 가짜 풍경으로 채우지 않는다.
+ * 사진·메뉴판 타일. 서버가 사진을 주지 않은 방문지는 줄째로 사라진다 —
+ * 가짜 풍경으로 사진 자리를 채우지 않는다.
  */
 @Composable
-private fun PlacePhotoRow(place: TourismPlace, urls: List<String>, captureMode: Boolean) {
-    if (urls.isEmpty() && !captureMode) return
+private fun PlacePhotoRow(place: TourismPlace, urls: List<String>) {
+    if (urls.isEmpty()) return
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val photos = urls.take(3)
         repeat(3) { index ->
             val photo = photos.getOrNull(index)
-            if (photo == null && !captureMode) {
+            if (photo == null) {
                 // 서버가 준 장수만큼만 채우고 남는 칸은 비운다(3열 배치는 유지한다).
                 Spacer(Modifier.weight(1f))
             } else {
@@ -840,7 +1050,8 @@ private fun PlacePhotoRow(place: TourismPlace, urls: List<String>, captureMode: 
                     url = photo,
                     contentDescription = null,
                     modifier = Modifier.weight(1f).aspectRatio(1f).clip(RoundedCornerShape(10.dp)),
-                    contentScale = ContentScale.Crop
+                    contentScale = ContentScale.Crop,
+                    fallbackShape = MoyeoPlaceholderShape.SQUARE
                 ) {
                     ScenicPlaceholder(Modifier.weight(1f).aspectRatio(1f), place.type)
                 }
@@ -889,6 +1100,63 @@ private fun DetailInfo(icon: ImageVector, value: String, caption: String?) {
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+            }
+        }
+    }
+}
+
+/**
+ * 약관 본문의 표.
+ *
+ * 좁은 화면에서 글자를 줄이지 않고 **가로로 스크롤**한다 — 개인정보 동의 표가 4열이다.
+ */
+@Composable
+private fun TermTable(table: TermBlock.Table) {
+    val columnCount = maxOf(table.header.size, table.rows.maxOfOrNull { it.size } ?: 0)
+    val border = MaterialTheme.colorScheme.outlineVariant
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
+            .testTag("term-table")
+    ) {
+        Column(
+            modifier = Modifier
+                .border(1.dp, border, RoundedCornerShape(10.dp))
+                .clip(RoundedCornerShape(10.dp))
+        ) {
+            TermTableRow(table.header, columnCount, isHeader = true, border = border)
+            table.rows.forEach { row ->
+                HorizontalDivider(color = border)
+                TermTableRow(row, columnCount, isHeader = false, border = border)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TermTableRow(cells: List<String>, columnCount: Int, isHeader: Boolean, border: Color) {
+    Row(
+        modifier = Modifier
+            .height(IntrinsicSize.Min)
+            .background(
+                if (isHeader) MoyeoTheme.subtleSurface else MaterialTheme.colorScheme.surface
+            )
+    ) {
+        repeat(columnCount) { index ->
+            Text(
+                text = cells.getOrElse(index) { "" },
+                modifier = Modifier.width(132.dp).padding(horizontal = 10.dp, vertical = 9.dp),
+                style = MaterialTheme.typography.bodySmall,
+                fontWeight = if (isHeader) FontWeight.Bold else FontWeight.Normal,
+                color = if (isHeader) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                }
+            )
+            if (index < columnCount - 1) {
+                Box(Modifier.width(1.dp).fillMaxHeight().background(border))
             }
         }
     }

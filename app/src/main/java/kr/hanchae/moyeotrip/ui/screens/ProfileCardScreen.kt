@@ -1,6 +1,8 @@
 package kr.hanchae.moyeotrip.ui.screens
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.tween
@@ -17,23 +19,30 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.wrapContentHeight
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,20 +57,26 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.data.profile.ServerPublicProfile
 import kr.hanchae.moyeotrip.data.profile.ServerReceivedTravelReview
 import kr.hanchae.moyeotrip.data.social.DexCompanion
 import kr.hanchae.moyeotrip.data.social.DexMemory
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.LocalCaptureMode
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
+import kr.hanchae.moyeotrip.ui.components.MoyeoNicknameAnimal
 import kr.hanchae.moyeotrip.ui.theme.MoyeoUserCardPalette
 import kr.hanchae.moyeotrip.ui.theme.rememberUserCardPalette
-import kotlin.math.abs
-import kotlin.math.cos
-import kotlin.math.sin
 
 /**
  * 25 · 프로필 카드
@@ -84,6 +99,22 @@ fun ProfileCardScreen(
     initialFlipped: Boolean = false
 ) {
     val server = LocalServerData.current
+    val friendScope = rememberCoroutineScope()
+    var friendRequestState by remember(server, userId) {
+        mutableStateOf(
+            if (server == null || userId == null) {
+                ProfileFriendRequestState.Unavailable
+            } else {
+                ProfileFriendRequestState.Idle
+            }
+        )
+    }
+    var friendRequestError by remember(server, userId) { mutableStateOf<String?>(null) }
+    // 자기에게 친구 신청을 걸 수는 없다 — 내 카드에서는 그 버튼을 그리지 않는다.
+    val isMe = remember(server, userId) {
+        val mine = server?.signedInUserId?.invoke()
+        userId != null && mine != null && userId == mine
+    }
     var profile by remember(server, userId) { mutableStateOf<ServerPublicProfile?>(null) }
     var reviews by remember(server, userId) { mutableStateOf<List<ServerReceivedTravelReview>>(emptyList()) }
     LaunchedEffect(server, userId) {
@@ -96,9 +127,6 @@ fun ProfileCardScreen(
         reviews = runCatching { server.userProfile.receivedTravelReviews(userId) }.getOrEmpty()
     }
 
-    // 목데이터로 떨어지는 것은 서버가 없을 때(캡처·목킹 모드)뿐이다.
-    // 로그인 상태에서 조회가 실패했는데 목데이터를 보여주면 남의 프로필을 지어내는 셈이 된다.
-    val captureMode = server == null || userId == null
     val subject = profile?.let { loaded ->
         ProfileCardSubject(
             nickname = loaded.nickname,
@@ -108,16 +136,15 @@ fun ProfileCardScreen(
             travelStyles = loaded.travelStyles.map { it.label },
             mannerRating = loaded.mannerRating,
             // 서버가 주지 않는 값은 null 로 둔다 → 칸이 만들어지지 않는다
-            completedTripCount = null,
-            hostedTripCount = null,
-            feedCount = null,
+            completedTripCount = loaded.completedTripCount,
+            feedCount = loaded.feedCount,
             withMeTripCount = dexCompanion?.tripCount,
             latestTripTitle = dexCompanion?.latestTripTitle,
             latestTripDate = dexCompanion?.latestTripDate,
             memories = dexCompanion?.memories.orEmpty(),
             receivedReviews = reviews.map { ReceivedReview(it.reviewerNickname, it.reviewerNicknameColor, it.content) }
         )
-    } ?: if (captureMode) ProfileCardSubject.capturePreview() else null
+    }
 
     if (subject == null) {
         // 라이브에서 아직 못 받았거나 실패한 상태. 값을 지어내지 않고 비워 둔다.
@@ -125,7 +152,30 @@ fun ProfileCardScreen(
         return
     }
 
-    ProfileCardBody(subject = subject, onBack = onBack, initialFlipped = initialFlipped)
+    ProfileCardBody(
+        subject = subject,
+        onBack = onBack,
+        initialFlipped = initialFlipped,
+        friendRequestState = friendRequestState,
+        friendRequestError = friendRequestError,
+        isMe = isMe,
+        onSendFriendRequest = {
+            // userId 를 모르면 보낼 곳이 없다 — 버튼은 이미 잠겨 있고, 여기서도 아무 일도 하지 않는다.
+            if (server != null && userId != null && friendRequestState == ProfileFriendRequestState.Idle) {
+                friendRequestState = ProfileFriendRequestState.Sending
+                friendRequestError = null
+                friendScope.launch {
+                    runCatching { server.social.sendRequest(userId) }
+                        .onSuccess { friendRequestState = ProfileFriendRequestState.Sent }
+                        .onFailure { error ->
+                            friendRequestState = ProfileFriendRequestState.Idle
+                            // 문구는 웹 20-1a 와 같은 것을 쓴다
+                            friendRequestError = error.message ?: "친구 요청을 보내지 못했어요."
+                        }
+                }
+            }
+        }
+    )
 }
 
 internal data class ReceivedReview(val nickname: String, val nicknameColor: String?, val content: String)
@@ -138,46 +188,14 @@ internal data class ProfileCardSubject(
     val travelStyles: List<String>,
     val mannerRating: Double?,
     val completedTripCount: Int?,
-    val hostedTripCount: Int?,
+    // 호스트 횟수는 기획에 없다 — 서버도 주지 않고 칸도 만들지 않는다(2026-08-26 확정).
     val feedCount: Int?,
     val withMeTripCount: Int?,
     val latestTripTitle: String?,
     val latestTripDate: String?,
     val memories: List<DexMemory>,
     val receivedReviews: List<ReceivedReview>
-) {
-    companion object {
-        /**
-         * 캡처(로그인하지 않은 결정적 모드)에서 쓰는 값. 화면기획 25 와 같다.
-         *
-         * 서버에 없는 지표(여행·호스트·피드 횟수)는 여기서도 null 이다.
-         * 기획(25)에는 정의가 남아 있어 그 세 칸에서 기획 캡처와 다른 것은 정상이다.
-         */
-        fun capturePreview() = ProfileCardSubject(
-            nickname = "우직한 곰 7821",
-            nicknameColor = "ORANGE",
-            profileImageUrl = null,
-            introduction = "사진 찍는 걸 좋아해요. 천천히 걷는 여행을 좋아합니다.",
-            travelStyles = listOf("사진", "자연"),
-            mannerRating = 4.8,
-            // 여행·호스트·피드 횟수는 어떤 서버 응답에도 없다. 캡처 모드에서도 만들지 않는다.
-            completedTripCount = null,
-            hostedTripCount = null,
-            feedCount = null,
-            withMeTripCount = 2,
-            latestTripTitle = "경주 단풍·야경 모임",
-            latestTripDate = "2026.08.23",
-            memories = listOf(
-                DexMemory(0, "경주 단풍·야경 모임", "2026.08.23", "사진 정말 잘 찍어주셨어요!"),
-                DexMemory(0, "주왕산 힐링 트레킹", "2026.06.14", null)
-            ),
-            receivedReviews = listOf(
-                ReceivedReview("고요한 두루미 1130", "SKY_BLUE", "약속 시간을 정확히 지키고 사진도 많이 남겨주셨어요."),
-                ReceivedReview("잔잔한 거북이 9032", "MINT", "걷는 속도를 계속 맞춰줘서 편했습니다.")
-            )
-        )
-    }
-}
+)
 
 private fun <T> Result<List<T>>.getOrEmpty(): List<T> = getOrNull().orEmpty()
 
@@ -193,13 +211,27 @@ private enum class CardPhase { REST, ENTER, FOLLOW }
 private val RestEasing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
 private val EnterEasing = CubicBezierEasing(0.22f, 1f, 0.36f, 1f)
 
+/** 25 "친구 신청" 버튼의 상태. `Unavailable` 은 userId 없이 열린 카드(캡처 진입)다. */
+internal enum class ProfileFriendRequestState { Idle, Sending, Sent, Unavailable }
+
 @Composable
-private fun ProfileCardBody(subject: ProfileCardSubject, onBack: () -> Unit, initialFlipped: Boolean) {
+private fun ProfileCardBody(
+    subject: ProfileCardSubject,
+    onBack: () -> Unit,
+    initialFlipped: Boolean,
+    friendRequestState: ProfileFriendRequestState,
+    friendRequestError: String?,
+    onSendFriendRequest: () -> Unit,
+    /// 내 카드인지 — 자기에게 친구 신청을 걸 수는 없어 그 버튼을 그리지 않는다.
+    isMe: Boolean
+) {
     val palette = rememberUserCardPalette(subject.nicknameColor)
     var phase by remember { mutableStateOf(CardPhase.REST) }
     var pointer by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
     var pressed by remember { mutableStateOf(false) }
-    var flipped by remember { mutableStateOf(initialFlipped) }
+    // 뒤집힘을 **부호 있는 반회전 수**로 센다 — 부호가 방향이다. `Boolean` 이던 동안에는
+    // 어느 쪽으로 밀어도 늘 같은 방향으로 돌았다.
+    var flipTurns by remember { mutableIntStateOf(if (initialFlipped) 1 else 0) }
 
     val spec = when (phase) {
         CardPhase.FOLLOW -> snap<Float>()
@@ -214,7 +246,7 @@ private fun ProfileCardBody(subject: ProfileCardSubject, onBack: () -> Unit, ini
     val holoAngle by animateFloatAsState(105f + (pointer.x - 0.5f) * 90f, spec, label = "holoAngle")
     val holoShift by animateFloatAsState(if (pressed) pointer.x else 0.5f, spec, label = "holoShift")
     val flipRotation by animateFloatAsState(
-        targetValue = if (flipped) 180f else 0f,
+        targetValue = flipTurns * 180f,
         animationSpec = tween(durationMillis = 700, easing = RestEasing),
         label = "cardFlip"
     )
@@ -280,7 +312,8 @@ private fun ProfileCardBody(subject: ProfileCardSubject, onBack: () -> Unit, ini
                             // 가로로 크게 그었으면 뒤집는다. 세로 스크롤과 충돌하지 않게 가로가 더 커야 한다.
                             val flipThreshold = with(density) { 40.dp.toPx() }
                             if (abs(moved.x) > flipThreshold && abs(moved.x) > abs(moved.y)) {
-                                flipped = !flipped
+                                // 스와이프한 방향으로 돈다 — 왼쪽으로 밀면 왼쪽으로 넘어간다.
+                                flipTurns += if (moved.x < 0f) -1 else 1
                             }
                             phase = CardPhase.REST
                             pressed = false
@@ -302,13 +335,33 @@ private fun ProfileCardBody(subject: ProfileCardSubject, onBack: () -> Unit, ini
                         cameraDistance = 14f * density.density
                     }
                 ) {
-                    // Compose 에는 backface-visibility 가 없다. 90도를 넘어가면 뒷면을 직접 그린다.
-                    if (flipRotation <= 90f) {
-                        CardFront(subject = subject, palette = palette, shine = shine, angle = holoAngle, shift = holoShift)
-                    } else {
-                        Box(modifier = Modifier.graphicsLayer { rotationY = 180f }) {
-                            CardBack(subject = subject, palette = palette)
-                        }
+                    // 두 면을 항상 함께 컴포즈해 **같은 크기**를 갖게 한다 — 웹이 뒷면을
+                    // `position:absolute; inset:0` 로 앞면 위에 겹치는 것과 같은 구조다.
+                    // 한 면씩만 그리면 뒷면이 내용만큼만 작아져 뒤집을 때 카드 크기가 튄다.
+                    // Compose 에는 backface-visibility 가 없어 보이지 않는 면은 alpha 로 감춘다.
+                    // 90~270도 구간에서는 뒷면이 앞을 향한다. 음수 회전(왼쪽으로 넘김)과
+                    // 두 바퀴 이상도 같게 다루려면 각도를 0~360 으로 정규화해야 한다.
+                    val facingBack = ((flipRotation % 360f) + 360f) % 360f in 90f..270f
+                    Box(
+                        modifier = Modifier.graphicsLayer { alpha = if (facingBack) 0f else 1f }
+                    ) {
+                        CardFront(
+                            subject = subject,
+                            palette = palette,
+                            shine = shine,
+                            angle = holoAngle,
+                            shift = holoShift
+                        )
+                    }
+                    Box(
+                        modifier = Modifier
+                            .matchParentSize()
+                            .graphicsLayer {
+                                rotationY = 180f
+                                alpha = if (facingBack) 1f else 0f
+                            }
+                    ) {
+                        CardBack(subject = subject, palette = palette)
                     }
                 }
             }
@@ -322,17 +375,45 @@ private fun ProfileCardBody(subject: ProfileCardSubject, onBack: () -> Unit, ini
             verticalAlignment = Alignment.CenterVertically
         ) {
             // 스와이프로도 뒤집히지만, 뒤집을 수 있다는 걸 알 방법이 필요해 버튼도 둔다.
-            TextButton(onClick = { flipped = !flipped }) {
-                Text(text = if (flipped) "앞면" else "뒤집기", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            // 버튼에는 방향이 없다 — 오른쪽으로 돈다.
+            TextButton(onClick = { flipTurns += 1 }) {
+                // 문구를 고정한다 — 누를 때마다 이름이 바뀌면 무엇을 누르는 버튼인지 매번 다시 읽어야 한다.
+                Text(text = "카드 뒤집기", fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
             // DM 기획이 없다 — 여기서 할 수 있는 행동은 친구 신청뿐이다.
-            Button(
-                onClick = {},
-                modifier = Modifier.weight(1f),
+            // POST users/me/friend-requests/{userId}. 라벨은 20-1a 멤버 액션과 같은 것을 쓴다.
+            if (!isMe) Button(
+                onClick = onSendFriendRequest,
+                modifier = Modifier.weight(1f).testTag("profile-card-friend-request"),
+                enabled = friendRequestState == ProfileFriendRequestState.Idle,
                 colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
-                Text(text = "친구 신청", fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = when (friendRequestState) {
+                        ProfileFriendRequestState.Idle -> "친구 신청"
+
+                        ProfileFriendRequestState.Sending -> "보내는 중..."
+
+                        ProfileFriendRequestState.Sent -> "친구 요청을 보냈어요"
+
+                        // 누구인지 모르면(userId 없이 열린 카드) 보낼 곳이 없다 — 왜 못 누르는지 적는다
+                        ProfileFriendRequestState.Unavailable -> "친구 신청"
+                    },
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
+        }
+        friendRequestError?.let { message ->
+            Text(
+                text = message,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, bottom = 20.dp)
+                    .testTag("profile-card-friend-request-error"),
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.error
+            )
         }
     }
 }
@@ -411,7 +492,12 @@ private fun CardFront(
                     verticalAlignment = Alignment.Bottom
                 ) {
                     Text(text = "$count", fontSize = 14.sp, fontWeight = FontWeight.Black, color = palette.chipContent)
-                    Text(text = "회 동행", fontSize = 9.5.sp, fontWeight = FontWeight.ExtraBold, color = palette.chipContent)
+                    Text(
+                        text = "회 동행",
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = palette.chipContent
+                    )
                 }
             }
         }
@@ -441,7 +527,7 @@ private fun CardFront(
                 contentScale = ContentScale.Crop
             ) {
                 // 이미지가 없으면 닉네임에서 뽑은 동물 이모지를 크게 보여준다.
-                Text(text = subject.nickname.profileCardEmoji(), fontSize = 120.sp)
+                Text(text = MoyeoNicknameAnimal.emojiForNickname(subject.nickname), fontSize = 120.sp)
             }
         }
 
@@ -457,7 +543,6 @@ private fun CardFront(
             }
             val stats = buildList {
                 subject.completedTripCount?.let { add("여행" to "$it") }
-                subject.hostedTripCount?.let { add("호스트" to "$it") }
                 subject.feedCount?.let { add("피드" to "$it") }
             }
             if (stats.isNotEmpty()) {
@@ -475,8 +560,18 @@ private fun CardFront(
                                 .padding(vertical = 6.dp),
                             horizontalAlignment = Alignment.CenterHorizontally
                         ) {
-                            Text(text = stat.first, fontSize = 9.sp, fontWeight = FontWeight.ExtraBold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(text = stat.second, fontSize = 13.sp, fontWeight = FontWeight.Black, color = MaterialTheme.colorScheme.onSurface)
+                            Text(
+                                text = stat.first,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = stat.second,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Black,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
                         }
                         if (index < stats.lastIndex) {
                             Box(
@@ -528,13 +623,42 @@ private fun CardFront(
                 }
             }
 
-            if (subject.memories.isNotEmpty() || subject.receivedReviews.isNotEmpty()) {
-                Text(
-                    text = "옆으로 밀면 함께한 여행과 평가를 볼 수 있어요",
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+            // 뒷면에 볼 것이 하나라도 있을 때만 안내한다 — 매너 점수만 있어도 볼 것이 있다.
+            if (subject.mannerRating != null
+                || subject.memories.isNotEmpty()
+                || subject.receivedReviews.isNotEmpty()
+            ) {
+                // iOS·웹에는 화살표가 있는데 안드로이드에만 없었다 — 같은 안내는 같게 보여야 한다.
+                // 화살표를 3dp 폭으로 두 번 왕복시켜 "옆으로 밀 수 있다"를 알린다. 들여다보는
+                // 화면이라 계속 움직이지 않고, 캡처에서는 아예 움직이지 않는다.
+                val captureMode = LocalCaptureMode.current
+                val nudge = remember { Animatable(0f) }
+                LaunchedEffect(captureMode) {
+                    if (captureMode) return@LaunchedEffect
+                    repeat(2) {
+                        nudge.animateTo(3f, tween(620, easing = LinearOutSlowInEasing))
+                        nudge.animateTo(0f, tween(620, easing = LinearOutSlowInEasing))
+                    }
+                }
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(5.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .size(12.dp)
+                            .offset(x = nudge.value.dp)
+                    )
+                    Text(
+                        text = "옆으로 밀면 함께한 여행과 평가를 볼 수 있어요",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -544,6 +668,8 @@ private fun CardFront(
 private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette) {
     Column(
         modifier = Modifier
+            // 앞면과 같은 크기를 채운다. 내용이 넘치면 아래 스크롤 영역이 받는다.
+            .fillMaxSize()
             .clip(RoundedCornerShape(18.dp))
             .background(
                 Brush.linearGradient(
@@ -577,6 +703,7 @@ private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette)
 
         Column(
             modifier = Modifier
+                .weight(1f)
                 .verticalScroll(rememberScrollState())
                 .padding(start = 14.dp, end = 14.dp, bottom = 12.dp),
             verticalArrangement = Arrangement.spacedBy(9.dp)
@@ -591,7 +718,12 @@ private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette)
                         .padding(horizontal = 11.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.Bottom
                 ) {
-                    Text(text = formatRating(rating), fontSize = 19.sp, fontWeight = FontWeight.Black, color = palette.chipContent)
+                    Text(
+                        text = formatRating(rating),
+                        fontSize = 19.sp,
+                        fontWeight = FontWeight.Black,
+                        color = palette.chipContent
+                    )
                     Text(text = "점", fontSize = 10.5.sp, fontWeight = FontWeight.ExtraBold, color = palette.chipContent)
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
@@ -635,9 +767,13 @@ private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette)
                 }
             }
 
-            // 받은 게 없으면 섹션을 만들지 않는다.
+            // 평가 칸은 **0건이어도 그린다** — 제목만 남고 아래가 비면 고장으로 읽힌다.
+            // 뒷면에 다른 내용이 하나라도 있을 때만이다.
             // 도감의 oneLineReview 는 "내가 남긴" 값이라 여기 섞으면 안 된다.
-            if (subject.receivedReviews.isNotEmpty()) {
+            if (subject.receivedReviews.isNotEmpty()
+                || subject.mannerRating != null
+                || subject.memories.isNotEmpty()
+            ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
                         text = "다른 여행자들이 남긴 평가",
@@ -645,6 +781,16 @@ private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette)
                         fontWeight = FontWeight.ExtraBold,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
+                    if (subject.receivedReviews.isEmpty()) {
+                        Text(
+                            text = MoyeoEmptyText.NO_RECEIVED_REVIEWS,
+                            fontSize = 10.5.sp,
+                            lineHeight = 15.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("profile-back-no-reviews")
+                        )
+                    }
                     subject.receivedReviews.forEach { review ->
                         // 강조선은 남긴 사람의 색 — 카드 주인 색과 헷갈리지 않게.
                         val reviewerPalette = rememberUserCardPalette(review.nicknameColor)
@@ -673,11 +819,31 @@ private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette)
                     }
                 }
             }
+            // 매너 점수도 함께한 여행도 평가도 없으면 뒷면이 통째로 비어 있었다 —
+            // 뒤집어 봤는데 아무것도 없으면 고장으로 읽힌다.
+            if (subject.mannerRating == null
+                && subject.memories.isEmpty()
+                && subject.receivedReviews.isEmpty()
+            ) {
+                Text(
+                    text = MoyeoEmptyText.NO_COMPANION_HISTORY,
+                    fontSize = 11.sp,
+                    lineHeight = 16.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = palette.chipContent.copy(alpha = 0.75f),
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // 한 줄이 위에 붙어 있으면 카드가 여전히 비어 보인다 — 남은 자리 가운데 놓는다.
+                        .heightIn(min = 190.dp)
+                        .wrapContentHeight(Alignment.CenterVertically)
+                        .testTag("profile-back-empty")
+                )
+            }
         }
     }
 }
 
-/** 4.8 처럼 소수 첫째 자리까지. 5.0 을 "5"로 줄이지 않는다(평균값임이 드러나야 한다). */
 /** 라벨 + 값 한 줄. 앞면의 `매너 점수` · `최근 동행` 이 같은 정렬을 쓴다. */
 @Composable
 private fun ProfileCardMetaRow(label: String, value: String) {
@@ -698,21 +864,8 @@ private fun ProfileCardMetaRow(label: String, value: String) {
     }
 }
 
+/** 4.8 처럼 소수 첫째 자리까지. 5.0 을 "5"로 줄이지 않는다(평균값임이 드러나야 한다). */
 private fun formatRating(value: Double): String = String.format("%.1f", value)
-
-private fun String.profileCardEmoji(): String = when {
-    "곰" in this -> "🐻"
-    "토끼" in this -> "🐰"
-    "고양이" in this -> "🐱"
-    "여우" in this -> "🦊"
-    "사슴" in this || "고라니" in this -> "🦌"
-    "두루미" in this || "두루" in this -> "🕊️"
-    "거북" in this -> "🐢"
-    "기린" in this -> "🦒"
-    "너구리" in this -> "🦝"
-    "다람쥐" in this -> "🐿️"
-    else -> "🐾"
-}
 
 @Composable
 private fun ProfileCardPlaceholder(onBack: () -> Unit) {

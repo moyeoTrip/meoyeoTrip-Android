@@ -69,7 +69,7 @@ class RecentSearchPolicyTest {
 
     @Test
     fun inMemoryStoreUsedByCaptureKeepsPlanningMockData() {
-        val store = InMemoryRecentSearchStore(PLANNING_RECENT_SEARCHES)
+        val store = InMemoryRecentSearchStore(listOf("경주", "단풍", "황리단길", "안동 한옥", "주왕산"))
 
         assertEquals(listOf("경주", "단풍", "황리단길", "안동 한옥", "주왕산"), store.keywords.value)
 

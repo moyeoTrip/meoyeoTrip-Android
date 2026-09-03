@@ -1,6 +1,7 @@
 package kr.hanchae.moyeotrip.data.profile
 
 import kr.hanchae.moyeotrip.data.api.MoyeoApiClient
+import kr.hanchae.moyeotrip.data.api.intOrNull
 import kr.hanchae.moyeotrip.data.api.mapArray
 import kr.hanchae.moyeotrip.data.api.mapObjects
 import kr.hanchae.moyeotrip.data.api.stringOrNull
@@ -40,7 +41,14 @@ data class ServerPublicProfile(
     val introduction: String?,
     val travelStyles: List<ProfileOption>,
     val interestedRegions: List<ProfileOption>,
-    val mannerRating: Double?
+    val mannerRating: Double?,
+    /**
+     * 완료한 여행 수 · 공개 피드 수 (2026-08-26 추가).
+     *
+     * 호스트 횟수는 **기획에 없다** — 서버도 주지 않고 화면에도 칸을 만들지 않는다.
+     */
+    val completedTripCount: Int?,
+    val feedCount: Int?
 )
 
 /**
@@ -114,7 +122,9 @@ private fun JSONObject.toPublicProfile() = ServerPublicProfile(
     introduction = stringOrNull("introduction"),
     travelStyles = mapArray("travelStyles", JSONObject::toStyleOption),
     interestedRegions = mapArray("interestedRegions", JSONObject::toRegionOption),
-    mannerRating = if (isNull("mannerRating")) null else optDouble("mannerRating")
+    mannerRating = if (isNull("mannerRating")) null else optDouble("mannerRating"),
+    completedTripCount = intOrNull("completedTripCount"),
+    feedCount = intOrNull("feedCount")
 )
 
 private fun JSONObject.toReceivedReview() = ServerReceivedTravelReview(

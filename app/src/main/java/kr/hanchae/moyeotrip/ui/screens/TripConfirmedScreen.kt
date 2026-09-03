@@ -2,7 +2,7 @@ package kr.hanchae.moyeotrip.ui.screens
 
 import android.provider.Settings
 import androidx.compose.animation.core.Animatable
-import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -38,7 +38,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,14 +55,45 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import kr.hanchae.moyeotrip.R
+import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
+import kr.hanchae.moyeotrip.data.rooms.RoomMembers
+import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.emphasized
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
+/**
+ * 20-4 여행 확정 모먼트.
+ *
+ * `확정된 여행` 카드는 **상세 응답**(`GET chat-rooms/{id}`)이 근거다 — 일정·집합·최소 인원은
+ * 목록 응답(`GET chat-rooms/my`)에 없다. 웹도 같은 방식이다(`screens-additions3.jsx` `confirmedRows`).
+ *
+ * 대상 방은 [tripId] 로 받는다. 없으면 내 모임에서 `CONFIRMED` 방을 찾는다 —
+ * 예전에는 `!ended` 까지 걸어서 실서버의 확정된 방(101 · 61) 둘 다 걸러졌고,
+ * 그 결과 제목·인원 문구·카드가 통째로 빈 화면이 찍혔다. 확정 카드는 여행이 끝난 뒤에도 성립한다.
+ */
 @Composable
-fun TripConfirmedScreen(onBack: () -> Unit, onOpenChat: () -> Unit) {
+fun TripConfirmedScreen(tripId: String? = null, onBack: () -> Unit, onOpenChat: (Long) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val scrollState = rememberScrollState()
+    val server = LocalServerData.current
+    val requestedRoomId = tripId?.serverRoomIdOrNull()
+    var room by remember(server, requestedRoomId) { mutableStateOf<ChatRoomDetail?>(null) }
+    var members by remember(server, requestedRoomId) { mutableStateOf<RoomMembers?>(null) }
+    LaunchedEffect(server, requestedRoomId) {
+        if (server == null) return@LaunchedEffect
+        // 지정된 방이 없으면 내 모임에서 확정된 방을 찾는다. 진행 중인 방을 먼저 본다.
+        val roomId = requestedRoomId ?: runCatching {
+            val mine = server.chatRooms.myRooms().filter { it.status == "CONFIRMED" }
+            (mine.firstOrNull { !it.ended } ?: mine.firstOrNull())?.roomId
+        }.getOrNull()
+        // 확정 모먼트 화면이라 `CONFIRMED` 인 방만 그린다 — 모집 중인 방의 값으로
+        // "여행이 확정됐어요!" 를 그리면 화면이 거짓말을 한다.
+        val detail = roomId?.let { runCatching { server.chatRooms.room(it) }.getOrNull() }
+        room = detail?.takeIf { it.status == "CONFIRMED" }
+        members = room?.roomId?.let { runCatching { server.chatRooms.members(it) }.getOrNull() }
+    }
 
     Box(
         modifier = Modifier
@@ -76,7 +110,7 @@ fun TripConfirmedScreen(onBack: () -> Unit, onOpenChat: () -> Unit) {
                     Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
                 }
                 Text(
-                    text = "주왕산 & 주산지 힐링 트레킹",
+                    text = room?.title.orEmpty(),
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.titleMedium,
                     textAlign = TextAlign.Center,
@@ -115,20 +149,22 @@ fun TripConfirmedScreen(onBack: () -> Unit, onOpenChat: () -> Unit) {
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.ExtraBold
                 )
-                Text(
-                    // 화면기획 20-4는 모인 인원만 굵은 초록으로 강조한다
-                    text = emphasized(
-                        "5월 22일 마감까지 5명이 모였어요.\n이제 함께 떠나기만 하면 돼요.",
-                        "5명",
-                        boldWeight = FontWeight.ExtraBold,
-                        boldColor = MoyeoTheme.tints.primaryEmphasis
-                    ),
-                    modifier = Modifier.padding(top = 8.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = colors.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-                ConfirmedTripCard()
+                members?.let { loadedMembers ->
+                    Text(
+                        // 화면기획 20-4는 모인 인원만 굵은 초록으로 강조한다
+                        text = emphasized(
+                            "${loadedMembers.participantCount}명이 모였어요.\n이제 함께 떠나기만 하면 돼요.",
+                            "${loadedMembers.participantCount}명",
+                            boldWeight = FontWeight.ExtraBold,
+                            boldColor = MoyeoTheme.tints.primaryEmphasis
+                        ),
+                        modifier = Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colors.onSurfaceVariant,
+                        textAlign = TextAlign.Center
+                    )
+                }
+                room?.let { confirmed -> ConfirmedTripCard(room = confirmed, members = members) }
                 Surface(
                     modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
                     shape = RoundedCornerShape(12.dp),
@@ -176,7 +212,9 @@ fun TripConfirmedScreen(onBack: () -> Unit, onOpenChat: () -> Unit) {
             shadowElevation = 8.dp
         ) {
             Button(
-                onClick = onOpenChat,
+                // 확정된 방을 못 읽었으면 갈 채팅방이 없다
+                onClick = { room?.roomId?.let(onOpenChat) },
+                enabled = room != null,
                 modifier = Modifier.fillMaxWidth().padding(
                     start = 20.dp,
                     top = 10.dp,
@@ -193,7 +231,7 @@ fun TripConfirmedScreen(onBack: () -> Unit, onOpenChat: () -> Unit) {
 }
 
 @Composable
-private fun ConfirmedTripCard() {
+private fun ConfirmedTripCard(room: ChatRoomDetail, members: RoomMembers?) {
     val colors = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth().padding(top = 20.dp),
@@ -212,22 +250,36 @@ private fun ConfirmedTripCard() {
                     fontWeight = FontWeight.ExtraBold
                 )
             }
-            ConfirmedInfoRow(Icons.Filled.CalendarMonth, "5/25(토) 당일치기 · 08:00 - 18:00")
-            ConfirmedInfoRow(Icons.Filled.LocationOn, "07:50 청송 시외버스터미널 정문 앞")
-            ConfirmedInfoRow(Icons.Filled.Groups, "3명 · 최소 3명 충족")
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
-                listOf("🐻", "🦌", "🐰", "🐢").forEachIndexed { index, emoji ->
-                    Surface(
-                        modifier = Modifier.size(30.dp).graphicsLayer { translationX = (-index * 4).dp.toPx() },
-                        shape = CircleShape,
-                        color = colors.surface,
-                        border = BorderStroke(1.dp, colors.primaryContainer)
-                    ) {
-                        Box(contentAlignment = Alignment.Center) { Text(emoji) }
+            // 서버가 주는 값만 적는다 — 집합 안내처럼 없는 값은 줄째로 빠진다
+            ConfirmedInfoRow(
+                Icons.Filled.CalendarMonth,
+                listOfNotNull(room.scheduleText(), room.travelHoursText()).joinToString(" · ")
+            )
+            room.meetingText()?.let { meeting -> ConfirmedInfoRow(Icons.Filled.LocationOn, meeting) }
+            // 최소 인원은 서버 상세가 줄 때만 적는다. `충족` 은 실제로 넘겼을 때만 붙인다 —
+            // 미달인 방에 붙이면 화면이 사실과 다른 말을 한다.
+            ConfirmedInfoRow(
+                Icons.Filled.Groups,
+                buildString {
+                    append("${room.participantCount}명")
+                    room.minimumParticipants?.let { minimum ->
+                        append(" · 최소 ${minimum}명")
+                        if (room.participantCount >= minimum) append(" 충족")
                     }
                 }
-                Surface(modifier = Modifier.size(30.dp), shape = CircleShape, color = colors.surfaceVariant) {
-                    Box(contentAlignment = Alignment.Center) { Text("+1", style = MaterialTheme.typography.labelSmall) }
+            )
+            members?.let { loadedMembers ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    loadedMembers.members.take(5).forEachIndexed { index, member ->
+                        Box(modifier = Modifier.graphicsLayer { translationX = (-index * 4).dp.toPx() }) {
+                            UserAvatar(
+                                imageUrl = member.profileImageUrl,
+                                nickname = member.nickname,
+                                modifier = Modifier.size(30.dp),
+                                fallbackFontSize = 14.sp
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -263,25 +315,70 @@ private fun ConfettiBurst(modifier: Modifier = Modifier) {
         Color(0xFF6CB08B),
         Color(0xFFE4A43A)
     )
-    LaunchedEffect(motionEnabled) {
-        if (motionEnabled) progress.animateTo(1f, tween(900, easing = FastOutSlowInEasing))
+
+    // 조각마다 다른 출발 위치·낙하 속도·좌우 흔들림·회전 속도를 **한 번만** 뽑아 둔다.
+    // 예전에는 `index * 37 % 96` 같은 규칙으로 만들어서 눈에 패턴이 보였고,
+    // `rotate(...)` 로 조각의 **위치까지** 돌려 원을 그리는 것처럼 움직였다
+    // (2026-08-31 사용자 지적: "정해진 패턴으로 원으로 돌기만하네").
+    //
+    // 매 프레임 난수를 뽑으면 조각이 튀므로 `remember` 로 고정한다.
+    val pieces = remember {
+        val random = java.util.Random(20260831)
+        List(26) {
+            ConfettiPiece(
+                startXRatio = random.nextFloat(),
+                startYRatio = -0.15f - random.nextFloat() * 0.35f, // 화면 위에서 시작
+                fallRatio = 1.25f + random.nextFloat() * 0.5f, // 화면 아래까지 지나간다
+                swayDp = -26f + random.nextFloat() * 52f,
+                swayCycles = 1.2f + random.nextFloat() * 1.6f,
+                spinTurns = -1.5f + random.nextFloat() * 3f,
+                widthDp = 5f + random.nextFloat() * 5f,
+                delay = random.nextFloat() * 0.35f
+            )
+        }
     }
+
+    LaunchedEffect(motionEnabled) {
+        if (motionEnabled) progress.animateTo(1f, tween(2200, easing = LinearEasing))
+    }
+
     Canvas(modifier = modifier) {
-        repeat(18) { index ->
-            val startX = size.width * (((index * 37) % 96) / 100f)
-            val startY = size.height * ((6 + ((index * 53) % 34)) / 100f)
-            val drift = (-34 + ((index * 29) % 72)).dp.toPx() * progress.value
-            val fall = 84.dp.toPx() * progress.value
-            val pieceWidth = (6 + (index % 3) * 3).dp.toPx()
-            val alpha = if (motionEnabled) (1f - progress.value * .45f).coerceAtLeast(0f) else .7f
-            rotate((index * 47f) + progress.value * 220f, pivot = androidx.compose.ui.geometry.Offset(startX, startY)) {
+        pieces.forEachIndexed { index, piece ->
+            // 조각마다 조금 늦게 출발해 한꺼번에 쏟아지지 않는다.
+            val local = ((progress.value - piece.delay) / (1f - piece.delay)).coerceIn(0f, 1f)
+            if (local <= 0f) return@forEachIndexed
+
+            val x = size.width * piece.startXRatio +
+                piece.swayDp.dp.toPx() * kotlin.math.sin(local * piece.swayCycles * 2f * Math.PI.toFloat())
+            val y = size.height * (piece.startYRatio + piece.fallRatio * local)
+            val width = piece.widthDp.dp.toPx()
+            // 끝에서 서서히 사라진다 — 바닥에 쌓인 것처럼 남지 않는다.
+            val alpha = if (!motionEnabled) .7f else (1f - ((local - .7f) / .3f)).coerceIn(0f, 1f)
+            if (alpha <= 0f) return@forEachIndexed
+
+            rotate(
+                degrees = piece.spinTurns * 360f * local,
+                pivot = androidx.compose.ui.geometry.Offset(x + width / 2f, y + width * .25f)
+            ) {
                 drawRoundRect(
                     color = palette[index % palette.size].copy(alpha = alpha),
-                    topLeft = androidx.compose.ui.geometry.Offset(startX + drift, startY + fall),
-                    size = androidx.compose.ui.geometry.Size(pieceWidth, pieceWidth * .5f),
+                    topLeft = androidx.compose.ui.geometry.Offset(x, y),
+                    size = androidx.compose.ui.geometry.Size(width, width * .5f),
                     cornerRadius = androidx.compose.ui.geometry.CornerRadius(2.dp.toPx())
                 )
             }
         }
     }
 }
+
+/** 조각 하나의 고정된 성질. 매 프레임 난수를 뽑으면 조각이 튄다. */
+private data class ConfettiPiece(
+    val startXRatio: Float,
+    val startYRatio: Float,
+    val fallRatio: Float,
+    val swayDp: Float,
+    val swayCycles: Float,
+    val spinTurns: Float,
+    val widthDp: Float,
+    val delay: Float
+)

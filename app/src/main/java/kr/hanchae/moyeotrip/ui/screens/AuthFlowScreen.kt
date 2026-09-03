@@ -1,5 +1,6 @@
 package kr.hanchae.moyeotrip.ui.screens
 
+import android.util.Log
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -53,7 +54,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.VerticalDivider
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -88,23 +88,24 @@ import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.R
-import kr.hanchae.moyeotrip.data.MockTripRepository
 import kr.hanchae.moyeotrip.data.auth.AuthDependencies
+import kr.hanchae.moyeotrip.data.profile.ProfileOption
+import kr.hanchae.moyeotrip.data.terms.TermSummary
 import kr.hanchae.moyeotrip.domain.auth.AuthDestination
 import kr.hanchae.moyeotrip.domain.auth.AuthFlowCoordinator
 import kr.hanchae.moyeotrip.domain.auth.AuthFlowState
 import kr.hanchae.moyeotrip.domain.auth.AuthProvider
-import kr.hanchae.moyeotrip.domain.auth.EmailAuthAction
 import kr.hanchae.moyeotrip.domain.auth.EmailAuthRequest
 import kr.hanchae.moyeotrip.domain.auth.Gender
 import kr.hanchae.moyeotrip.domain.auth.NicknameCandidate
 import kr.hanchae.moyeotrip.domain.auth.NicknameSelectionState
 import kr.hanchae.moyeotrip.domain.auth.ProfileImageCandidate
-import kr.hanchae.moyeotrip.domain.auth.ProfileImageCandidates
-import kr.hanchae.moyeotrip.domain.auth.SignupState
 import kr.hanchae.moyeotrip.notifications.MoyeoPushTokenStore
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
+import kr.hanchae.moyeotrip.ui.components.MoyeoNicknameAnimal
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -120,7 +121,8 @@ fun AuthFlowScreen(
     val dependencies = remember(providedDependencies, context) {
         providedDependencies ?: AuthDependencies.appDefault(context)
     }
-    var authState by remember(initialStepKey) { mutableStateOf(previewAuthState(initialStepKey)) }
+    // 가입 상태는 서버 응답이 채운다 — 캡처 진입이라고 예시 닉네임·후보를 미리 심지 않는다
+    var authState by remember(initialStepKey) { mutableStateOf(AuthFlowState()) }
     val coordinator = remember(dependencies) {
         AuthFlowCoordinator(
             identityTokenProvider = dependencies.identityTokenProvider,
@@ -136,48 +138,66 @@ fun AuthFlowScreen(
     }
     val coroutineScope = rememberCoroutineScope()
     var lastProviderName by rememberSaveable { mutableStateOf(AuthProvider.KAKAO.name) }
-    var selectedBirth by rememberSaveable(initialStepKey) {
-        mutableStateOf(if (initialStepKey in setOf("profile-basic", "terms")) "1998-04-12" else "")
-    }
+    // 생년월일은 사용자가 직접 고르는 값이다. 캡처 진입에서도 미리 채우지 않는다 —
+    // 채워두면 캡처가 실제 첫 화면이 아니라 값이 들어간 화면을 찍는다.
+    var selectedBirth by rememberSaveable(initialStepKey) { mutableStateOf("") }
     // 성별은 사용자가 직접 고르는 값이다. 화면기획·웹과 같이 진입 시점에는 아무것도 고르지 않는다.
     var selectedGender by rememberSaveable(initialStepKey) { mutableStateOf("") }
     var email by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
-    var passwordConfirmation by rememberSaveable { mutableStateOf("") }
-    var emailActionName by rememberSaveable { mutableStateOf(EmailAuthAction.SIGN_IN.name) }
+
+    // 약관은 **서버가 주는 목록**을 그대로 그린다(GET /api/v1/terms · 인증 불필요).
+    // 클라가 약관을 갖지 않는다 — 서버에서 늘거나 줄면 화면도 따라 바뀐다.
+    // 동의한 termId 는 회원가입 요청의 agreedTermIds 로 보낸다(없으면 서버가 400 40012).
+    var serverTerms by remember { mutableStateOf<List<TermSummary>>(emptyList()) }
+    var termsLoading by remember { mutableStateOf(false) }
+    var termsLoadFailed by remember { mutableStateOf(false) }
+    // Set 은 rememberSaveable 로 저장할 수 없어 취향과 같은 방식으로 문자열에 인코딩한다.
+    var agreedTermIdsRaw by rememberSaveable { mutableStateOf("") }
+    val agreedTermIds = decodeTermIds(agreedTermIdsRaw)
+    // "만 18세 이상"은 서버 약관이 아니다 — 서버는 birthDate 로 나이를 검증하고 약관 목록에 연령 항목이 없다.
+    // 화면기획이 이 확인을 요구하므로 목록과 분리해 맨 위에 둔다. agreedTermIds 에는 넣지 않는다.
     var agreedAge by rememberSaveable { mutableStateOf(false) }
-    var agreedService by rememberSaveable { mutableStateOf(false) }
-    var agreedPrivacy by rememberSaveable { mutableStateOf(false) }
-    var agreedLocation by rememberSaveable { mutableStateOf(false) }
-    var agreedMarketing by rememberSaveable { mutableStateOf(false) }
-    var termsDetailDocument by rememberSaveable { mutableStateOf<String?>(null) }
-    // changeLog13 — 여행 취향. Set은 rememberSaveable로 저장할 수 없어 문자열로 인코딩해 둔다.
-    var selectedTravelStyles by rememberSaveable(initialStepKey) {
-        mutableStateOf(DefaultTravelStyles.joinToString(","))
-    }
-    var selectedInterestRegions by rememberSaveable(initialStepKey) {
-        mutableStateOf(DefaultInterestRegions.joinToString(","))
-    }
-    val travelStyleSelection = decodeTasteSelection(selectedTravelStyles)
-    val interestRegionSelection = decodeTasteSelection(selectedInterestRegions)
+    var termsDetailId by rememberSaveable { mutableStateOf<Long?>(null) }
+    var reloadTerms by remember { mutableStateOf(0) }
+
+    // 06-1 취향 후보도 **서버가 주는 목록**을 그대로 그린다(GET /api/v1/users/me/profile/options · 인증 불필요).
+    // 클라가 스타일·지역 표를 갖지 않는다 — 서버 시드가 바뀌면 화면도 따라 바뀐다(정본 2-2).
+    var styleOptions by remember { mutableStateOf<List<ProfileOption>>(emptyList()) }
+    var regionOptions by remember { mutableStateOf<List<ProfileOption>>(emptyList()) }
+    var tasteLoading by remember { mutableStateOf(false) }
+    var tasteLoadFailed by remember { mutableStateOf(false) }
+    var reloadTaste by remember { mutableStateOf(0) }
+    // 취향은 아무것도 고르지 않은 상태로 시작한다 — 고르지 않은 취향을 본인 것으로 저장하지 않는다.
+    // 담는 값은 라벨이 아니라 서버 id 다. 가입 요청이 id 를 그대로 실어 보낸다(정본 R4).
+    var selectedTravelStyles by rememberSaveable(initialStepKey) { mutableStateOf("") }
+    var selectedInterestRegions by rememberSaveable(initialStepKey) { mutableStateOf("") }
+    val travelStyleSelection = decodeTasteIds(selectedTravelStyles)
+    val interestRegionSelection = decodeTasteIds(selectedInterestRegions)
     val step = AuthStep.valueOf(stepName)
 
     LaunchedEffect(coordinator, initialStepKey) {
         if (initialStepKey == null) coordinator.restoreSession()
     }
 
+    // 07 프로필 이미지 단계는 화면이 열릴 때 서버 후보를 직접 읽는다.
+    // 로그인·세션 복원을 거치지 않고 이 단계로 들어오면 후보도 남은 생성 횟수도 서버에 물은 적이 없어
+    // 빈 화면 + "0회 남음" 이 그려졌다. 서버가 40919 를 주면 조용히 홈으로 넘어간다(가입 게이트 정본 R2).
+    //
+    // 단, 단계를 **직접 지정해서** 연 진입(`initialStepKey`, QA·번호별 비교 캡처)에서는 넘기지 않는다.
+    // 가입을 마친 계정으로 열면 서버가 늘 40919 를 주므로, 넘기면 07 자리에 홈 화면이 찍힌다.
+    LaunchedEffect(coordinator, step, initialStepKey) {
+        if (step == AuthStep.CHARACTER) {
+            coordinator.loadProfileImageCandidates(advanceWhenAlreadyComplete = initialStepKey == null)
+        }
+    }
+
     LaunchedEffect(authState.destination) {
         when (authState.destination) {
             AuthDestination.LOGIN -> Unit
-
             AuthDestination.NICKNAME -> stepName = AuthStep.NICKNAME.name
-
             AuthDestination.PROFILE_IMAGE -> stepName = AuthStep.CHARACTER.name
-
-            AuthDestination.COMPLETE -> {
-                MockTripRepository.completeAuthFlow()
-                onComplete()
-            }
+            AuthDestination.COMPLETE -> onComplete()
         }
     }
 
@@ -197,6 +217,8 @@ fun AuthFlowScreen(
 
             AuthStep.EMAIL -> AuthStep.LOGIN.name
 
+            AuthStep.PASSWORD_RESET -> AuthStep.EMAIL.name
+
             AuthStep.NICKNAME -> AuthStep.LOGIN.name
 
             AuthStep.CHARACTER -> {
@@ -212,19 +234,15 @@ fun AuthFlowScreen(
         }
     }
 
-    if (termsDetailDocument != null) {
+    termsDetailId?.let { openedTermId ->
         TermsDetailScreen(
-            documentKey = termsDetailDocument.orEmpty(),
+            documentKey = "",
+            serverTermId = openedTermId,
             source = "signup",
-            onBack = { termsDetailDocument = null },
+            onBack = { termsDetailId = null },
             onAgree = {
-                when (termsDetailDocument) {
-                    "service" -> agreedService = true
-                    "privacy" -> agreedPrivacy = true
-                    "location" -> agreedLocation = true
-                    "marketing" -> agreedMarketing = true
-                }
-                termsDetailDocument = null
+                agreedTermIdsRaw = encodeTermIds(agreedTermIds + openedTermId)
+                termsDetailId = null
             }
         )
         return
@@ -240,9 +258,60 @@ fun AuthFlowScreen(
     }
     val submitSignup: () -> Unit = {
         coroutineScope.launch {
-            coordinator.signup(Gender.valueOf(selectedGender), selectedBirth)
+            coordinator.signup(
+                gender = Gender.valueOf(selectedGender),
+                birthDate = selectedBirth,
+                agreedTermIds = agreedTermIds.sorted(),
+                // 07 에서 고른 취향은 여기가 유일한 전송 지점이다 — 빠지면 그대로 유실된다(정본 R4).
+                travelStyleIds = travelStyleSelection.sorted(),
+                interestedRegionIds = interestRegionSelection.sorted()
+            )
         }
         Unit
+    }
+
+    // 약관 단계에 들어갈 때 서버 목록을 받아온다.
+    // 실패하면 목록을 비운 채 다시 불러오기를 띄운다 — 임의의 약관을 지어내지 않는다.
+    // 약관을 모르는 채로 동의시키면 동의 기록이 사실과 달라진다.
+    LaunchedEffect(step, reloadTerms) {
+        if (step != AuthStep.TERMS || termsLoading) return@LaunchedEffect
+        if (serverTerms.isNotEmpty() && reloadTerms == 0) return@LaunchedEffect
+        termsLoading = true
+        termsLoadFailed = false
+        runCatching { dependencies.terms.terms() }
+            .onSuccess {
+                serverTerms = it
+                // 목록이 비어 오는 것과 실패는 화면에서 구분되지 않는다 — 로그로 남긴다.
+                Log.i("MoyeoAuth", "약관 ${it.size}건 로드")
+            }
+            .onFailure { error ->
+                serverTerms = emptyList()
+                termsLoadFailed = true
+                Log.w("MoyeoAuth", "약관을 불러오지 못했습니다.", error)
+            }
+        termsLoading = false
+    }
+
+    // 취향 단계에 들어갈 때 서버 후보를 받아온다.
+    // 실패하면 후보를 비운 채 다시 불러오기를 띄운다 — 표를 지어내지 않는다(정본 R1).
+    LaunchedEffect(step, reloadTaste) {
+        if (step != AuthStep.TASTE || tasteLoading) return@LaunchedEffect
+        if (styleOptions.isNotEmpty() && reloadTaste == 0) return@LaunchedEffect
+        tasteLoading = true
+        tasteLoadFailed = false
+        runCatching { dependencies.profileOptions.options() }
+            .onSuccess { options ->
+                styleOptions = options.travelStyles
+                regionOptions = options.interestedRegions
+                Log.i("MoyeoAuth", "취향 후보 스타일 ${options.travelStyles.size} · 지역 ${options.interestedRegions.size} 로드")
+            }
+            .onFailure { error ->
+                styleOptions = emptyList()
+                regionOptions = emptyList()
+                tasteLoadFailed = true
+                Log.w("MoyeoAuth", "취향 후보를 불러오지 못했습니다.", error)
+            }
+        tasteLoading = false
     }
 
     AuthFlowFrame(
@@ -282,6 +351,27 @@ fun AuthFlowScreen(
 
                 AuthStep.LOGIN, AuthStep.EMAIL -> Unit
 
+                // 메일을 보낸 뒤에도 화면을 닫지 않는다 — 메일이 안 오면 다시 보낼 곳이 필요하다
+                AuthStep.PASSWORD_RESET -> if (authState.noticeMessage == null) {
+                    AuthPrimaryButton(
+                        text = "재설정 링크 보내기",
+                        tag = "auth-password-reset-send",
+                        contentDescription = "비밀번호 재설정 링크 보내기",
+                        enabled = !authState.isLoading && email.contains('@'),
+                        onClick = { coroutineScope.launch { coordinator.sendPasswordReset(email) } }
+                    )
+                } else {
+                    AuthSecondaryButton(
+                        text = "로그인으로 돌아가기",
+                        tag = "auth-password-reset-back",
+                        contentDescription = "로그인 화면으로 돌아가기",
+                        onClick = {
+                            coordinator.clearError()
+                            stepName = AuthStep.EMAIL.name
+                        }
+                    )
+                }
+
                 AuthStep.NICKNAME -> AuthPrimaryButton(
                     text = "다음",
                     tag = "auth-nickname-next",
@@ -296,7 +386,13 @@ fun AuthFlowScreen(
                         text = if (authState.isLoading) {
                             "새 후보를 만들고 있어요..."
                         } else {
-                            "새 후보 만들기 · ${remaining}회 남음"
+                            // 0 이면 만들 수 없다 — 비활성 버튼에 "0회 남음" 은 읽기 어렵다.
+                            // 세 플랫폼이 글자 그대로 같아야 한다 (iOS 문구로 통일).
+                            if (remaining == 0) {
+                                "새 후보 생성 기회를 모두 사용했어요"
+                            } else {
+                                "새 후보 만들기 · ${remaining}회 남음"
+                            }
                         },
                         tag = "auth-profile-generate",
                         contentDescription = "새 프로필 후보 만들기, 남은 ${remaining}회",
@@ -368,7 +464,10 @@ fun AuthFlowScreen(
                     text = if (authState.isLoading) "계정을 만들고 있어요..." else "동의하고 시작",
                     tag = "auth-terms-finish",
                     contentDescription = "약관 동의 후 계정 만들기",
-                    enabled = agreedAge && agreedService && agreedPrivacy && !authState.isLoading,
+                    enabled = serverTerms.isNotEmpty() &&
+                        agreedAge &&
+                        serverTerms.filter { it.required }.all { it.termId in agreedTermIds } &&
+                        !authState.isLoading,
                     onClick = submitSignup
                 )
             }
@@ -401,26 +500,31 @@ fun AuthFlowScreen(
             AuthStep.EMAIL -> EmailLoginStep(
                 email = email,
                 password = password,
-                passwordConfirmation = passwordConfirmation,
-                action = EmailAuthAction.valueOf(emailActionName),
                 isLoading = authState.isLoading,
                 errorMessage = authState.errorMessage,
                 noticeMessage = authState.noticeMessage,
                 onEmailChange = { email = it },
                 onPasswordChange = { password = it },
-                onPasswordConfirmationChange = { passwordConfirmation = it },
-                onActionChange = {
-                    emailActionName = it.name
-                    coordinator.clearError()
-                },
                 onSubmit = {
                     coroutineScope.launch {
-                        coordinator.loginWithEmail(
-                            EmailAuthRequest(email, password, EmailAuthAction.valueOf(emailActionName))
-                        )
+                        coordinator.loginWithEmail(EmailAuthRequest(email, password))
                     }
                 },
-                onResetPassword = { coroutineScope.launch { coordinator.sendPasswordReset(email) } }
+                // 08-B 로 간다. 예전에는 이 자리에서 메일을 바로 쏘고 화면은 그대로였다 —
+                // 어떤 주소로 갔는지도, 안 오면 어떻게 하는지도 알려줄 곳이 없었다.
+                onResetPassword = {
+                    coordinator.clearError()
+                    stepName = AuthStep.PASSWORD_RESET.name
+                }
+            )
+
+            AuthStep.PASSWORD_RESET -> PasswordResetStep(
+                email = email,
+                isLoading = authState.isLoading,
+                sent = authState.noticeMessage != null,
+                errorMessage = authState.errorMessage,
+                onEmailChange = { email = it },
+                onResend = { coroutineScope.launch { coordinator.sendPasswordReset(email) } }
             )
 
             AuthStep.NICKNAME -> NicknameStep(
@@ -446,36 +550,41 @@ fun AuthFlowScreen(
             )
 
             AuthStep.TASTE -> TasteStep(
-                selectedStyles = travelStyleSelection,
-                selectedRegions = interestRegionSelection,
-                onToggleStyle = { label ->
-                    selectedTravelStyles = encodeToggledTaste(TravelStyleOptions, travelStyleSelection, label)
+                styleOptions = styleOptions,
+                regionOptions = regionOptions,
+                selectedStyleIds = travelStyleSelection,
+                selectedRegionIds = interestRegionSelection,
+                isLoading = tasteLoading,
+                loadFailed = tasteLoadFailed,
+                onRetry = { reloadTaste++ },
+                onToggleStyle = { id ->
+                    selectedTravelStyles = encodeToggledTasteId(styleOptions, travelStyleSelection, id)
                 },
-                onToggleRegion = { label ->
-                    selectedInterestRegions = encodeToggledTaste(InterestRegionOptions, interestRegionSelection, label)
+                onToggleRegion = { id ->
+                    selectedInterestRegions =
+                        encodeToggledTasteId(regionOptions, interestRegionSelection, id)
                 }
             )
 
             AuthStep.TERMS -> TermsStep(
+                terms = serverTerms,
+                agreedTermIds = agreedTermIds,
                 agreedAge = agreedAge,
-                agreedService = agreedService,
-                agreedPrivacy = agreedPrivacy,
-                agreedLocation = agreedLocation,
-                agreedMarketing = agreedMarketing,
+                isLoading = termsLoading,
+                loadFailed = termsLoadFailed,
                 onToggleAll = {
-                    val next = !(agreedAge && agreedService && agreedPrivacy && agreedLocation && agreedMarketing)
-                    agreedAge = next
-                    agreedService = next
-                    agreedPrivacy = next
-                    agreedLocation = next
-                    agreedMarketing = next
+                    val turningOff = agreedAge && serverTerms.all { it.termId in agreedTermIds }
+                    agreedAge = !turningOff
+                    agreedTermIdsRaw = if (turningOff) "" else encodeTermIds(serverTerms.map { it.termId }.toSet())
                 },
                 onToggleAge = { agreedAge = !agreedAge },
-                onToggleService = { agreedService = !agreedService },
-                onTogglePrivacy = { agreedPrivacy = !agreedPrivacy },
-                onToggleLocation = { agreedLocation = !agreedLocation },
-                onToggleMarketing = { agreedMarketing = !agreedMarketing },
-                onOpenDocument = { termsDetailDocument = it },
+                onToggleTerm = { termId ->
+                    agreedTermIdsRaw = encodeTermIds(
+                        if (termId in agreedTermIds) agreedTermIds - termId else agreedTermIds + termId
+                    )
+                },
+                onOpenTerm = { termsDetailId = it },
+                onReloadTerms = { reloadTerms = reloadTerms + 1 },
                 errorMessage = authState.errorMessage,
                 onRetry = submitSignup
             )
@@ -489,36 +598,13 @@ private fun authStepForKey(key: String?): AuthStep = when (key) {
     "onb-3" -> AuthStep.ONBOARDING_THREE
     "login" -> AuthStep.LOGIN
     "email" -> AuthStep.EMAIL
+    "password-reset" -> AuthStep.PASSWORD_RESET
     "nickname" -> AuthStep.NICKNAME
     "profile-basic" -> AuthStep.BASIC_INFO
     "profile-taste" -> AuthStep.TASTE
     "profile-image" -> AuthStep.CHARACTER
     "terms" -> AuthStep.TERMS
     else -> AuthStep.ONBOARDING_ONE
-}
-
-private fun previewAuthState(key: String?): AuthFlowState {
-    val nickname = NicknameSelectionState.initial().select("따스한 사슴 3492")
-    // 8단계 진입 상태는 후보 0개다. 화면기획·웹·iOS 모두 "만들기 전" 화면을 보여준다.
-    val profileImages = ProfileImageCandidates(
-        candidates = emptyList(),
-        generationCount = 0,
-        remainingGenerationCount = 3,
-        signupState = SignupState.PROFILE_IMAGE_REQUIRED
-    )
-    return when (key) {
-        // 05는 아직 고르지 않은 상태로 들어온다. 06·07은 앞 단계에서 고른 닉네임을 이어받는다.
-        "nickname" -> AuthFlowState(nickname = NicknameSelectionState.initial())
-
-        "profile-basic", "terms" -> AuthFlowState(nickname = nickname)
-
-        "profile-image" -> AuthFlowState(
-            nickname = nickname,
-            profileImages = profileImages
-        )
-
-        else -> AuthFlowState()
-    }
 }
 
 @Composable
@@ -857,49 +943,106 @@ internal fun googleButtonPalette(darkTheme: Boolean): GoogleButtonPalette = if (
     )
 }
 
+/**
+ * 08-B 비밀번호 재설정 — Firebase `sendPasswordResetEmail`.
+ *
+ * 08-A 의 `비밀번호를 잊으셨나요?` 는 주석에 "비밀번호 재설정 진입" 이라고까지 적혀 있었는데
+ * **갈 곳이 없었다.** 로그인하지 못하는 사람이 스스로 풀 수 있는 유일한 길이라, 없으면
+ * 문의 말고는 방법이 없다.
+ *
+ * 보낸 뒤에도 화면을 닫지 않는다 — 메일이 안 오면 다시 보낼 곳이 필요하다.
+ */
+@Composable
+private fun PasswordResetStep(
+    email: String,
+    isLoading: Boolean,
+    sent: Boolean,
+    errorMessage: String?,
+    onEmailChange: (String) -> Unit,
+    onResend: () -> Unit
+) {
+    if (!sent) {
+        StepTitle(
+            title = "가입하신 이메일을 알려주세요",
+            subtitle = "비밀번호를 새로 정할 수 있는 링크를 보내드려요."
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            AuthFieldLabel("이메일")
+            OutlinedTextField(
+                value = email,
+                onValueChange = onEmailChange,
+                modifier = Modifier.fillMaxWidth().testTag("auth-password-reset-email"),
+                placeholder = { Text("name@example.com") },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                enabled = !isLoading
+            )
+        }
+        AuthNoteBox(
+            listOf("카카오로 가입하셨다면 비밀번호가 없어요. 로그인 화면에서 카카오로 다시 들어와 주세요.")
+        )
+    } else {
+        StepTitle(
+            title = "메일을 보냈어요",
+            subtitle = "$email 으로 재설정 링크를 보냈어요.\n메일함을 확인해 주세요."
+        )
+        AuthNoteBox(
+            listOf(
+                "링크는 1시간 동안만 쓸 수 있어요.",
+                "메일이 안 보이면 스팸함도 확인해 주세요."
+            )
+        )
+        TextButton(
+            onClick = onResend,
+            enabled = !isLoading,
+            modifier = Modifier.testTag("auth-password-reset-resend")
+        ) {
+            Text("다시 보내기", fontWeight = FontWeight.ExtraBold)
+        }
+    }
+    if (isLoading) AuthLoadingStatus("재설정 메일을 보내고 있어요...")
+    errorMessage?.let { AuthErrorCard(message = it, onRetry = onResend) }
+}
+
+/** 08-B 안내 상자 — 20-2a~f · §6 화면의 `NoteBox` 와 같은 생김새다. */
+@Composable
+private fun AuthNoteBox(lines: List<String>) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            lines.forEach { line ->
+                Text(
+                    text = "· $line",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
 @Composable
 private fun EmailLoginStep(
     email: String,
     password: String,
-    passwordConfirmation: String,
-    action: EmailAuthAction,
     isLoading: Boolean,
     errorMessage: String?,
     noticeMessage: String?,
     onEmailChange: (String) -> Unit,
     onPasswordChange: (String) -> Unit,
-    onPasswordConfirmationChange: (String) -> Unit,
-    onActionChange: (EmailAuthAction) -> Unit,
     onSubmit: () -> Unit,
     onResetPassword: () -> Unit
 ) {
+    // 로그인/새 계정 만들기를 사용자가 먼저 고르지 않는다 — 이메일이 이미 있는 계정인지
+    // 사용자가 알아야 할 이유가 없다. 소셜 로그인과 같이 한 번 시도하고, 계정이 없으면
+    // 그대로 새 계정을 만들어 서버가 알려주는 가입 단계로 이어간다.
     StepTitle(
         title = "이메일로 시작하기",
-        subtitle = "가입했던 이메일로 로그인하거나 새 계정을 만들어요."
+        subtitle = "이메일과 비밀번호를 입력하면 로그인하거나 새 계정을 만들어요."
     )
-    // 로그인 / 새 계정 만들기는 하나의 세그먼트다 — 떨어진 버튼 2개로 보이면 서로 다른 동작처럼 읽힌다
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
-    ) {
-        Row(modifier = Modifier.fillMaxWidth().height(48.dp)) {
-            EmailModeButton(
-                text = "로그인",
-                selected = action == EmailAuthAction.SIGN_IN,
-                tag = "auth-email-mode-sign-in",
-                onClick = { onActionChange(EmailAuthAction.SIGN_IN) }
-            )
-            VerticalDivider(color = MaterialTheme.colorScheme.outline)
-            EmailModeButton(
-                text = "새 계정 만들기",
-                selected = action == EmailAuthAction.CREATE_ACCOUNT,
-                tag = "auth-email-mode-create",
-                onClick = { onActionChange(EmailAuthAction.CREATE_ACCOUNT) }
-            )
-        }
-    }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             AuthFieldLabel("이메일")
@@ -926,42 +1069,19 @@ private fun EmailLoginStep(
                 enabled = !isLoading
             )
         }
-        if (action == EmailAuthAction.CREATE_ACCOUNT) {
-            val passwordsMismatch = passwordConfirmation.isNotEmpty() && password != passwordConfirmation
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                AuthFieldLabel("비밀번호 확인")
-                OutlinedTextField(
-                    value = passwordConfirmation,
-                    onValueChange = onPasswordConfirmationChange,
-                    modifier = Modifier.fillMaxWidth().testTag("auth-email-password-confirmation"),
-                    placeholder = { Text("비밀번호를 다시 입력") },
-                    supportingText = {
-                        if (passwordsMismatch) Text("비밀번호가 일치하지 않아요.")
-                    },
-                    isError = passwordsMismatch,
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                    enabled = !isLoading
-                )
-            }
-        }
         // 화면기획은 재설정 링크가 CTA 위(입력 바로 아래)에 온다
-        if (action == EmailAuthAction.SIGN_IN) {
-            TextButton(
-                onClick = onResetPassword,
-                enabled = !isLoading && email.contains('@'),
-                modifier = Modifier.align(Alignment.End).testTag("auth-email-reset")
-            ) {
-                Text("비밀번호를 잊으셨나요?")
-            }
+        TextButton(
+            onClick = onResetPassword,
+            enabled = !isLoading && email.contains('@'),
+            modifier = Modifier.align(Alignment.End).testTag("auth-email-reset")
+        ) {
+            Text("비밀번호를 잊으셨나요?")
         }
         AuthPrimaryButton(
-            text = if (action == EmailAuthAction.SIGN_IN) "로그인" else "새 계정 만들기",
+            text = "계속하기",
             tag = "auth-email-submit",
-            contentDescription = if (action == EmailAuthAction.SIGN_IN) "이메일 로그인" else "이메일 새 계정 만들기",
-            enabled = !isLoading &&
-                emailCredentialsError(email, password, passwordConfirmation, action) == null,
+            contentDescription = "이메일로 계속하기",
+            enabled = !isLoading && emailCredentialsError(email, password) == null,
             onClick = onSubmit
         )
     }
@@ -971,7 +1091,7 @@ private fun EmailLoginStep(
     }
     errorMessage?.let { AuthErrorCard(message = it, onRetry = onSubmit) }
     Text(
-        text = "이메일 인증 후에도 가입 진행 단계는 서버 응답에 따라 이어집니다.",
+        text = "처음 쓰는 이메일이면 새 계정을 만들고, 가입 진행 단계는 서버 응답에 따라 이어집니다.",
         modifier = Modifier.fillMaxWidth().padding(top = 18.dp),
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1016,17 +1136,45 @@ private fun AuthFieldLabel(text: String) {
     )
 }
 
+/**
+ * 05 이름 고르기.
+ *
+ * 후보는 서버(`POST /api/v1/auth/nickname-candidates`)만 준다. 화면 상태는 셋뿐이고
+ * 웹·iOS 와 **같은 §2 문구**를 쓴다 — 로딩 `불러오는 중이에요…`,
+ * 후보를 못 받음 `불러오지 못했어요.` + 다시 시도, 후보 있음 → 서버 값.
+ */
 @Composable
 private fun NicknameStep(state: NicknameSelectionState, onSelectNickname: (String) -> Unit, onRefresh: () -> Unit) {
+    // 화면이 열릴 때 후보가 없으면 서버에서 받아온다 — 앱이 후보를 심어 두지 않는다
+    LaunchedEffect(Unit) {
+        if (state.candidates.isEmpty() && !state.isLoading) onRefresh()
+    }
     StepTitle(
         title = "어떤 친구로\n시작할까요?",
         subtitle = "본명 대신 동물 친구로 만나요.\n이름을 고르면 캐릭터를 그려드릴게요."
     )
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        if (state.isLoading) {
-            repeat(3) { index -> NicknameCandidateSkeleton(index) }
-        } else {
-            state.candidates.forEachIndexed { index, candidate ->
+        when {
+            state.isLoading -> {
+                repeat(3) { index -> NicknameCandidateSkeleton(index) }
+                Text(
+                    text = MoyeoEmptyText.LOADING,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("auth-nickname-loading"),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+            }
+
+            state.candidates.isEmpty() -> MoyeoEmptyState(
+                text = MoyeoEmptyText.FAILED,
+                testTag = "auth-nickname-empty",
+                onRetry = onRefresh
+            )
+
+            else -> state.candidates.forEachIndexed { index, candidate ->
                 NicknameCandidateCard(
                     candidate = candidate,
                     selected = state.selectedNickname == candidate.nickname,
@@ -1114,7 +1262,7 @@ private fun NicknameCandidateCard(candidate: NicknameCandidate, selected: Boolea
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = candidate.animalEmoji(),
+                    text = MoyeoNicknameAnimal.emojiForAnimal(candidate.animal),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
@@ -1158,29 +1306,6 @@ private fun NicknameCandidateCard(candidate: NicknameCandidate, selected: Boolea
             }
         }
     }
-}
-
-private fun NicknameCandidate.animalEmoji(): String = when (animal) {
-    "사슴" -> "🦌"
-    "거북이" -> "🐢"
-    "토끼" -> "🐰"
-    "여우" -> "🦊"
-    "수달", "해달" -> "🦦"
-    "다람쥐" -> "🐿️"
-    "고양이" -> "🐱"
-    "강아지" -> "🐶"
-    "판다" -> "🐼"
-    "펭귄" -> "🐧"
-    "돌고래" -> "🐬"
-    "부엉이" -> "🦉"
-    "참새" -> "🐦"
-    "알파카" -> "🦙"
-    "코알라" -> "🐨"
-    "두루미" -> "🪽"
-    "고슴도치" -> "🦔"
-    "너구리" -> "🦝"
-    "기린" -> "🦒"
-    else -> "🐾"
 }
 
 private fun NicknameCandidate.colorLabel(): String = when (color) {
@@ -1402,7 +1527,9 @@ private fun ProfileImageCandidateCard(
     val selectionColor = accentColor ?: MaterialTheme.colorScheme.primary
     Surface(
         modifier = modifier
-            .aspectRatio(1f / 1.16f)
+            // 후보 이미지는 정사각이다(안쪽 Box 가 aspectRatio(1f)). 겉 카드가 1:1.16 이면
+            // 이미지 위아래로 여백이 남아 테두리가 세로로 길쭉해 보인다.
+            .aspectRatio(1f)
             .testTag("auth-profile-option-$index")
             .clickable(enabled = enabled, onClick = onClick),
         shape = RoundedCornerShape(16.dp),
@@ -1472,11 +1599,8 @@ private fun CharacterStep(nickname: String, characterCreated: Boolean, onCreate:
 @Composable
 private fun CharacterFriendCard(nickname: String, characterCreated: Boolean) {
     val colorScheme = MaterialTheme.colorScheme
-    val animal = when {
-        nickname.contains("거북이") -> "🐢"
-        nickname.contains("너구리") -> "🦝"
-        else -> "🦌"
-    }
+    // 아바타 표는 한 곳뿐이다 (R5 정본 = MoyeoNicknameAnimal)
+    val animal = MoyeoNicknameAnimal.emojiForNickname(nickname)
 
     Surface(
         modifier = Modifier
@@ -1571,7 +1695,8 @@ private fun RequiredFieldLabel(text: String) {
 // / 06 단계 상단의 닉네임 카드 — 앞 단계에서 고른 친구를 다시 보여준다.
 @Composable
 private fun SelectedNicknameCard(nickname: String?) {
-    val label = nickname?.takeIf { it.isNotBlank() } ?: "따스한 사슴 3492"
+    // 앞 단계에서 아직 고르지 않았으면 카드를 그리지 않는다 — 예시 닉네임을 대신 세우지 않는다
+    val label = nickname?.takeIf { it.isNotBlank() } ?: return
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("auth-basic-nickname"),
         shape = RoundedCornerShape(16.dp),
@@ -1588,7 +1713,10 @@ private fun SelectedNicknameCard(nickname: String?) {
                 color = MoyeoTheme.tints.primaryTint
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Text(text = nicknameAnimalEmoji(label), style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        text = MoyeoNicknameAnimal.emojiForNickname(label),
+                        style = MaterialTheme.typography.titleLarge
+                    )
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
@@ -1629,17 +1757,6 @@ private fun ageBandLabel(birthDate: LocalDate): String? {
         else -> "후반"
     }
     return "${decade}대 $phase"
-}
-
-private fun nicknameAnimalEmoji(nickname: String): String = when {
-    nickname.contains("사슴") -> "🦌"
-    nickname.contains("곰") -> "🐻"
-    nickname.contains("토끼") -> "🐰"
-    nickname.contains("거북") -> "🐢"
-    nickname.contains("너구리") -> "🦝"
-    nickname.contains("여우") -> "🦊"
-    nickname.contains("고양이") -> "🐱"
-    else -> "🦌"
 }
 
 @Composable
@@ -1828,30 +1945,43 @@ internal fun isValidBirthDate(value: String, today: LocalDate = LocalDate.now())
     !date.isAfter(today) && date.year >= 1900
 }.getOrDefault(false)
 
-// changeLog13 — 여행 취향 후보. 코스 태그·지역 목데이터와 같은 단어를 쓴다.
-internal val TravelStyleOptions = listOf("자연", "힐링", "사진", "맛집", "역사", "야경", "트레킹", "카페")
-internal val InterestRegionOptions = listOf("경주", "안동", "포항", "문경", "청송", "영주", "울진", "울릉")
+/**
+ * 취향 선택. 라벨이 아니라 **서버 id** 를 담는다 — 가입 요청이 id 를 보내기 때문이다(정본 R4).
+ * Set 은 rememberSaveable 로 저장할 수 없어 CSV 문자열에 담는다.
+ */
+internal fun decodeTasteIds(encoded: String): Set<Long> =
+    encoded.split(",").mapNotNull { it.trim().toLongOrNull() }.toSet()
 
-// 기본 선택은 비교 목데이터와 같다 — 28 프로필 수정과 25 공개 프로필이 이미 쓰는 값.
-internal val DefaultTravelStyles = listOf("자연", "사진")
-internal val DefaultInterestRegions = listOf("경주", "안동", "포항", "문경")
+/** 동의한 약관 ID. Set 은 rememberSaveable 로 저장할 수 없어 취향과 같은 방식으로 문자열에 담는다. */
+internal fun decodeTermIds(encoded: String): Set<Long> =
+    encoded.split(",").mapNotNull { it.trim().toLongOrNull() }.toSet()
 
-internal fun decodeTasteSelection(encoded: String): Set<String> = encoded.split(",").filter { it.isNotBlank() }.toSet()
+internal fun encodeTermIds(ids: Set<Long>): String = ids.sorted().joinToString(",")
 
 /** 토글 결과를 후보 순서대로 다시 인코딩한다 — 표시 순서가 탭 순서에 흔들리지 않는다. */
-internal fun encodeToggledTaste(options: List<String>, current: Set<String>, label: String): String {
-    val next = if (label in current) current - label else current + label
-    return options.filter { it in next }.joinToString(",")
+internal fun encodeToggledTasteId(options: List<ProfileOption>, current: Set<Long>, id: Long): String {
+    val next = if (id in current) current - id else current + id
+    return options.filter { it.id in next }.joinToString(",") { it.id.toString() }
 }
 
-/** 06-1 · 여행 취향 — 스타일 & 관심 지역 (Step 7/8). */
+/**
+ * 06-1 · 여행 취향 — 스타일 & 관심 지역 (Step 7/8).
+ *
+ * 후보는 `GET /api/v1/users/me/profile/options` 가 준다 — 토큰 없이 200 이라 가입 전에도 부를 수 있다.
+ * 못 받으면 칩을 하나도 그리지 않고 다시 불러오기를 띄운다. 고를 수 없는 후보를 지어내지 않는다(정본 R1).
+ */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TasteStep(
-    selectedStyles: Set<String>,
-    selectedRegions: Set<String>,
-    onToggleStyle: (String) -> Unit,
-    onToggleRegion: (String) -> Unit
+    styleOptions: List<ProfileOption>,
+    regionOptions: List<ProfileOption>,
+    selectedStyleIds: Set<Long>,
+    selectedRegionIds: Set<Long>,
+    isLoading: Boolean,
+    loadFailed: Boolean,
+    onRetry: () -> Unit,
+    onToggleStyle: (Long) -> Unit,
+    onToggleRegion: (Long) -> Unit
 ) {
     StepTitle(
         title = "어떤 여행을 좋아하세요?",
@@ -1863,13 +1993,13 @@ private fun TasteStep(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            TravelStyleOptions.forEach { label ->
+            styleOptions.forEach { option ->
                 TasteChip(
-                    label = label,
-                    selected = label in selectedStyles,
-                    tag = "auth-taste-style-$label",
-                    contentDescription = "여행 스타일 $label 선택",
-                    onClick = { onToggleStyle(label) }
+                    label = option.label,
+                    selected = option.id in selectedStyleIds,
+                    tag = "auth-taste-style-${option.label}",
+                    contentDescription = "여행 스타일 ${option.label} 선택",
+                    onClick = { onToggleStyle(option.id) }
                 )
             }
         }
@@ -1880,15 +2010,28 @@ private fun TasteStep(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            InterestRegionOptions.forEach { label ->
+            regionOptions.forEach { option ->
                 TasteChip(
-                    label = label,
-                    selected = label in selectedRegions,
-                    tag = "auth-taste-region-$label",
-                    contentDescription = "관심 지역 $label 선택",
-                    onClick = { onToggleRegion(label) }
+                    label = option.label,
+                    selected = option.id in selectedRegionIds,
+                    tag = "auth-taste-region-${option.label}",
+                    contentDescription = "관심 지역 ${option.label} 선택",
+                    onClick = { onToggleRegion(option.id) }
                 )
             }
+        }
+    }
+    if (isLoading) {
+        AuthLoadingStatus(message = "취향 후보를 불러오는 중이에요")
+    }
+    if (loadFailed) {
+        TextButton(
+            onClick = onRetry,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("auth-taste-reload")
+        ) {
+            Text(text = "취향 후보 다시 불러오기", fontWeight = FontWeight.Bold)
         }
     }
     Surface(
@@ -1979,36 +2122,34 @@ internal fun TasteSelectionCaption(styleCount: Int, regionCount: Int, modifier: 
 
 @Composable
 private fun TermsStep(
+    terms: List<TermSummary>,
+    agreedTermIds: Set<Long>,
     agreedAge: Boolean,
-    agreedService: Boolean,
-    agreedPrivacy: Boolean,
-    agreedLocation: Boolean,
-    agreedMarketing: Boolean,
+    isLoading: Boolean,
+    loadFailed: Boolean,
     onToggleAll: () -> Unit,
     onToggleAge: () -> Unit,
-    onToggleService: () -> Unit,
-    onTogglePrivacy: () -> Unit,
-    onToggleLocation: () -> Unit,
-    onToggleMarketing: () -> Unit,
-    onOpenDocument: (String) -> Unit,
+    onToggleTerm: (Long) -> Unit,
+    onOpenTerm: (Long) -> Unit,
+    onReloadTerms: () -> Unit,
     errorMessage: String?,
     onRetry: () -> Unit
 ) {
-    val requiredAgreed = agreedAge && agreedService && agreedPrivacy
-    val allAgreed = requiredAgreed && agreedLocation && agreedMarketing
+    val requiredAgreed = agreedAge && terms.filter { it.required }.all { it.termId in agreedTermIds }
+    val allAgreed = agreedAge && terms.isNotEmpty() && terms.all { it.termId in agreedTermIds }
 
     StepTitle(
         title = "약관 동의",
         subtitle = "모여트립 이용을 위해 동의가 필요해요"
     )
     // 약관은 항목마다 카드를 두지 않고 한 줄씩 수직으로 쌓는다 (화면기획 기준).
-    // 카드가 5개 겹치면 필수/선택 위계가 읽히지 않는다.
+    // 카드가 겹치면 필수/선택 위계가 읽히지 않는다.
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("auth-terms-all")
             .semantics { contentDescription = "약관 모두 동의" }
-            .clickable(onClick = onToggleAll)
+            .clickable(enabled = terms.isNotEmpty(), onClick = onToggleAll)
             .padding(vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -2016,6 +2157,7 @@ private fun TermsStep(
         Checkbox(
             checked = allAgreed,
             onCheckedChange = { onToggleAll() },
+            enabled = terms.isNotEmpty(),
             modifier = Modifier.testTag("auth-terms-all-checkbox"),
             colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
         )
@@ -2028,53 +2170,48 @@ private fun TermsStep(
     }
     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
     Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
+        // 서버 약관이 아니라 별도 확인이다 — 서버는 birthDate 로 나이를 검증한다.
         TermsRow(
-            title = "만 14세 이상",
+            title = "만 18세 이상",
             required = true,
             checked = agreedAge,
             tag = "auth-terms-age",
-            contentDescription = "만 14세 이상 필수 약관 동의",
+            contentDescription = "만 18세 이상 필수 확인",
             onToggle = onToggleAge
         )
-        TermsRow(
-            title = "이용약관 동의",
-            required = true,
-            checked = agreedService,
-            tag = "auth-terms-service",
-            contentDescription = "이용약관 필수 동의",
-            onToggle = onToggleService,
-            onOpenDetails = { onOpenDocument("service") }
-        )
-        TermsRow(
-            title = "개인정보 처리방침",
-            required = true,
-            checked = agreedPrivacy,
-            tag = "auth-terms-privacy",
-            contentDescription = "개인정보 처리방침 필수 동의",
-            onToggle = onTogglePrivacy,
-            onOpenDetails = { onOpenDocument("privacy") }
-        )
-        TermsRow(
-            title = "위치정보 이용",
-            required = false,
-            checked = agreedLocation,
-            tag = "auth-terms-location",
-            contentDescription = "위치정보 이용 선택 동의",
-            onToggle = onToggleLocation,
-            onOpenDetails = { onOpenDocument("location") }
-        )
-        TermsRow(
-            title = "마케팅 정보 수신",
-            required = false,
-            checked = agreedMarketing,
-            tag = "auth-terms-marketing",
-            contentDescription = "마케팅 정보 수신 선택 동의",
-            onToggle = onToggleMarketing,
-            onOpenDetails = { onOpenDocument("marketing") }
-        )
+        terms.forEach { term ->
+            TermsRow(
+                title = term.displayTitle(),
+                required = term.required,
+                checked = term.termId in agreedTermIds,
+                tag = "auth-terms-${term.termId}",
+                contentDescription = "${term.displayTitle()} ${if (term.required) "필수" else "선택"} 동의",
+                onToggle = { onToggleTerm(term.termId) },
+                onOpenDetails = { onOpenTerm(term.termId) }
+            )
+        }
+    }
+    if (isLoading) {
+        AuthLoadingStatus(message = "약관을 불러오는 중이에요")
     }
     errorMessage?.let { AuthErrorCard(message = it, onRetry = onRetry) }
+    if (loadFailed) {
+        TextButton(
+            onClick = onReloadTerms,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("auth-terms-reload")
+        ) {
+            Text(text = "약관 다시 불러오기", fontWeight = FontWeight.Bold)
+        }
+    }
+    // requiredAgreed 는 CTA 활성 조건과 같은 규칙이다 — 화면에서 한 번 더 계산해 두면
+    // 조건이 갈릴 때 바로 드러난다.
+    check(!requiredAgreed || terms.isNotEmpty())
 }
+
+/** 서버 제목은 "[필수] 모여트립 이용약관" 형태다. 필수/선택 배지를 따로 그리므로 접두사는 뗀다. */
+internal fun TermSummary.displayTitle(): String = title.removePrefix("[필수]").removePrefix("[선택]").trim()
 
 @Composable
 private fun AuthLoadingStatus(message: String) {
@@ -2407,15 +2544,15 @@ private fun ProviderButton(
     }
 }
 
-internal fun emailCredentialsError(
-    email: String,
-    password: String,
-    passwordConfirmation: String,
-    action: EmailAuthAction
-): String? = when {
+/**
+ * 이메일 입력 검증.
+ *
+ * 로그인/가입을 따로 고르지 않으므로 "비밀번호 확인" 입력이 없다 —
+ * 로그인일 수도 있는 입력에 확인란을 요구할 수 없다.
+ */
+internal fun emailCredentialsError(email: String, password: String): String? = when {
     !email.contains('@') -> "이메일 주소를 확인해 주세요."
     password.length < 6 -> "비밀번호는 6자 이상 입력해 주세요."
-    action == EmailAuthAction.CREATE_ACCOUNT && password != passwordConfirmation -> "비밀번호가 일치하지 않아요."
     else -> null
 }
 
@@ -2615,6 +2752,15 @@ private enum class AuthStep(
         headerLabel = "이메일 로그인",
         testTag = "auth-step-email",
         screenDescription = "이메일 로그인 및 계정 생성 화면",
+        progress = null
+    ),
+
+    // 08-B 비밀번호 재설정 — 08-A 이메일 로그인에서 갈라지는 보조 화면이다.
+    // 로그인하지 못하는 사람이 스스로 풀 수 있는 유일한 길이라, 없으면 문의 말고는 방법이 없었다.
+    PASSWORD_RESET(
+        headerLabel = "비밀번호 재설정",
+        testTag = "auth-step-password-reset",
+        screenDescription = "비밀번호 재설정 메일 요청 화면",
         progress = null
     ),
     NICKNAME(

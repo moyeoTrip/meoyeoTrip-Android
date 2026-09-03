@@ -19,7 +19,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.navigationBarsPadding
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -31,15 +30,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.automirrored.filled.Article
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.People
 import androidx.compose.material.icons.filled.Search
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.StarOutline
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -52,6 +47,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -61,6 +57,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -70,7 +67,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -79,31 +78,68 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.launch
-import kr.hanchae.moyeotrip.data.social.DexCompanion
 import kr.hanchae.moyeotrip.BuildConfig
 import kr.hanchae.moyeotrip.R
-import kr.hanchae.moyeotrip.data.DogamFriend
-import kr.hanchae.moyeotrip.data.FeedPost
-import kr.hanchae.moyeotrip.data.MockTripRepository
-import kr.hanchae.moyeotrip.data.Profile
 import kr.hanchae.moyeotrip.data.auth.AuthAccountService
+import kr.hanchae.moyeotrip.data.feed.FeedTab
+import kr.hanchae.moyeotrip.data.feed.ServerFeed
 import kr.hanchae.moyeotrip.data.profile.ProfileOptions
 import kr.hanchae.moyeotrip.data.profile.ProfileUpdate
 import kr.hanchae.moyeotrip.data.profile.ServerUserProfile
 import kr.hanchae.moyeotrip.data.settings.ThemePreference
+import kr.hanchae.moyeotrip.data.social.DexCompanion
 import kr.hanchae.moyeotrip.domain.auth.AuthProvider
-import kr.hanchae.moyeotrip.domain.auth.EmailAuthAction
 import kr.hanchae.moyeotrip.domain.auth.EmailAuthRequest
 import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
-import kr.hanchae.moyeotrip.ui.LocalCaptureMode
 import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.MoyeoContact
 import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
+import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
+import kr.hanchae.moyeotrip.ui.components.MoyeoNicknameAnimal
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
+import kr.hanchae.moyeotrip.ui.components.ServerListState
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
+
+/** 27 친구 도감 카드 한 장. 서버 도감(GET users/me/travel-dex) 응답을 화면 모양으로 옮긴 값이다. */
+internal data class DexFriend(
+    val id: String,
+    val nickname: String,
+    /** 닉네임 동물 이모지 — `profileImageUrl` 이 없거나 못 불러올 때만 쓰는 폴백이다(R5). */
+    val avatar: String,
+    /** 서버 도감이 주는 실제 프로필 이미지. 있으면 **반드시** 이 이미지를 그린다. */
+    val profileImageUrl: String?,
+    val lastMetAt: String,
+    /** 최근 동행일 원본(`yyyy-MM-dd`) — `최근 1개월` 필터의 근거다. */
+    val lastMetDate: String,
+    val metCount: Int
+)
+
+/**
+ * 27 도감 필터 칩. iOS 와 같은 세 갈래다 — 도감 응답이 주는 값만으로 가른다.
+ *
+ * `최근 1개월` 은 최근 동행일이 오늘로부터 한 달 안인 친구다. 날짜를 못 읽으면 **포함하지 않는다**
+ * (읽지 못한 값을 "최근"으로 세면 숫자를 지어내는 셈이다).
+ */
+internal enum class DexFilter(val label: String) {
+    All("전체"),
+    Repeat("2회 이상"),
+    Recent("최근 1개월");
+
+    fun matches(friend: DexFriend): Boolean = when (this) {
+        All -> true
+
+        Repeat -> friend.metCount >= 2
+
+        Recent -> runCatching { java.time.LocalDate.parse(friend.lastMetDate) }
+            .getOrNull()
+            ?.isAfter(java.time.LocalDate.now().minusMonths(1)) == true
+    }
+}
 
 @Composable
 fun ProfileEditScreen(
@@ -112,10 +148,18 @@ fun ProfileEditScreen(
     // 캡처용 — true면 28-1 여행 취향 편집 시트가 열린 채 시작한다
     showTasteSheetInitially: Boolean = false
 ) {
-    val profile = MockTripRepository.profile
-    var selectedStyles by remember { mutableStateOf(DefaultTravelStyles.toSet()) }
-    var selectedRegions by remember { mutableStateOf(DefaultInterestRegions.toSet()) }
+    var selectedStyles by remember { mutableStateOf(emptySet<String>()) }
+    // 서버 프로필을 받으면 아래 LaunchedEffect 가 덮어쓴다. 받기 전에는 비워 둔다 —
+    // 사용자가 고르지 않은 취향이 잠깐이라도 본인 것처럼 보이면 안 된다.
+    var selectedRegions by remember { mutableStateOf(emptySet<String>()) }
     var showTasteSheet by remember { mutableStateOf(showTasteSheetInitially) }
+
+    /**
+     * 28-1 의 세 줄(자기소개·생년월일·성별)을 실제로 고치는 시트.
+     * **예전에는 `>` 만 그려 놓고 누를 수 없었다** — iOS 는 이미 이 시트를 갖고 있었고
+     * 웹·기획은 화살표를 그리지 않는다. 안드로이드만 표시와 동작이 어긋나 있었다.
+     */
+    var editingField by remember { mutableStateOf<ProfileEditField?>(null) }
     var showSavedDialog by remember { mutableStateOf(false) }
     var saveErrorMessage by remember { mutableStateOf<String?>(null) }
     val colors = MaterialTheme.colorScheme
@@ -139,8 +183,10 @@ fun ProfileEditScreen(
         selectedRegions = loaded.interestedRegions.map { it.label }.toSet()
         serverOptions = runCatching { server.userProfile.options() }.getOrNull()
     }
-    val styleOptions = serverOptions?.travelStyles?.map { it.label } ?: TravelStyleOptions
-    val regionOptions = serverOptions?.interestedRegions?.map { it.label } ?: InterestRegionOptions
+    // 28 취향 후보는 서버(GET users/me/profile/options)가 정본이다 — 못 받으면 고를 후보가 없다.
+    // 앱이 들고 있는 목록으로 채우면 저장(PUT)에 필요한 id 가 없어 고를 수는 있지만 저장되지 않는다.
+    val styleOptions = serverOptions?.travelStyles?.map { it.label }.orEmpty()
+    val regionOptions = serverOptions?.interestedRegions?.map { it.label }.orEmpty()
 
     fun saveToServer(styles: Set<String>, regions: Set<String>, onSaved: () -> Unit) {
         val current = serverProfile
@@ -213,8 +259,10 @@ fun ProfileEditScreen(
                 ) {
                     Box {
                         // 화면기획 28의 아바타 배경은 연초록(primary100)이다 — 기본 코랄이 아니다
+                        // 아바타는 서버 닉네임의 동물이다 (R5 정본 = MoyeoNicknameAnimal).
+                        // 예전에는 목데이터 닉네임으로 뽑아 닉네임과 아바타가 어긋났다.
                         AnimalAvatar(
-                            profileAvatarEmoji(profile.nickname),
+                            MoyeoNicknameAnimal.emojiForNickname(serverProfile?.nickname ?: userProfile.nickname),
                             modifier = Modifier.size(96.dp),
                             container = tints.primaryTintStrong
                         )
@@ -235,7 +283,7 @@ fun ProfileEditScreen(
                         }
                     }
                     Text(
-                        userProfile.nickname ?: profile.nickname,
+                        serverProfile?.nickname ?: userProfile.nickname.orEmpty(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold
                     )
@@ -251,12 +299,9 @@ fun ProfileEditScreen(
             item {
                 ProfileEditRow(
                     label = "자기소개",
-                    value = if (serverProfile != null) {
-                        serverProfile?.introduction.orEmpty()
-                    } else {
-                        "느긋한 여행 좋아해요"
-                    },
-                    showsChevron = true
+                    value = serverProfile?.introduction.orEmpty(),
+                    showsChevron = true,
+                    onClick = { editingField = ProfileEditField.Introduction }
                 )
             }
             item {
@@ -273,7 +318,7 @@ fun ProfileEditScreen(
                 // 닉네임과 캐릭터는 선택 후 바꿀 수 없다 — 잠금 표시로 알린다
                 ProfileEditRow(
                     label = "닉네임",
-                    value = userProfile.nickname ?: profile.nickname,
+                    value = serverProfile?.nickname ?: userProfile.nickname.orEmpty(),
                     locked = true
                 )
             }
@@ -281,15 +326,17 @@ fun ProfileEditScreen(
             item {
                 ProfileEditRow(
                     label = "생년월일",
-                    value = serverProfile?.let { it.birthDate?.replace('-', '.').orEmpty() } ?: "1998.04.12",
-                    showsChevron = true
+                    value = serverProfile?.birthDate?.replace('-', '.').orEmpty(),
+                    showsChevron = true,
+                    onClick = { editingField = ProfileEditField.BirthDate }
                 )
             }
             item {
                 ProfileEditRow(
                     label = "성별",
-                    value = serverProfile?.gender?.genderLabel() ?: "여성",
-                    showsChevron = true
+                    value = serverProfile?.gender?.genderLabel().orEmpty(),
+                    showsChevron = true,
+                    onClick = { editingField = ProfileEditField.Gender }
                 )
             }
             item {
@@ -331,6 +378,35 @@ fun ProfileEditScreen(
         )
     }
 
+    editingField?.let { field ->
+        ProfileFieldEditSheet(
+            field = field,
+            current = serverProfile,
+            onDismiss = { editingField = null },
+            onSave = { introduction, birthDate, gender ->
+                editingField = null
+                val current = serverProfile ?: return@ProfileFieldEditSheet
+                val options = serverOptions ?: return@ProfileFieldEditSheet
+                // 저장은 취향 시트와 같은 한 번의 PUT users/me/profile 이다.
+                val update = ProfileUpdate(
+                    introduction = introduction,
+                    travelStyleIds = options.travelStyles.filter { it.label in selectedStyles }.map { it.id },
+                    interestedRegionIds = options.interestedRegions
+                        .filter { it.label in selectedRegions }
+                        .map { it.id },
+                    birthDate = birthDate,
+                    gender = gender
+                )
+                val target = server ?: return@ProfileFieldEditSheet
+                saveScope.launch {
+                    runCatching { target.userProfile.updateProfile(update) }
+                        .onSuccess { serverProfile = it }
+                        .onFailure { saveErrorMessage = it.message ?: "프로필 저장에 실패했어요." }
+                }
+            }
+        )
+    }
+
     if (showTasteSheet) {
         TasteEditSheet(
             initialStyles = selectedStyles,
@@ -348,6 +424,84 @@ fun ProfileEditScreen(
                 }
             }
         )
+    }
+}
+
+/**
+ * 28-1 에서 고칠 수 있는 세 줄. **화살표만 있고 못 고치던 자리**다(iOS `ProfileEditField` 와 같다).
+ * 닉네임·캐릭터는 정한 뒤 바꿀 수 없으므로 여기 없다.
+ */
+private enum class ProfileEditField(val title: String) {
+    Introduction("자기소개"),
+    BirthDate("생년월일"),
+    Gender("성별")
+}
+
+/**
+ * 세 줄 중 하나를 고치는 시트. 저장은 취향 시트와 같은 **한 번의 `PUT users/me/profile`** 이라
+ * 고치지 않는 값은 서버가 준 현재 값을 그대로 되돌려 보낸다.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ProfileFieldEditSheet(
+    field: ProfileEditField,
+    current: ServerUserProfile?,
+    onDismiss: () -> Unit,
+    onSave: (introduction: String?, birthDate: String, gender: String) -> Unit
+) {
+    var introduction by remember(field) { mutableStateOf(current?.introduction.orEmpty()) }
+    var birthDate by remember(field) { mutableStateOf(current?.birthDate.orEmpty()) }
+    var gender by remember(field) { mutableStateOf(current?.gender.orEmpty().ifBlank { "N" }) }
+
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp)
+                .padding(bottom = 28.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text(field.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.ExtraBold)
+            when (field) {
+                ProfileEditField.Introduction -> OutlinedTextField(
+                    value = introduction,
+                    onValueChange = { introduction = it },
+                    placeholder = { Text("어떤 여행을 좋아하는지 적어주세요") },
+                    modifier = Modifier.fillMaxWidth().testTag("profile-edit-introduction")
+                )
+
+                ProfileEditField.BirthDate -> OutlinedTextField(
+                    value = birthDate,
+                    onValueChange = { birthDate = it },
+                    placeholder = { Text("1998-04-12") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("profile-edit-birth-date")
+                )
+
+                ProfileEditField.Gender -> Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // 서버가 받는 값은 F·M·N 세 가지다 — 화면 문구는 `genderLabel()` 과 같은 표를 쓴다.
+                    listOf("F", "M", "N").forEach { code ->
+                        val selected = gender == code
+                        if (selected) {
+                            Button(
+                                onClick = { gender = code },
+                                modifier = Modifier.testTag("profile-edit-gender-$code")
+                            ) { Text(code.genderLabel()) }
+                        } else {
+                            OutlinedButton(
+                                onClick = { gender = code },
+                                modifier = Modifier.testTag("profile-edit-gender-$code")
+                            ) { Text(code.genderLabel()) }
+                        }
+                    }
+                }
+            }
+            Button(
+                onClick = { onSave(introduction.ifBlank { null }, birthDate, gender) },
+                modifier = Modifier.fillMaxWidth().height(52.dp).testTag("profile-edit-save"),
+                shape = RoundedCornerShape(12.dp)
+            ) { Text("저장") }
+        }
     }
 }
 
@@ -445,8 +599,8 @@ private fun TasteEditSheet(
     onDismiss: () -> Unit,
     onSave: (Set<String>, Set<String>) -> Unit,
     // 로그인 상태면 서버 후보(GET users/me/profile/options)가 들어온다
-    styleOptions: List<String> = TravelStyleOptions,
-    regionOptions: List<String> = InterestRegionOptions
+    styleOptions: List<String>,
+    regionOptions: List<String>
 ) {
     var draftStyles by remember { mutableStateOf(initialStyles) }
     var draftRegions by remember { mutableStateOf(initialRegions) }
@@ -561,12 +715,20 @@ private fun ProfileEditGroupHeader(title: String) {
 
 /** 라벨 좌측 · 값 우측의 한 줄 행. 카드로 감싸지 않는다 (화면기획). */
 @Composable
-private fun ProfileEditRow(label: String, value: String, showsChevron: Boolean = false, locked: Boolean = false) {
+private fun ProfileEditRow(
+    label: String,
+    value: String,
+    showsChevron: Boolean = false,
+    locked: Boolean = false,
+    onClick: (() -> Unit)? = null
+) {
     val colors = MaterialTheme.colorScheme
     Column(modifier = Modifier.background(MoyeoTheme.cardSurface)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
+                // `>` 를 그리면 누를 수 있어야 한다. 잠긴 줄(닉네임·캐릭터)은 화살표도 없다.
+                .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
                 .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
@@ -590,9 +752,29 @@ private fun ProfileEditRow(label: String, value: String, showsChevron: Boolean =
     }
 }
 
+/**
+ * 26-1 내 피드 — 내가 쓴 글만 보여주는 API 가 아직 없다.
+ * 그래서 발견 탭(GET feeds?tab=DISCOVER)에서 **내 userId 글만** 골라 그린다.
+ * 내 프로필을 못 읽으면 고를 근거가 없어 빈 상태다.
+ */
 @Composable
 fun MyFeedScreen(onBack: () -> Unit, onOpenPost: (String) -> Unit) {
-    val posts = MockTripRepository.feedPosts
+    val server = LocalServerData.current
+    var feeds by remember(server) { mutableStateOf<ServerListState<ServerFeed>>(ServerListState.Loading) }
+    var reloadKey by remember(server) { mutableIntStateOf(0) }
+    LaunchedEffect(server, reloadKey) {
+        if (server == null) {
+            feeds = ServerListState.Loaded(emptyList())
+            return@LaunchedEffect
+        }
+        val myNickname = runCatching { server.userProfile.profile().nickname }.getOrNull()
+        feeds = runCatching { server.feeds.feeds(FeedTab.DISCOVER).feeds }
+            .fold(
+                { loaded -> ServerListState.Loaded(loaded.filter { it.author.nickname == myNickname }) },
+                { ServerListState.Failed }
+            )
+    }
+    val loaded = (feeds as? ServerListState.Loaded)?.items.orEmpty()
 
     Column(
         modifier = Modifier
@@ -604,7 +786,7 @@ fun MyFeedScreen(onBack: () -> Unit, onOpenPost: (String) -> Unit) {
             title = "내 피드",
             onBack = onBack,
             trailing = {
-                ProfilePill(text = "${posts.size}", tint = ForestGreen)
+                ProfilePill(text = "${loaded.size}", tint = ForestGreen)
             }
         )
 
@@ -613,39 +795,34 @@ fun MyFeedScreen(onBack: () -> Unit, onOpenPost: (String) -> Unit) {
             verticalArrangement = Arrangement.spacedBy(14.dp),
             contentPadding = menuContentPadding(bottom = 34.dp)
         ) {
-            item {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(
-                        text = "내가 남긴 경북 여행 기록",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onBackground,
-                        fontWeight = FontWeight.ExtraBold
-                    )
-                    Text(
-                        text = "사진, 경로, 함께 간 친구가 남아 있는 피드를 모아봐요.",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.SemiBold
-                    )
+            val state = feeds
+            when {
+                state is ServerListState.Loading -> item { MoyeoEmptyState(MoyeoEmptyText.LOADING) }
+
+                state is ServerListState.Failed -> item {
+                    MoyeoEmptyState(MoyeoEmptyText.FAILED, onRetry = { reloadKey++ })
                 }
-            }
-            items(items = posts, key = { post -> post.id }) { post ->
-                MyFeedPostCard(
-                    post = post,
-                    onClick = { onOpenPost(post.id) }
-                )
+
+                loaded.isEmpty() -> item {
+                    // 남의 피드가 없는 것과 다른 상황이다 — 내가 쓰면 채워진다.
+                    MoyeoEmptyState(MoyeoEmptyText.NO_MY_FEEDS, testTag = "my-feed-empty")
+                }
+
+                else -> items(items = loaded, key = { it.feedId }) { feed ->
+                    MyFeedPostCard(feed = feed, onClick = { onOpenPost("srv-${feed.feedId}") })
+                }
             }
         }
     }
 }
 
 @Composable
-private fun MyFeedPostCard(post: FeedPost, onClick: () -> Unit) {
+private fun MyFeedPostCard(feed: ServerFeed, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .testTag("my-feed-post-${post.id}"),
+            .testTag("my-feed-post-${feed.feedId}"),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
         shape = RoundedCornerShape(12.dp),
@@ -659,10 +836,15 @@ private fun MyFeedPostCard(post: FeedPost, onClick: () -> Unit) {
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                MascotCircle(text = post.avatar, size = 42)
+                UserAvatar(
+                    imageUrl = feed.author.profileImageUrl,
+                    nickname = feed.author.nickname,
+                    modifier = Modifier.size(42.dp),
+                    fallbackFontSize = 19.sp
+                )
                 Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        text = post.author,
+                        text = feed.author.nickname,
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.ExtraBold,
@@ -670,7 +852,7 @@ private fun MyFeedPostCard(post: FeedPost, onClick: () -> Unit) {
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${post.region} · ${post.visibility.label}",
+                        text = feed.createdAt.take(10).replace('-', '.'),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold
@@ -684,53 +866,54 @@ private fun MyFeedPostCard(post: FeedPost, onClick: () -> Unit) {
                 )
             }
 
-            FeedMediaGrid(
-                post = post,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(150.dp),
-                compactRoute = true
-            )
+            feed.imageUrls.firstOrNull()?.let { imageUrl ->
+                CachedRemoteImage(
+                    url = imageUrl,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp)
+                        .clip(RoundedCornerShape(10.dp)),
+                    contentScale = ContentScale.Crop,
+                    fallbackShape = MoyeoPlaceholderShape.LANDSCAPE
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(150.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    )
+                }
+            }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            feed.trip?.courseTitle?.let { courseTitle ->
                 Text(
-                    text = post.title,
+                    text = courseTitle,
                     style = MaterialTheme.typography.titleSmall,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.ExtraBold,
                     maxLines = 2,
                     overflow = TextOverflow.Ellipsis
                 )
-                Text(
-                    text = post.body,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
             }
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ProfilePill(text = post.region, tint = ForestGreen)
-                ProfilePill(text = post.visibility.label, tint = Coral)
-            }
+            Text(
+                text = feed.content,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
 
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Text(
-                    text = "좋아요 ${post.likes}",
+                    text = "좋아요 ${feed.likeCount}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.SemiBold
                 )
                 Text(
-                    text = "댓글 ${post.comments}",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.SemiBold
-                )
-                Spacer(modifier = Modifier.weight(1f))
-                Text(
-                    text = post.photoCountText,
+                    text = "댓글 ${feed.commentCount}",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.SemiBold
@@ -744,7 +927,7 @@ private fun MyFeedPostCard(post: FeedPost, onClick: () -> Unit) {
 fun FriendDexScreen(onBack: () -> Unit, onOpenCompanion: (DexCompanion?) -> Unit = {}) {
     // 로그인 상태면 실서버 도감(GET users/me/travel-dex)으로 대체한다
     val server = LocalServerData.current
-    var serverCompanions by remember(server) { mutableStateOf<List<DogamFriend>?>(null) }
+    var serverCompanions by remember(server) { mutableStateOf<List<DexFriend>?>(null) }
     // 프로필 카드(25)에 나와 함께한 여행과 내가 남긴 메시지를 넘기려면 원본이 필요하다.
     // 도감 응답에 이미 들어 있어 카드에서 다시 조회하지 않는다.
     var serverRaw by remember(server) { mutableStateOf<List<DexCompanion>>(emptyList()) }
@@ -757,27 +940,30 @@ fun FriendDexScreen(onBack: () -> Unit, onOpenCompanion: (DexCompanion?) -> Unit
                 val loaded = server.social.travelDex()
                 serverRaw = loaded
                 loaded.map { companion ->
-                    DogamFriend(
+                    DexFriend(
                         id = companion.userId.toString(),
                         nickname = companion.nickname,
-                        avatar = profileAvatarEmoji(companion.nickname),
+                        // 이모지는 이미지가 없을 때의 폴백일 뿐이다 (R5 정본)
+                        avatar = MoyeoNicknameAnimal.emojiForNickname(companion.nickname),
+                        profileImageUrl = companion.profileImageUrl,
                         lastMetAt = companion.latestTripDate.replace('-', '.'),
+                        lastMetDate = companion.latestTripDate,
                         metCount = companion.tripCount
                     )
                 }
             }.getOrNull()
         }
     }
-    val isServerDex = serverCompanions != null
-    val friends = serverCompanions ?: MockTripRepository.dogamFriends
+    val friends = serverCompanions.orEmpty()
     var showSearch by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
-    var selectedFilter by remember { mutableStateOf(DogamFriendFilter.All) }
-    val filteredFriends = friends
-        .filter { selectedFilter.includes(it) }
-        .filter { friend ->
-            searchQuery.isBlank() || friend.nickname.contains(searchQuery.trim(), ignoreCase = true)
-        }
+    // 27 도감 필터 — 근거는 도감 응답의 동행 횟수(`tripCount`)와 최근 동행일(`latestTripDate`)뿐이다.
+    // 0건이어도 칩은 그린다(iOS 와 같다). 숫자는 실제 목록을 센 값이다.
+    var dexFilter by remember { mutableStateOf(DexFilter.All) }
+    val searched = friends.filter { friend ->
+        searchQuery.isBlank() || friend.nickname.contains(searchQuery.trim(), ignoreCase = true)
+    }
+    val filteredFriends = searched.filter(dexFilter::matches)
 
     Column(
         modifier = Modifier
@@ -832,7 +1018,7 @@ fun FriendDexScreen(onBack: () -> Unit, onOpenCompanion: (DexCompanion?) -> Unit
                     }
                     Spacer(modifier = Modifier.weight(1f))
                     Text(
-                        text = if (searchQuery.isBlank()) selectedFilter.summary else "검색 결과",
+                        text = if (searchQuery.isBlank()) "최근 동행 순" else "검색 결과",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Bold
@@ -844,60 +1030,33 @@ fun FriendDexScreen(onBack: () -> Unit, onOpenCompanion: (DexCompanion?) -> Unit
                     DogamSearchField(query = searchQuery, onQueryChange = { searchQuery = it })
                 }
             }
-            if (!isServerDex) {
-                // 필터 칩의 갯수 라벨은 목데이터 기준이라 서버 모드에서는 보여주지 않는다
-                item {
-                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        DogamFriendFilter.entries.forEach { filter ->
-                            DogamFilterChip(
-                                text = filter.title,
-                                selected = selectedFilter == filter,
-                                onClick = { selectedFilter = filter },
-                                modifier = Modifier.testTag("friend-dex-filter-${filter.name}")
-                            )
-                        }
+            item {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    DexFilter.entries.forEach { option ->
+                        DogamFilterChip(
+                            text = "${option.label} ${searched.count(option::matches)}",
+                            selected = dexFilter == option,
+                            onClick = { dexFilter = option },
+                            modifier = Modifier.testTag("friend-dex-filter-${option.name.lowercase()}")
+                        )
                     }
-                }
-            }
-            if (!isServerDex) {
-                item {
-                    // 화면기획 27의 안내 카드 — 한 줄 남기지 않은 친구를 알려준다 (서버에는 해당 데이터가 없다)
-                    FriendDexNoticeCard()
                 }
             }
             item {
-                if (filteredFriends.isEmpty()) {
-                    if (isServerDex && searchQuery.isBlank() && selectedFilter == DogamFriendFilter.All) {
-                        MenuCard {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(92.dp),
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = "아직 함께 여행한 친구가 없어요",
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                                Text(
-                                    text = "모임에 참여하면 도감이 채워져요.",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                            }
-                        }
-                    } else {
-                        DogamEmptyResult()
-                    }
-                } else {
-                    DogamGrid(
+                when {
+                    // 검색어가 있는데 결과가 없으면 §2 "검색 결과가 없어요"
+                    filteredFriends.isEmpty() && searchQuery.isNotBlank() -> DogamEmptyResult()
+
+                    filteredFriends.isEmpty() -> MoyeoEmptyState(
+                        "아직 함께 여행한 친구가 없어요.",
+                        testTag = "friend-dex-empty"
+                    )
+
+                    else -> DogamGrid(
                         friends = filteredFriends,
-                        // 목데이터 모드에서는 서버 원본이 없다. 카드가 기획 목데이터로 떨어진다.
-                        onOpenFriend = { friend -> onOpenCompanion(serverRaw.firstOrNull { it.userId.toString() == friend.id }) }
+                        onOpenFriend = { friend ->
+                            onOpenCompanion(serverRaw.firstOrNull { it.userId.toString() == friend.id })
+                        }
                     )
                 }
             }
@@ -911,59 +1070,6 @@ fun FriendDexScreen(onBack: () -> Unit, onOpenCompanion: (DexCompanion?) -> Unit
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun FriendDexNoticeCard() {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("friend-dex-notice"),
-        colors = CardDefaults.cardColors(containerColor = MoyeoTheme.tints.primaryTint),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
-            ) {
-                Text(
-                    text = "카드 뒷면이 비어 있는 친구 2명",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MoyeoTheme.tints.onPrimaryTint,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                Text(
-                    text = "경주 단풍·야경에서 만난 친구들에게 한 줄 남겨볼까요?",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MoyeoTheme.tints.primaryEmphasis
-                )
-            }
-            Icon(
-                imageVector = Icons.Filled.ChevronRight,
-                contentDescription = null,
-                tint = MoyeoTheme.tints.primaryEmphasis,
-                modifier = Modifier.size(18.dp)
-            )
-        }
-    }
-}
-
-private enum class DogamFriendFilter(val title: String, val summary: String) {
-    All("전체 12", "최근 동행 순"),
-    Repeated("2회 이상 4", "2회 이상 만난 친구"),
-    Recent("최근 1개월 3", "최근 1개월 동행");
-
-    fun includes(friend: DogamFriend): Boolean = when (this) {
-        All -> true
-        Repeated -> friend.metCount >= 2
-        Recent -> friend.lastMetAt.contains("일 전")
     }
 }
 
@@ -998,6 +1104,7 @@ private fun DogamSearchField(query: String, onQueryChange: (String) -> Unit) {
 
 @Composable
 fun CustomerCenterScreen(onBack: () -> Unit) {
+    val uriHandler = LocalUriHandler.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -1027,23 +1134,21 @@ fun CustomerCenterScreen(onBack: () -> Unit) {
                 }
             }
             item {
+                // 예전에는 동작 없는 행 셋(`문의 접수`·`신고 내역`·`자주 묻는 질문`)이었다.
+                // `>` 표시만 있고 콜백 자체가 없어 **눌러도 아무 일이 없었다.**
+                // 상담함·신고 내역·FAQ 는 존재하지 않는 개념이다(정본 changeLog14) —
+                // 실제로 갈 수 있는 두 창구만 남긴다. iOS `CustomerCenterLinkRow` · 웹 29 설정과 같다.
                 MenuCard(contentPadding = 0.dp) {
                     CustomerCenterRow(
-                        title = "문의 접수",
-                        subtitle = "모집, 채팅, 결제 문의를 남겨요",
-                        badge = "평균 2시간"
+                        title = MoyeoContact.ISSUES_LABEL,
+                        subtitle = "버그 제보와 기능 제안을 올려요",
+                        onClick = { uriHandler.openUri(MoyeoContact.ISSUES_URL) }
                     )
                     HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.58f))
                     CustomerCenterRow(
-                        title = "신고 내역",
-                        subtitle = "접수한 신고와 처리 상태를 확인해요",
-                        badge = "0건"
-                    )
-                    HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.58f))
-                    CustomerCenterRow(
-                        title = "자주 묻는 질문",
-                        subtitle = "동행 확정, 환불, 안전 수칙을 빠르게 찾아요",
-                        badge = "FAQ"
+                        title = MoyeoContact.EMAIL_LABEL,
+                        subtitle = MoyeoContact.EMAIL,
+                        onClick = { uriHandler.openUri(MoyeoContact.MAILTO_URL) }
                     )
                 }
             }
@@ -1052,11 +1157,13 @@ fun CustomerCenterScreen(onBack: () -> Unit) {
 }
 
 @Composable
-private fun CustomerCenterRow(title: String, subtitle: String, badge: String) {
+private fun CustomerCenterRow(title: String, subtitle: String, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .height(74.dp)
+            // `>` 를 그려 놓고 누를 수 없던 행이었다 — 표시와 동작을 같이 둔다.
+            .clickable(onClick = onClick)
             .padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp)
@@ -1076,7 +1183,12 @@ private fun CustomerCenterRow(title: String, subtitle: String, badge: String) {
                 overflow = TextOverflow.Ellipsis
             )
         }
-        ProfilePill(text = badge, tint = ForestGreen)
+        Icon(
+            imageVector = Icons.Filled.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp)
+        )
     }
 }
 
@@ -1087,6 +1199,10 @@ fun SettingsScreen(
     onAuthenticationCleared: () -> Unit,
     onOpenNotificationDetail: () -> Unit = {},
     onOpenBlockedUsers: () -> Unit = {},
+    /** 29-5 계정 연결. 예전에는 팝업이라 라우트가 없었다. */
+    onOpenAccountProviders: () -> Unit = {},
+    /** 13-2 내보내진 기록. 알림이 사라져도 사유를 다시 볼 수 있어야 한다. */
+    onOpenKickHistory: () -> Unit = {},
     onOpenAccountDelete: () -> Unit = {},
     onOpenTerms: (String) -> Unit = {},
     onOpenOssLicenses: () -> Unit = {},
@@ -1096,36 +1212,50 @@ fun SettingsScreen(
     onCycleThemePreference: () -> Unit = {}
 ) {
     val coroutineScope = rememberCoroutineScope()
-    // 캡처에서는 실제 빌드 버전이 아니라 화면기획 목데이터(1.0.4 (최신))를 그대로 보여준다
-    val captureMode = LocalCaptureMode.current
-    val versionRowValue = if (captureMode) {
-        SettingsMockAction.Version.rowValue
-    } else {
-        BuildConfig.VERSION_NAME
-    }
-    // 최신 버전을 알려주는 서버 API가 없어 일반 실행에서는 "최신 상태" 주장을 하지 않는다
-    val versionDialogBody = if (captureMode) {
-        SettingsMockAction.Version.dialogBody
-    } else {
-        "현재 설치된 버전은 ${BuildConfig.VERSION_NAME}이에요."
-    }
-    var chatEnabled by remember { mutableStateOf(true) }
-    var deadlineEnabled by remember { mutableStateOf(true) }
-    var friendEnabled by remember { mutableStateOf(true) }
+    // 캡처에서도 실제 빌드 버전을 그대로 보여준다 — 화면기획 값(1.0.4)을 덮어씌우면
+    // 스크린샷이 있지도 않은 버전을 말하게 된다.
+    // 최신 버전을 알려주는 서버 API가 없어 "최신 상태" 주장은 하지 않는다.
+    val versionRowValue = BuildConfig.VERSION_NAME
+    val versionDialogBody = "현재 설치된 버전은 ${BuildConfig.VERSION_NAME}이에요."
+    var chatEnabled by remember { mutableStateOf(false) }
+    var deadlineEnabled by remember { mutableStateOf(false) }
+    var friendEnabled by remember { mutableStateOf(false) }
     var marketingEnabled by remember { mutableStateOf(false) }
-    var selectedAction by remember { mutableStateOf<SettingsMockAction?>(null) }
+    // 방해금지 시간대는 서버 알림 설정이 근거다 — 못 받아오면 줄에 값을 쓰지 않는다
+    var doNotDisturbText by remember { mutableStateOf<String?>(null) }
+    var selectedAction by remember { mutableStateOf<SettingsRowAction?>(null) }
     var isPerformingAccountAction by remember { mutableStateOf(false) }
     var accountErrorMessage by remember { mutableStateOf<String?>(null) }
-    var showProviderDialog by remember { mutableStateOf(false) }
     var connectedProviders by remember { mutableStateOf<Set<AuthProvider>>(emptySet()) }
-    var providerLoading by remember { mutableStateOf(false) }
-    var linkingProvider by remember { mutableStateOf<AuthProvider?>(null) }
-    var providerError by remember { mutableStateOf<String?>(null) }
-    // 로그인 상태면 차단 인원 수를 실서버(GET users/me/blocks)에서 읽는다 — 목데이터 수치를 두지 않는다
+    // 행에 적을 값(연결된 로그인 방식)은 서버가 근거다 — 못 받아오면 `관리` 로 남는다
+    LaunchedEffect(accountService) {
+        runCatching { accountService.linkedProviders() }.onSuccess { connectedProviders = it }
+    }
+    // 차단 인원 수는 실서버(GET users/me/blocks)가 근거다 — 못 받아오면 줄에 값을 쓰지 않는다
     val server = LocalServerData.current
     var serverBlockedCount by remember(server) { mutableStateOf<Int?>(null) }
     LaunchedEffect(server) {
-        serverBlockedCount = if (server == null) null else runCatching { server.social.blocks().size }.getOrNull()
+        if (server == null) {
+            serverBlockedCount = null
+            doNotDisturbText = null
+            return@LaunchedEffect
+        }
+        serverBlockedCount = runCatching { server.social.blocks().size }.getOrNull()
+        runCatching { server.userProfile.profile() }.getOrNull()?.let { profile ->
+            chatEnabled = profile.chatNotificationMode != "OFF"
+            deadlineEnabled = profile.recruitmentDeadlineEnabled
+            friendEnabled = profile.socialActivityEnabled
+            marketingEnabled = profile.marketingEnabled
+        }
+        doNotDisturbText = runCatching { server.notifications.settings() }.getOrNull()
+            ?.takeIf { it.doNotDisturbEnabled }
+            ?.let { setting ->
+                listOfNotNull(setting.doNotDisturbStartTime, setting.doNotDisturbEndTime)
+                    .map { it.take(5) }
+                    .takeIf { it.size == 2 }
+                    ?.joinToString("~")
+                    ?.let { "방해금지 $it" }
+            }
     }
 
     Column(
@@ -1154,7 +1284,7 @@ fun SettingsScreen(
                     SettingsToggleRow("마케팅 알림", "이벤트·새 코스 소개", marketingEnabled) {
                         marketingEnabled = it
                     }
-                    SettingsValueRow(title = "알림 세부 설정", value = "방해금지 22:30~07:00") {
+                    SettingsValueRow(title = "알림 세부 설정", value = doNotDisturbText) {
                         onOpenNotificationDetail()
                     }
                 }
@@ -1163,11 +1293,11 @@ fun SettingsScreen(
             item {
                 SettingsSectionGroup("화면") {
                     SettingsValueRow(
-                        title = SettingsMockAction.Theme.rowTitle,
+                        title = SettingsRowAction.Theme.rowTitle,
                         value = themePreference.label,
                         onClick = onCycleThemePreference
                     )
-                    SettingsValueRow(action = SettingsMockAction.Language) {
+                    SettingsValueRow(action = SettingsRowAction.Language) {
                         selectedAction = it
                     }
                 }
@@ -1178,28 +1308,20 @@ fun SettingsScreen(
                     SettingsValueRow(
                         title = "로그인 방식",
                         value = connectedProviders.providerSummary().ifBlank { "관리" },
-                        onClick = {
-                            showProviderDialog = true
-                            providerLoading = true
-                            providerError = null
-                            coroutineScope.launch {
-                                runCatching { accountService.linkedProviders() }
-                                    .onSuccess { connectedProviders = it }
-                                    .onFailure { providerError = it.message }
-                                providerLoading = false
-                            }
-                        }
+                        onClick = onOpenAccountProviders
                     )
                     SettingsValueRow(
-                        title = SettingsMockAction.BlockedUsers.rowTitle,
-                        value = serverBlockedCount?.let { "${it}명" } ?: SettingsMockAction.BlockedUsers.rowValue
+                        title = SettingsRowAction.BlockedUsers.rowTitle,
+                        value = serverBlockedCount?.let { "${it}명" } ?: SettingsRowAction.BlockedUsers.rowValue
                     ) {
                         onOpenBlockedUsers()
                     }
-                    SettingsValueRow(action = SettingsMockAction.PrivacyPolicy) {
+                    // 13-2 — 13-1 은 알림 한 건을 여는 화면이라, 알림이 사라지면 사유를 다시 볼 길이 없었다
+                    SettingsValueRow(title = "내보내진 기록", value = "") { onOpenKickHistory() }
+                    SettingsValueRow(action = SettingsRowAction.PrivacyPolicy) {
                         onOpenTerms("privacy")
                     }
-                    SettingsValueRow(action = SettingsMockAction.Terms) {
+                    SettingsValueRow(action = SettingsRowAction.Terms) {
                         onOpenTerms("service")
                     }
                 }
@@ -1208,14 +1330,14 @@ fun SettingsScreen(
             item {
                 SettingsSectionGroup("정보") {
                     SettingsValueRow(
-                        title = SettingsMockAction.Version.rowTitle,
+                        title = SettingsRowAction.Version.rowTitle,
                         value = versionRowValue,
-                        onClick = { selectedAction = SettingsMockAction.Version }
+                        onClick = { selectedAction = SettingsRowAction.Version }
                     )
-                    SettingsValueRow(action = SettingsMockAction.Contact) {
+                    SettingsValueRow(action = SettingsRowAction.Contact) {
                         selectedAction = it
                     }
-                    SettingsValueRow(action = SettingsMockAction.Rate) {
+                    SettingsValueRow(action = SettingsRowAction.Rate) {
                         selectedAction = it
                     }
                     // 29-4 오픈소스 라이선스 — 앱 평가하기 다음, 로그아웃 위 (changeLog17)
@@ -1224,10 +1346,10 @@ fun SettingsScreen(
                         value = null,
                         onClick = onOpenOssLicenses
                     )
-                    SettingsDangerRow(action = SettingsMockAction.Logout) {
+                    SettingsDangerRow(action = SettingsRowAction.Logout) {
                         selectedAction = it
                     }
-                    SettingsDangerRow(action = SettingsMockAction.DeleteAccount) {
+                    SettingsDangerRow(action = SettingsRowAction.DeleteAccount) {
                         onOpenAccountDelete()
                     }
                 }
@@ -1238,7 +1360,7 @@ fun SettingsScreen(
     selectedAction?.let { action ->
         SettingsActionDialog(
             action = action,
-            body = if (action == SettingsMockAction.Version) versionDialogBody else action.dialogBody,
+            body = if (action == SettingsRowAction.Version) versionDialogBody else action.dialogBody,
             isPerforming = isPerformingAccountAction,
             errorMessage = accountErrorMessage,
             onDismiss = {
@@ -1248,7 +1370,7 @@ fun SettingsScreen(
                 }
             },
             onConfirm = {
-                if (action != SettingsMockAction.Logout && action != SettingsMockAction.DeleteAccount) {
+                if (action != SettingsRowAction.Logout && action != SettingsRowAction.DeleteAccount) {
                     selectedAction = null
                     return@SettingsActionDialog
                 }
@@ -1256,7 +1378,7 @@ fun SettingsScreen(
                 accountErrorMessage = null
                 coroutineScope.launch {
                     runCatching {
-                        if (action == SettingsMockAction.DeleteAccount) {
+                        if (action == SettingsRowAction.DeleteAccount) {
                             accountService.withdraw()
                         } else {
                             accountService.logout()
@@ -1268,28 +1390,6 @@ fun SettingsScreen(
                         accountErrorMessage = error.message ?: "계정 요청을 처리하지 못했어요. 잠시 후 다시 시도해 주세요."
                     }
                     isPerformingAccountAction = false
-                }
-            }
-        )
-    }
-
-    if (showProviderDialog) {
-        ProviderManagementDialog(
-            connectedProviders = connectedProviders,
-            isLoading = providerLoading,
-            linkingProvider = linkingProvider,
-            errorMessage = providerError,
-            onDismiss = { if (!providerLoading) showProviderDialog = false },
-            onLink = { provider, emailRequest ->
-                providerLoading = true
-                linkingProvider = provider
-                providerError = null
-                coroutineScope.launch {
-                    runCatching { accountService.linkProvider(provider, emailRequest) }
-                        .onSuccess { connectedProviders = it }
-                        .onFailure { providerError = it.message ?: "로그인 방식을 연결하지 못했어요." }
-                    providerLoading = false
-                    linkingProvider = null
                 }
             }
         )
@@ -1351,122 +1451,6 @@ internal fun menuContentPadding(
 }
 
 @Composable
-private fun ProfileHeaderCard(profile: Profile, userProfile: UserDisplayProfile) {
-    MenuCard {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            UserAvatar(
-                imageUrl = userProfile.profileImageUrl,
-                nickname = userProfile.nickname,
-                modifier = Modifier.size(76.dp),
-                fallbackFontSize = 34.sp
-            )
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                Text(
-                    text = userProfile.nickname ?: "내 프로필",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                Text(
-                    text = userProfile.nicknameColor?.let { "닉네임 색상 · $it" } ?: "모여트립 여행자",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = ForestGreen,
-                    fontWeight = FontWeight.Bold
-                )
-                Text(
-                    text = profile.region,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-        }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            profile.badges.take(3).forEach { badge ->
-                ProfilePill(text = badge, tint = Coral)
-            }
-        }
-    }
-}
-
-@Composable
-private fun ProfileStatsRow(profile: Profile) {
-    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        StatCard(
-            title = "여행",
-            value = profile.joinedTrips.toString(),
-            valueTag = "profile-stat-trips-value",
-            modifier = Modifier.weight(1f)
-        )
-        StatCard(
-            title = "호스트",
-            value = profile.hostedTrips.toString(),
-            valueTag = "profile-stat-hosted-value",
-            modifier = Modifier.weight(1f)
-        )
-        StatCard(
-            title = "피드",
-            value = profile.feedCount.toString(),
-            valueTag = "profile-stat-feed-value",
-            modifier = Modifier.weight(1f)
-        )
-    }
-}
-
-@Composable
-private fun StatCard(title: String, value: String, valueTag: String, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier.height(82.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-        shape = RoundedCornerShape(12.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-    ) {
-        Column(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.Center,
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Text(
-                text = value,
-                modifier = Modifier.testTag(valueTag),
-                style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.ExtraBold
-            )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-    }
-}
-
-@Composable
-private fun ProfileMenuCard(onOpenProfileEdit: () -> Unit, onOpenFriendDex: () -> Unit) {
-    MenuCard(contentPadding = 0.dp) {
-        ProfileMenuRow(
-            title = "내 정보 수정",
-            subtitle = "프로필과 여행 취향을 관리해요",
-            modifier = Modifier.testTag("profile-menu-edit"),
-            onClick = onOpenProfileEdit
-        )
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.58f))
-        ProfileMenuRow(
-            title = "친구 도감",
-            subtitle = "함께 다녀온 친구를 모아봐요",
-            modifier = Modifier.testTag("profile-menu-friend-dex"),
-            onClick = onOpenFriendDex
-        )
-    }
-}
-
-@Composable
 private fun ProfileMenuRow(title: String, subtitle: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Row(
         modifier = modifier
@@ -1502,97 +1486,7 @@ private fun ProfileMenuRow(title: String, subtitle: String, modifier: Modifier =
 }
 
 @Composable
-private fun ProfileTagCard(profile: Profile) {
-    MenuCard {
-        Text(
-            text = "선호 지역",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-            fontWeight = FontWeight.ExtraBold
-        )
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("청송", "안동", "경주", "울릉").forEach { region ->
-                ProfilePill(text = region, tint = ForestGreen)
-            }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.58f))
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            MascotCircle(text = "🍃", size = 38)
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "이번 달 추천",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                Text(
-                    text = "문경새재 숲길 힐링 워크가 프로필 취향과 잘 맞아요.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun DogamPreviewCard(onOpenFriendDex: () -> Unit) {
-    MenuCard {
-        Row(verticalAlignment = Alignment.Top) {
-            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    text = "지금까지 만난 친구",
-                    style = MaterialTheme.typography.titleSmall,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    fontWeight = FontWeight.ExtraBold
-                )
-                Text(
-                    text = "${MockTripRepository.dogamFriends.size}마리 · 최근 동행 순",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            ProfilePill(text = "친구에게만", tint = ForestGreen)
-        }
-        MockTripRepository.dogamFriends.take(4).forEach { friend ->
-            DogamPreviewRow(friend = friend, onClick = onOpenFriendDex)
-        }
-    }
-}
-
-@Composable
-private fun DogamPreviewRow(friend: DogamFriend, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(54.dp)
-            .testTag("profile-dogam-preview-${friend.id}")
-            .clickable(onClick = onClick),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        MascotCircle(text = friend.avatar, size = 38)
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(
-                text = friend.nickname,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurface,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = friend.lastMetAt,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        if (friend.metCount > 1) {
-            ProfilePill(text = "${friend.metCount}x", tint = Coral)
-        }
-    }
-}
-
-@Composable
-private fun DogamGrid(friends: List<DogamFriend>, onOpenFriend: (DogamFriend) -> Unit = {}) {
+private fun DogamGrid(friends: List<DexFriend>, onOpenFriend: (DexFriend) -> Unit = {}) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         friends.chunked(3).forEach { rowFriends ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1639,13 +1533,13 @@ private fun DogamEmptyResult() {
 }
 
 @Composable
-private fun DogamFriendCard(friend: DogamFriend, modifier: Modifier = Modifier) {
+private fun DogamFriendCard(friend: DexFriend, modifier: Modifier = Modifier) {
     Card(
         modifier = modifier.height(108.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(
             1.dp,
-            if (friend.id == "dogam-01") ForestGreen else MaterialTheme.colorScheme.outline
+            MaterialTheme.colorScheme.outline
         ),
         shape = RoundedCornerShape(12.dp),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -1658,13 +1552,16 @@ private fun DogamFriendCard(friend: DogamFriend, modifier: Modifier = Modifier) 
             verticalArrangement = Arrangement.spacedBy(5.dp)
         ) {
             Box {
-                MascotCircle(text = friend.avatar, size = 42)
+                // 서버가 프로필 이미지를 주면 그 이미지를 그린다 — 이모지는 없거나 못 불러올 때만이다.
+                UserAvatar(
+                    imageUrl = friend.profileImageUrl,
+                    nickname = friend.nickname,
+                    modifier = Modifier.size(42.dp),
+                    fallbackFontSize = 20.sp
+                )
                 // 내 카드는 "나" 배지, 여러 번 만난 친구는 횟수 배지 (화면기획 27)
-                val badge = when {
-                    friend.nickname == MockTripRepository.profile.nickname -> "나"
-                    friend.metCount > 1 -> "${friend.metCount}x"
-                    else -> null
-                }
+                // 여러 번 만난 친구는 횟수 배지 (화면기획 27)
+                val badge = if (friend.metCount > 1) "${friend.metCount}x" else null
                 if (badge != null) {
                     Text(
                         text = badge,
@@ -1770,7 +1667,7 @@ private fun SettingsToggleRow(title: String, subtitle: String?, checked: Boolean
 }
 
 @Composable
-private fun SettingsValueRow(action: SettingsMockAction, onClick: (SettingsMockAction) -> Unit) {
+private fun SettingsValueRow(action: SettingsRowAction, onClick: (SettingsRowAction) -> Unit) {
     SettingsValueRow(action.rowTitle, action.rowValue) { onClick(action) }
 }
 
@@ -1810,15 +1707,44 @@ private fun SettingsValueRow(title: String, value: String?, onClick: () -> Unit)
     SettingsRowDivider()
 }
 
+/**
+ * 29-5 계정 연결 (로그인 방식) — `GET/POST /api/v1/auth/providers`.
+ *
+ * 29 설정의 `로그인 방식 › 관리` 가 가리키는 목적지가 없었다 — 셰브런이 다음 화면을 약속하는데
+ * 열리는 것은 팝업이라 캡처에도 잡히지 않았다. 이제 라우트를 가진 화면이다(정본 §6-1).
+ *
+ * 서버에는 **연결 해제 API 가 없다**. 그래서 화면에도 끊는 버튼을 두지 않고, 왜 없는지를 적는다.
+ */
 @Composable
-private fun ProviderManagementDialog(
-    connectedProviders: Set<AuthProvider>,
-    isLoading: Boolean,
-    linkingProvider: AuthProvider?,
-    errorMessage: String?,
-    onDismiss: () -> Unit,
-    onLink: (AuthProvider, EmailAuthRequest?) -> Unit
-) {
+fun AccountProvidersScreen(accountService: AuthAccountService, onBack: () -> Unit) {
+    var connectedProviders by remember { mutableStateOf<Set<AuthProvider>>(emptySet()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var linkingProvider by remember { mutableStateOf<AuthProvider?>(null) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+    val coroutineScope = rememberCoroutineScope()
+
+    LaunchedEffect(accountService) {
+        isLoading = true
+        errorMessage = null
+        runCatching { accountService.linkedProviders() }
+            .onSuccess { connectedProviders = it }
+            .onFailure { errorMessage = it.message ?: "로그인 방식을 확인하지 못했어요." }
+        isLoading = false
+    }
+
+    val onLink: (AuthProvider, EmailAuthRequest?) -> Unit = { provider, emailRequest ->
+        isLoading = true
+        linkingProvider = provider
+        errorMessage = null
+        coroutineScope.launch {
+            runCatching { accountService.linkProvider(provider, emailRequest) }
+                .onSuccess { connectedProviders = it }
+                .onFailure { errorMessage = it.message ?: "로그인 방식을 연결하지 못했어요." }
+            isLoading = false
+            linkingProvider = null
+        }
+    }
+
     var isEmailFormExpanded by remember { mutableStateOf(false) }
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -1826,15 +1752,9 @@ private fun ProviderManagementDialog(
     val inputBackground = if (darkTheme) Color(0xFF0D1411) else Color.White
     val softLine = if (darkTheme) Color(0xFF24332D) else Color(0xFFEEF0EE)
 
-    Dialog(
-        onDismissRequest = onDismiss,
-        properties = DialogProperties(
-            usePlatformDefaultWidth = false,
-            decorFitsSystemWindows = false
-        )
-    ) {
+    run {
         Surface(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().testTag("account-providers-screen"),
             color = if (darkTheme) Color(0xFF0D1411) else Color.White,
             tonalElevation = 0.dp
         ) {
@@ -1852,21 +1772,18 @@ private fun ProviderManagementDialog(
                         .height(44.dp),
                     contentAlignment = Alignment.Center
                 ) {
+                    IconButton(onClick = onBack, modifier = Modifier.align(Alignment.CenterStart)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                    }
                     Text(
                         text = "로그인 방식",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold
                     )
-                    TextButton(
-                        onClick = onDismiss,
-                        enabled = !isLoading,
-                        modifier = Modifier.align(Alignment.CenterEnd)
-                    ) {
-                        Text("완료", fontWeight = FontWeight.Bold)
-                    }
                 }
                 Text(
-                    text = "연결된 로그인 수단으로 같은 계정을 안전하게 이용할 수 있어요.",
+                    text = "어느 방법으로든 같은 계정으로 들어와요. " +
+                        "하나를 더 연결해두면 한쪽을 못 쓰게 돼도 들어올 수 있어요.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1943,7 +1860,7 @@ private fun ProviderManagementDialog(
                                     onClick = {
                                         onLink(
                                             AuthProvider.EMAIL,
-                                            EmailAuthRequest(email, password, EmailAuthAction.CREATE_ACCOUNT)
+                                            EmailAuthRequest(email, password)
                                         )
                                     },
                                     enabled = !isLoading && email.contains('@') && password.length >= 6,
@@ -1987,8 +1904,29 @@ private fun ProviderManagementDialog(
                             }
                         }
                     }
-                    errorMessage?.let { Text(it, color = Coral, style = MaterialTheme.typography.bodySmall) }
+                    errorMessage?.let {
+                        Text(
+                            it,
+                            modifier = Modifier.testTag("account-providers-error"),
+                            color = Coral,
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    }
                     if (isLoading && linkingProvider == null) Text("로그인 방식을 확인하고 있어요…")
+                    // 마지막 하나는 끊을 수 없다 — 끊으면 아무 방법으로도 못 들어온다.
+                    // (서버에 연결 해제 API 자체가 없어, 화면에도 끊는 버튼을 두지 않는다.)
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Text(
+                            "마지막 하나 남은 로그인 방식은 끊을 수 없어요. 계정을 아예 지우려면 설정에서 탈퇴해 주세요.",
+                            modifier = Modifier.padding(14.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -2199,7 +2137,7 @@ private fun AuthProvider.displayName(): String = when (this) {
 }
 
 @Composable
-private fun SettingsDangerRow(action: SettingsMockAction, onClick: (SettingsMockAction) -> Unit) {
+private fun SettingsDangerRow(action: SettingsRowAction, onClick: (SettingsRowAction) -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -2243,7 +2181,7 @@ private fun SettingsRowDivider() {
 
 @Composable
 private fun SettingsActionDialog(
-    action: SettingsMockAction,
+    action: SettingsRowAction,
     body: String,
     isPerforming: Boolean,
     errorMessage: String?,
@@ -2267,6 +2205,19 @@ private fun SettingsActionDialog(
                     text = body,
                     style = MaterialTheme.typography.bodyMedium
                 )
+                // 문의하기는 안내만 하고 끝나면 아무 일도 일어나지 않는다 —
+                // 실제로 갈 수 있는 두 창구를 버튼으로 둔다.
+                if (action == SettingsRowAction.Contact) {
+                    val uriHandler = LocalUriHandler.current
+                    OutlinedButton(
+                        onClick = { uriHandler.openUri(MoyeoContact.ISSUES_URL) },
+                        modifier = Modifier.fillMaxWidth().testTag("settings-contact-issues")
+                    ) { Text(MoyeoContact.ISSUES_LABEL, fontWeight = FontWeight.ExtraBold) }
+                    OutlinedButton(
+                        onClick = { uriHandler.openUri(MoyeoContact.MAILTO_URL) },
+                        modifier = Modifier.fillMaxWidth().testTag("settings-contact-email")
+                    ) { Text(MoyeoContact.EMAIL_LABEL, fontWeight = FontWeight.ExtraBold) }
+                }
                 errorMessage?.let {
                     Text(
                         text = it,
@@ -2294,7 +2245,8 @@ private fun SettingsActionDialog(
     )
 }
 
-private enum class SettingsMockAction(
+/** 설정 화면의 한 줄. 값(rowValue)은 서버·기기 상태로 채우는 자리는 null 이다. */
+private enum class SettingsRowAction(
     val rowTitle: String,
     val rowValue: String?,
     val dialogTitle: String,
@@ -2304,7 +2256,8 @@ private enum class SettingsMockAction(
 ) {
     Theme(
         rowTitle = "테마",
-        rowValue = "시스템 기본",
+        // 값은 화면이 저장된 테마 설정으로 채운다 — 여기 고정값을 두지 않는다
+        rowValue = null,
         dialogTitle = "테마 설정",
         dialogBody = "시스템 설정에 맞춰 밝은 화면과 어두운 화면을 자동으로 전환해요."
     ),
@@ -2314,17 +2267,12 @@ private enum class SettingsMockAction(
         dialogTitle = "언어 설정",
         dialogBody = "현재는 한국어 기준으로 표시되고, 지역 안내 문구도 같은 언어 기준을 따라가요."
     ),
-    LoginMethod(
-        rowTitle = "로그인 방식",
-        rowValue = "카카오",
-        dialogTitle = "로그인 방식",
-        dialogBody = "카카오 계정으로 연결된 상태예요. 계정 연결과 해제는 이곳에서 관리해요."
-    ),
     BlockedUsers(
         rowTitle = "차단한 사용자",
-        rowValue = "2명",
+        // 인원수는 화면이 GET users/me/blocks 로 채운다
+        rowValue = null,
         dialogTitle = "차단한 사용자",
-        dialogBody = "차단 목록 2명을 확인하고 필요하면 차단을 해제할 수 있어요."
+        dialogBody = "차단 목록을 확인하고 필요하면 차단을 해제할 수 있어요."
     ),
     PrivacyPolicy(
         rowTitle = "개인정보 처리방침",
@@ -2340,15 +2288,17 @@ private enum class SettingsMockAction(
     ),
     Version(
         rowTitle = "버전",
-        rowValue = "1.0.4 (최신)",
+        // 값과 본문은 화면에서 BuildConfig.VERSION_NAME 으로 채운다 — 여기 고정값을 두지 않는다.
+        rowValue = null,
         dialogTitle = "앱 버전",
-        dialogBody = "현재 설치된 버전은 1.0.4이며 최신 상태예요."
+        dialogBody = ""
     ),
     Contact(
         rowTitle = "문의하기",
         rowValue = null,
         dialogTitle = "문의하기",
-        dialogBody = "채팅, 모집, 결제 문의를 남기는 고객센터로 이어져요."
+        // 예전 문구는 "고객센터로 이어져요" 였는데 고객센터는 존재하지 않는 개념이다.
+        dialogBody = MoyeoContact.DIALOG_BODY
     ),
     Rate(
         rowTitle = "앱 평가하기",
@@ -2458,92 +2408,6 @@ private fun ProfilePill(text: String, tint: androidx.compose.ui.graphics.Color) 
     )
 }
 
-@Composable
-private fun MascotCircle(text: String, size: Int) {
-    Box(
-        modifier = Modifier
-            .size(size.dp)
-            .clip(CircleShape)
-            .background(MaterialTheme.colorScheme.primaryContainer),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text = text, fontSize = (size * 0.46f).sp)
-    }
-}
-
-/**
- * 프로필 커버 헤더.
- *
- * 화면기획은 옅은 커버 위에 아바타가 걸치고, 그 아래 이름과 매너 점수가 온다.
- * 카드 안에 좌측 정렬로 넣으면 "내 프로필 카드"로 읽혀 공개 프로필 성격이 사라진다.
- */
-@Composable
-private fun ProfileCoverHeader(
-    profile: Profile,
-    userProfile: UserDisplayProfile,
-    serverProfile: ServerUserProfile? = null
-) {
-    val colors = MaterialTheme.colorScheme
-    val tints = MoyeoTheme.tints
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(Modifier.fillMaxWidth()) {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .height(132.dp)
-                    .background(tints.mapGreen)
-            )
-            Box(
-                Modifier
-                    .align(Alignment.BottomCenter)
-                    .offset(y = 34.dp)
-                    .size(74.dp)
-                    .clip(CircleShape)
-                    .background(tints.primaryTint),
-                contentAlignment = Alignment.Center
-            ) {
-                if (serverProfile != null) {
-                    UserAvatar(
-                        imageUrl = serverProfile.profileImageUrl ?: userProfile.profileImageUrl,
-                        nickname = serverProfile.nickname,
-                        modifier = Modifier.size(74.dp),
-                        fallbackFontSize = 32.sp
-                    )
-                } else {
-                    AnimalAvatar(profileAvatarEmoji(profile.animalBuddy), modifier = Modifier.size(58.dp))
-                }
-            }
-        }
-        Spacer(Modifier.height(42.dp))
-        Text(
-            serverProfile?.nickname ?: userProfile.nickname ?: profile.name,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.ExtraBold
-        )
-        // 매너 점수는 서버가 내려주지 않는다 — 서버 모드에서는 표시하지 않는다
-        if (serverProfile == null) {
-            Row(
-                modifier = Modifier.padding(top = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
-            ) {
-                Text(
-                    "매너 점수 4.7점",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = colors.onSurfaceVariant,
-                    fontWeight = FontWeight.Bold
-                )
-                Icon(
-                    Icons.Filled.StarOutline,
-                    contentDescription = null,
-                    modifier = Modifier.size(13.dp),
-                    tint = colors.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
 /** 프로필 메뉴 한 줄. 아이콘 + 라벨 + chevron (화면기획). */
 @Composable
 private fun ProfileMenuRow(icon: ImageVector, label: String, onClick: () -> Unit) {
@@ -2568,22 +2432,4 @@ private fun ProfileMenuRow(icon: ImageVector, label: String, onClick: () -> Unit
         }
         HorizontalDivider(color = colors.outlineVariant)
     }
-}
-
-/**
- * 프로필 아바타에 쓸 이모지.
- *
- * `Profile.animalBuddy` 는 "초록 고양이 2035" 같은 표시용 이름이라 아바타 자리에 그대로
- * 넣으면 원 안에 글자가 들어간다. 이름에 담긴 동물로 이모지를 고른다.
- */
-internal fun profileAvatarEmoji(animalBuddy: String): String = when {
-    animalBuddy.contains("사슴") -> "🦌"
-    animalBuddy.contains("곰") -> "🐻"
-    animalBuddy.contains("토끼") -> "🐰"
-    animalBuddy.contains("거북") -> "🐢"
-    animalBuddy.contains("너구리") -> "🦝"
-    animalBuddy.contains("여우") -> "🦊"
-    animalBuddy.contains("고양이") -> "🐱"
-    animalBuddy.contains("두루미") || animalBuddy.contains("두루") -> "🕊"
-    else -> "🐻"
 }
