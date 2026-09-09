@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -32,6 +33,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -53,12 +55,18 @@ import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.ServerListState
+import kr.hanchae.moyeotrip.ui.components.moyeoRelativeTime
 import kr.hanchae.moyeotrip.ui.state.LocalTabDataStore
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 @Composable
-fun FeedScreen(onOpenPost: (String) -> Unit, onWritePost: () -> Unit) {
+fun FeedScreen(
+    onOpenPost: (String) -> Unit,
+    onWritePost: () -> Unit,
+    /** 32 피드 신고 시트. 목록에서도 열 수 있어야 한다 — iOS·웹·기획과 같다. */
+    onOpenReport: (Long) -> Unit = {}
+) {
     val colorScheme = MaterialTheme.colorScheme
     val server = LocalServerData.current
     // 피드도 "보던 상태 유지" 탭이다 — 탭별 목록을 탭 바깥 보관소에 담고 재진입 시 다시 부르지 않는다
@@ -122,6 +130,7 @@ fun FeedScreen(onOpenPost: (String) -> Unit, onWritePost: () -> Unit) {
                     key = { feed -> feed.feedId }
                 ) { feed ->
                     ServerFeedPostRow(
+                        onOpenReport = onOpenReport,
                         feed = feed,
                         onOpenPost = { onOpenPost("srv-${feed.feedId}") },
                         onToggleLike = {
@@ -191,7 +200,18 @@ private fun FeedWriteEntry(onWritePost: () -> Unit) {
 
 /** 실서버 피드 행 — 서버가 주지 않는 값(제목·지역 태그 줄)은 표시하지 않는다. */
 @Composable
-private fun ServerFeedPostRow(feed: ServerFeed, onOpenPost: () -> Unit, onToggleLike: () -> Unit) {
+private fun ServerFeedPostRow(
+    feed: ServerFeed,
+    onOpenPost: () -> Unit,
+    onToggleLike: () -> Unit,
+    onOpenReport: (Long) -> Unit = {}
+) {
+    val server = LocalServerData.current
+    // 자기 피드에는 두지 않는다 — 서버가 400 `40039` 로 거절한다 (상세와 같은 규칙).
+    val reportable = remember(server, feed.author.userId) {
+        val mine = server?.signedInUserId?.invoke()
+        feed.author.userId.let { it != null && mine != null && it != mine }
+    }
     val colorScheme = MaterialTheme.colorScheme
 
     Column(
@@ -223,12 +243,25 @@ private fun ServerFeedPostRow(feed: ServerFeed, onOpenPost: () -> Unit, onToggle
                     overflow = TextOverflow.Ellipsis
                 )
                 Text(
-                    text = feed.createdAt.take(10).replace('-', '.'),
+                    text = moyeoRelativeTime(feed.createdAt),
                     fontSize = 12.sp,
                     lineHeight = 16.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = colorScheme.onSurfaceVariant
                 )
+            }
+            // 32 신고 시트 진입점 — 안드로이드 목록에는 아예 없었다.
+            if (reportable) {
+                IconButton(
+                    onClick = { feed.author.userId?.let { onOpenReport(feed.feedId) } },
+                    modifier = Modifier.size(44.dp).testTag("feed-post-${feed.feedId}-more")
+                ) {
+                    Icon(
+                        Icons.Filled.MoreHoriz,
+                        contentDescription = "더보기",
+                        tint = colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
         Text(

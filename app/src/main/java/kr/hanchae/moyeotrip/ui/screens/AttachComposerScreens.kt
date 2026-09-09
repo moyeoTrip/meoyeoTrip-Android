@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Payments
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
@@ -74,12 +75,14 @@ import kr.hanchae.moyeotrip.data.tourism.TourismContentSummary
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
+import kr.hanchae.moyeotrip.ui.components.MOYEO_CTA_RADIUS
 import kr.hanchae.moyeotrip.ui.components.MapMarker
 import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
 import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
+import kr.hanchae.moyeotrip.ui.components.moyeoDashedOutline
 
 // 20-2 첨부 메뉴에서 이어지는 작성 화면 6종 (20-2a~20-2f).
 // 정본: docs/alignment/ATTACH-COMPOSER-CANON.md
@@ -270,6 +273,9 @@ fun AttachPhotoScreen(threadId: String?, onBack: () -> Unit) {
     var picked by remember { mutableStateOf<PickedImage?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // 사진과 함께 보내는 한 줄. 서버가 `caption` 파트로 받는다(선택) — 웹·기획에는 있는데
+    // 앱 둘에만 입력이 없어서 같은 화면이 플랫폼마다 달랐다 (2026-09-09 전수 확인).
+    var caption by remember { mutableStateOf("") }
 
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
@@ -295,7 +301,15 @@ fun AttachPhotoScreen(threadId: String?, onBack: () -> Unit) {
             val image = picked ?: return@AttachFrame
             busy = true
             scope.launch {
-                runCatching { server.chatRooms.shareImage(roomId, image.fileName, image.mimeType, image.bytes) }
+                runCatching {
+                    server.chatRooms.shareImage(
+                        roomId,
+                        image.fileName,
+                        image.mimeType,
+                        image.bytes,
+                        caption.trim().takeIf(String::isNotEmpty)
+                    )
+                }
                     .onSuccess { onBack() }
                     .onFailure { error = it.message ?: "사진을 보내지 못했어요." }
                 busy = false
@@ -313,13 +327,35 @@ fun AttachPhotoScreen(threadId: String?, onBack: () -> Unit) {
                     .clickable {
                         launcher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                     }
+                    // 사진을 담을 자리 — 기획·웹이 점선이다(안드만 실선이었다).
+                    .moyeoDashedOutline(MaterialTheme.colorScheme.outline, radius = 14.dp)
                     .testTag("attach-photo-pick"),
                 shape = RoundedCornerShape(14.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                color = MaterialTheme.colorScheme.surfaceVariant
             ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Text("사진 고르기", fontWeight = FontWeight.ExtraBold)
+                // 기획·웹·iOS 와 같은 구성이다 — 카메라 아이콘 · 굵은 제목 · 설명 한 줄.
+                Column(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        Icons.Filled.PhotoCamera,
+                        contentDescription = null,
+                        modifier = Modifier.size(26.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        "사진 고르기",
+                        modifier = Modifier.padding(top = 6.dp),
+                        fontWeight = FontWeight.ExtraBold
+                    )
+                    Text(
+                        "기기에 저장된 사진에서 1장을 골라주세요.",
+                        modifier = Modifier.padding(top = 2.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         } else {
@@ -368,6 +404,16 @@ fun AttachPhotoScreen(threadId: String?, onBack: () -> Unit) {
                 fontWeight = FontWeight.ExtraBold
             )
         }
+        // 사진 자리 아래에 한 줄 — 웹·iOS 와 같은 순서·같은 문구다.
+        FieldLabel("같이 보낼 한 줄 (선택)")
+        OutlinedTextField(
+            value = caption,
+            onValueChange = { caption = it },
+            modifier = Modifier.fillMaxWidth().testTag("attach-photo-caption"),
+            placeholder = { Text("사진 설명을 적어주세요") },
+            singleLine = true,
+            shape = RoundedCornerShape(MOYEO_CTA_RADIUS)
+        )
         NoteBox(
             listOf(
                 "보낸 사진은 채팅방 사이드 메뉴의 공유 항목에 모여요.",
@@ -392,6 +438,8 @@ fun AttachPlaceScreen(threadId: String?, onBack: () -> Unit, repository: Tourism
     val scope = rememberCoroutineScope()
     var query by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<List<TourismContentSummary>?>(null) }
+    // / 「몇 곳 있는지」는 서버가 준 전체 개수다 — 한 쪽 분량(30)을 세면 표면마다 숫자가 달라진다.
+    var totalFound by remember { mutableStateOf<Long?>(null) }
     var searchFailed by remember { mutableStateOf(false) }
     var reloadKey by remember { mutableIntStateOf(0) }
     var pickedId by remember { mutableStateOf<String?>(null) }
@@ -403,10 +451,14 @@ fun AttachPlaceScreen(threadId: String?, onBack: () -> Unit, repository: Tourism
         results = null
         searchFailed = false
         runCatching { repository.contents(keyword = query, size = 30) }.fold(
-            onSuccess = { results = it.items },
+            onSuccess = {
+                results = it.items
+                totalFound = it.totalElements
+            },
             onFailure = {
                 searchFailed = true
                 results = emptyList()
+                totalFound = null
             }
         )
     }
@@ -450,7 +502,7 @@ fun AttachPlaceScreen(threadId: String?, onBack: () -> Unit, repository: Tourism
 
             else -> {
                 Text(
-                    text = "${list.size}곳을 찾았어요",
+                    text = "%,d곳을 찾았어요".format(totalFound ?: list.size.toLong()),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -509,6 +561,12 @@ private fun TourismContentSummary.addressText(): String? =
         .joinToString(" ")
         .takeIf(String::isNotBlank)
 
+/** 「관광지 · 경상북도 …」 — 분류를 주소 앞에 붙인다. 기획·iOS 가 같은 꼴로 읽어 준다. */
+private fun TourismContentSummary.placeMetaText(): String? =
+    listOfNotNull(TourismContentType.fromApiId(contentTypeId).label, addressText())
+        .joinToString(" · ")
+        .takeIf(String::isNotBlank)
+
 @Composable
 private fun AttachPlaceRow(place: TourismContentSummary, selected: Boolean, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -542,7 +600,9 @@ private fun AttachPlaceRow(place: TourismContentSummary, selected: Boolean, onCl
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                place.addressText()?.let {
+                // 분류(관광지·식당·숙박)를 주소 앞에 붙인다 — 기획·iOS 가 그렇게 읽어 준다.
+                // 예전에는 주소만 있어서 안드로이드만 「무슨 곳인지」를 말하지 않았다 (20-2b).
+                place.placeMetaText()?.let {
                     Text(
                         it,
                         style = MaterialTheme.typography.labelSmall,
@@ -752,10 +812,11 @@ fun AttachPollScreen(threadId: String?, onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(enabled = options.size < POLL_MAX_OPTIONS) { options.add("") }
+                // 항목을 더 담을 자리 — 기획·웹·iOS 모두 점선이다.
+                .moyeoDashedOutline(MaterialTheme.colorScheme.outline)
                 .testTag("attach-poll-add"),
             shape = RoundedCornerShape(12.dp),
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+            color = MaterialTheme.colorScheme.surface
         ) {
             Row(
                 Modifier.fillMaxWidth().height(44.dp),
@@ -855,7 +916,7 @@ fun AttachSettlementScreen(threadId: String?, onBack: () -> Unit) {
             value = subject,
             onValueChange = { subject = it },
             modifier = Modifier.fillMaxWidth().testTag("attach-settlement-subject"),
-            placeholder = { Text("예: 점심 · 백숙") },
+            placeholder = { Text("예: 점심 · 달기약수탕 백숙") },
             singleLine = true
         )
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -913,8 +974,11 @@ fun AttachSettlementScreen(threadId: String?, onBack: () -> Unit) {
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.Bold
                     )
+                    // 아직 아무것도 안 넣었으면 **`0원`** 이다. `-` 는 「계산할 수 없다」로 읽히는데
+                    // 실제로는 「0원」이 맞다 — 기획·웹·iOS 셋 다 0원으로 자리를 잡는다
+                    // (20-2e, 사용자 지적 2026-09-09).
                     Text(
-                        text = each?.let { "${it.wonText()}원" } ?: "-",
+                        text = "${(each ?: 0).wonText()}원",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onPrimaryContainer,
                         fontWeight = FontWeight.ExtraBold

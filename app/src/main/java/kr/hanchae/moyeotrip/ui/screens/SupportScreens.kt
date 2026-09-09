@@ -24,6 +24,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -37,14 +38,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Celebration
 import androidx.compose.material.icons.filled.ChatBubbleOutline
-import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.Groups
-import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Place
@@ -54,6 +53,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material.icons.filled.WbSunny
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -64,6 +64,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -87,6 +88,8 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
@@ -97,6 +100,7 @@ import androidx.compose.ui.unit.sp
 import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
+import kotlin.math.abs
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
@@ -115,14 +119,19 @@ import kr.hanchae.moyeotrip.data.rooms.RoomMembers
 import kr.hanchae.moyeotrip.data.rooms.recruitmentDDayText
 import kr.hanchae.moyeotrip.data.search.PersistedRecentSearchStore
 import kr.hanchae.moyeotrip.data.search.PopularKeyword
+import kr.hanchae.moyeotrip.data.search.RankTrend
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.CourseRouteMap
+import kr.hanchae.moyeotrip.ui.components.MOYEO_CTA_HEIGHT
+import kr.hanchae.moyeotrip.ui.components.MOYEO_CTA_RADIUS
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.ServerListState
 import kr.hanchae.moyeotrip.ui.components.emphasized
+import kr.hanchae.moyeotrip.ui.components.moyeoDashedOutline
+import kr.hanchae.moyeotrip.ui.components.moyeoRelativeTime
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
@@ -353,8 +362,15 @@ fun RemovalReasonScreen(onBack: () -> Unit, notificationId: Long? = null) {
     val server = LocalServerData.current
     var kickHistory by remember(notificationId) { mutableStateOf<RoomKickHistory?>(null) }
     LaunchedEffect(server, notificationId) {
-        if (server != null && notificationId != null) {
-            kickHistory = runCatching { server.notifications.kickHistory(notificationId) }.getOrNull()
+        if (server == null) return@LaunchedEffect
+        // 알림에서 들어오면 그 알림의 이력을, **id 없이 열리면(딥링크·캡처) 내 가장 최근
+        // 강퇴 알림**의 이력을 읽는다. 지어내지 않고 실제 이력을 쓴다.
+        val targetId = notificationId ?: runCatching {
+            server.notifications.notifications(size = 50).notifications
+                .firstOrNull { it.type == "CHAT_ROOM_KICKED" }?.notificationId
+        }.getOrNull()
+        if (targetId != null) {
+            kickHistory = runCatching { server.notifications.kickHistory(targetId) }.getOrNull()
         }
     }
     val tints = MoyeoTheme.tints
@@ -419,7 +435,9 @@ fun RemovalReasonScreen(onBack: () -> Unit, notificationId: Long? = null) {
                     }
                     Text(
                         // 모임 이름은 서버 강퇴 이력이 근거다 — 없으면 이름 없이 사실만 남긴다
-                        text = kickHistory?.let { "${it.roomTitle} 모임에서\n내보내졌어요" } ?: "모임에서 내보내졌어요",
+                        // 서버 `roomTitle` 을 그대로 쓴다 — 「모임」을 덧붙이면
+                        // 「QA 자동승인 모임 **모임**에서」처럼 겹친다 (사용자 지적, 2026-09-09).
+                        text = kickHistory?.let { "${it.roomTitle}에서\n내보내졌어요" } ?: "모임에서 내보내졌어요",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.ExtraBold,
@@ -631,23 +649,9 @@ fun HostManageScreen(
             }
         }
         item {
-            // 18-1 · 18-2 — 모집 관리에서 진입한다. 확정은 모집 중일 때만 의미가 있다.
-            HostManageEntryRow(
-                icon = Icons.Filled.Check,
-                label = "여행 확정 · 불발 처리",
-                testTag = "host-manage-status",
-                onClick = { onOpenTripStatus("room-$roomId") }
-            )
-        }
-        item {
-            HostManageEntryRow(
-                icon = Icons.Filled.LocationOn,
-                label = "집합 정보 수정",
-                testTag = "host-manage-meeting",
-                onClick = { onOpenMeetingEdit("room-$roomId") }
-            )
-        }
-        item {
+            // 코스 카드를 먼저 두고, 그 아래에 **나란한 버튼 두 개**를 둔다 — 기획·웹이 그렇다.
+            // 예전에는 셰브런이 달린 목록 줄 세 개였고 순서도 달라서, 같은 화면인데
+            // 안드로이드만 「메뉴 화면」처럼 보였다 (18, 사용자 지적 2026-09-09).
             Surface(
                 modifier = Modifier.fillMaxWidth().clickable { onOpenRoute("room-$roomId") }
                     .testTag("host-manage-route"),
@@ -669,6 +673,24 @@ fun HostManageScreen(
                         modifier = Modifier.size(20.dp)
                     )
                 }
+            }
+        }
+        item {
+            // 18-1 여행 확정 / 불발 · 18-2 집합 정보 수정 — 확정은 모집 중일 때만 의미가 있다.
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                OutlinedButton(
+                    onClick = { onOpenTripStatus("room-$roomId") },
+                    modifier = Modifier.weight(1f).height(46.dp).testTag("host-manage-status"),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("여행 확정하기", fontWeight = FontWeight.Bold) }
+                OutlinedButton(
+                    onClick = { onOpenMeetingEdit("room-$roomId") },
+                    modifier = Modifier.weight(1f).height(46.dp).testTag("host-manage-meeting"),
+                    shape = RoundedCornerShape(12.dp)
+                ) { Text("집합 정보 수정", fontWeight = FontWeight.Bold) }
             }
         }
         actionError?.let { message ->
@@ -807,12 +829,7 @@ private fun HostManageSummaryCard(
 
 /** 18 모집 관리에서 다른 화면으로 나가는 줄. `여행 경로 보기` 와 같은 위계다. */
 @Composable
-private fun HostManageEntryRow(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    testTag: String,
-    onClick: () -> Unit
-) {
+private fun HostManageEntryRow(icon: ImageVector, label: String, testTag: String, onClick: () -> Unit) {
     Surface(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).testTag(testTag),
         shape = RoundedCornerShape(12.dp),
@@ -970,6 +987,7 @@ fun FeedWriteScreen(
     // 24-1~24-5 단계별 캡처를 위해 시작 단계를 지정할 수 있다
     var currentStep by rememberSaveable { mutableStateOf(initialStep.coerceIn(1, 5)) }
     var story by rememberSaveable { mutableStateOf("") }
+    var feedTitle by rememberSaveable { mutableStateOf("") }
     var submitted by rememberSaveable { mutableStateOf(false) }
     var createdPostId by rememberSaveable { mutableStateOf<String?>(null) }
     var selectedVisibility by rememberSaveable { mutableStateOf(FeedVisibility.Friends) }
@@ -1068,7 +1086,7 @@ fun FeedWriteScreen(
             runCatching {
                 server.feeds.createFeed(
                     chatRoomId = roomId,
-                    content = story.trim(),
+                    content = feedContentWithTitle(feedTitle, story),
                     visibility = selectedVisibility.serverValue,
                     images = pickedImages.mapIndexed { index, image ->
                         MultipartFile(
@@ -1162,7 +1180,9 @@ fun FeedWriteScreen(
                 3 -> {
                     item {
                         FeedWriteMemoCard(
+                            title = feedTitle,
                             story = story,
+                            onTitleChange = { feedTitle = it },
                             onStoryChange = { story = it }
                         )
                     }
@@ -1503,7 +1523,12 @@ private fun FeedWriteStepIntro(currentStep: Int, submitted: Boolean) {
 }
 
 @Composable
-private fun FeedWriteMemoCard(story: String, onStoryChange: (String) -> Unit) {
+private fun FeedWriteMemoCard(
+    title: String,
+    story: String,
+    onTitleChange: (String) -> Unit,
+    onStoryChange: (String) -> Unit
+) {
     val colorScheme = MaterialTheme.colorScheme
     Surface(
         modifier = Modifier.fillMaxWidth(),
@@ -1511,24 +1536,77 @@ private fun FeedWriteMemoCard(story: String, onStoryChange: (String) -> Unit) {
         color = colorScheme.surface,
         border = BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.20f))
     ) {
-        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Column(modifier = Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            // **입력은 두 칸이다** (기획 24-3·24-5: 굵은 제목 줄 + 본문 줄).
+            // 예전에는 본문 칸 하나뿐이고 라벨도 없어 무엇을 쓰는 칸인지 알 수 없었다
+            // (사용자 지적 「제목과 내용 입력 뷰가 둘 다」, 2026-09-09).
+            // 서버는 아직 `content` 하나만 받는다 — 제목은 본문 첫 줄로 실어 보낸다 (BE §8-7).
+            Text(
+                text = "제목",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = colorScheme.onSurfaceVariant
+            )
+            OutlinedTextField(
+                value = title,
+                onValueChange = { onTitleChange(it.take(FEED_TITLE_LIMIT)) },
+                modifier = Modifier.fillMaxWidth().testTag("feed-write-title"),
+                placeholder = { Text("이번 여행을 한마디로") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                // 카드 **안**의 입력이라 칸마다 테두리를 두르지 않는다 — 두르면 안드로이드만
+                // 「박스 두 개」로 보인다(기획·웹·iOS 는 한 카드에 구분선 하나다).
+                colors = feedWriteFieldColors()
+            )
+            HorizontalDivider(
+                modifier = Modifier.padding(vertical = 6.dp),
+                color = colorScheme.outline.copy(alpha = 0.4f)
+            )
+            Text(
+                text = "내용",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.ExtraBold,
+                color = colorScheme.onSurfaceVariant
+            )
             OutlinedTextField(
                 value = story,
-                onValueChange = { onStoryChange(it.take(500)) },
+                onValueChange = { onStoryChange(it.take(FEED_BODY_LIMIT)) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("feed-write-story"),
-                placeholder = { Text("이번 여행에서 기억에 남은 순간을 남겨보세요.") },
-                minLines = 5
+                placeholder = { Text("여행 어땠는지 한 줄 남겨주세요.") },
+                minLines = 5,
+                shape = RoundedCornerShape(12.dp),
+                colors = feedWriteFieldColors()
             )
             Text(
-                text = "${story.length} / 500",
+                text = "${story.length} / %,d".format(FEED_BODY_LIMIT),
                 modifier = Modifier.align(Alignment.End),
                 style = MaterialTheme.typography.labelSmall,
                 color = colorScheme.onSurfaceVariant
             )
         }
     }
+}
+
+/** 카드 안에 놓는 입력 칸 색 — 테두리·배경을 지운다(카드가 이미 테두리를 갖고 있다). */
+@Composable
+private fun feedWriteFieldColors() = OutlinedTextFieldDefaults.colors(
+    unfocusedBorderColor = Color.Transparent,
+    focusedBorderColor = Color.Transparent,
+    unfocusedContainerColor = Color.Transparent,
+    focusedContainerColor = Color.Transparent
+)
+
+/** 서버에는 제목 필드가 없다 — 제목은 **본문 첫 줄**로 올려 보낸다 (BE 요청 §8-7). */
+private const val FEED_TITLE_LIMIT = 60
+private const val FEED_BODY_LIMIT = 500
+
+private fun feedContentWithTitle(title: String, body: String): String {
+    val head = title.trim()
+    val tail = body.trim()
+    if (head.isEmpty()) return tail
+    return if (tail.isEmpty()) head else "$head\n\n$tail"
 }
 
 /** 고른 사진 그리드. 서버가 실제로 올릴 파일만 보여준다 — 예시 사진 타일을 채우지 않는다. */
@@ -1626,10 +1704,13 @@ private fun FeedWriteAddPhotoTile(onClick: () -> Unit, modifier: Modifier = Modi
     val colorScheme = MaterialTheme.colorScheme
 
     Surface(
-        modifier = modifier.clickable(onClick = onClick).testTag("feed-write-add-photo"),
+        modifier = modifier
+            .clickable(onClick = onClick)
+            // 「담을 자리」는 **점선**이다 — 기획·웹·iOS 모두 점선 박스다(안드만 실선이었다).
+            .moyeoDashedOutline(colorScheme.outline.copy(alpha = 0.62f), radius = 10.dp)
+            .testTag("feed-write-add-photo"),
         shape = RoundedCornerShape(10.dp),
-        color = colorScheme.surface,
-        border = BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.62f))
+        color = colorScheme.surface
     ) {
         Column(
             modifier = Modifier.fillMaxSize(),
@@ -1979,20 +2060,25 @@ private fun FeedWriteBottomActions(currentStep: Int, submitted: Boolean, onPrevi
             Text(
                 text = "이전",
                 modifier = Modifier
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(MOYEO_CTA_RADIUS))
                     .clickable(onClick = onPrevious)
+                    // 「이전」 자리를 기획·웹과 같은 폭으로 잡는다 — 예전에는 글자 폭이라
+                    // 안드로이드만 초록 버튼이 왼쪽으로 18pt 더 나와 있었다
+                    // (측정: `docs/ui-comparison/BUTTON-GEOMETRY.md` 24-1~24-5).
+                    .widthIn(min = 56.dp)
                     .padding(horizontal = 6.dp, vertical = 12.dp),
                 style = MaterialTheme.typography.labelLarge,
                 color = colorScheme.onBackground,
-                fontWeight = FontWeight.ExtraBold
+                fontWeight = FontWeight.ExtraBold,
+                textAlign = TextAlign.Center
             )
             Button(
                 onClick = onNext,
                 modifier = Modifier
                     .weight(1f)
                     .testTag("feed-write-next")
-                    .height(48.dp),
-                shape = RoundedCornerShape(10.dp),
+                    .height(MOYEO_CTA_HEIGHT),
+                shape = RoundedCornerShape(MOYEO_CTA_RADIUS),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = colorScheme.primary,
                     contentColor = colorScheme.onPrimary
@@ -2096,8 +2182,18 @@ fun SearchScreen(
                     .height(48.dp)
                     .testTag("search-query-field"),
                 leadingIcon = { Icon(imageVector = Icons.Filled.Search, contentDescription = null) },
-                placeholder = { Text("지역, 테마, 모임 검색") },
+                // 안내 문구는 네 표면이 같아야 한다 — 11 탐색의 진입 칸과도 같은 말이다.
+                placeholder = { Text("어디로 떠나고 싶나요?") },
                 singleLine = true,
+                // 다른 세 표면은 **테두리 없는 회색 칸**이다 (기획 `T.bgSubtle` · 반지름 12).
+                // 기본 `OutlinedTextField` 는 흰 칸에 선이 둘려 안드로이드만 달라 보였다.
+                shape = RoundedCornerShape(12.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    unfocusedBorderColor = Color.Transparent,
+                    focusedBorderColor = Color.Transparent,
+                    unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                    focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant
+                ),
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 // 검색을 실행한 순간에만 최근 검색어에 남긴다 — 글자마다 쌓으면 목록이 조각난다
                 keyboardActions = KeyboardActions(onSearch = { runSearch(query) })
@@ -2153,7 +2249,12 @@ fun SearchScreen(
                 }
                 if (recentSearches.isEmpty()) {
                     item {
-                        MoyeoEmptyState(MoyeoEmptyText.NO_RECENT_SEARCHES, testTag = "search-recent-empty")
+                        MoyeoEmptyState(
+                            MoyeoEmptyText.NO_RECENT_SEARCHES,
+                            testTag = "search-recent-empty",
+                            // iOS 의 `clock.arrow.circlepath` 와 같은 뜻의 아이콘 (2026-09-09 네 표면 통일)
+                            icon = Icons.Outlined.History
+                        )
                     }
                 } else {
                     item {
@@ -2203,13 +2304,27 @@ fun SearchScreen(
                 // 인기 검색어 — 0건이면 머리글도 목록도 그리지 않는다(정본 §2-1).
                 if (popularKeywords.isNotEmpty()) {
                     item {
-                        Text(
-                            text = "인기 검색어",
-                            modifier = Modifier.testTag("search-popular-section"),
-                            style = MaterialTheme.typography.labelLarge,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.ExtraBold
-                        )
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("search-popular-section"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            // 글자 크기는 화면기획 12 를 따른다 (제목 13 · 줄 14 · 등락 11)
+                            Text(
+                                text = "인기 검색어",
+                                modifier = Modifier.weight(1f),
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold
+                            )
+                            // 등락의 기준 시점. 서버 집계가 **전일 순위 대비**다 (API 스펙).
+                            Text(
+                                text = "전일 대비",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                     items(popularKeywords, key = { it.rank }) { row ->
                         PopularKeywordRow(row = row, onClick = { runSearch(row.keyword) })
@@ -2244,43 +2359,93 @@ fun SearchScreen(
 }
 
 /**
- * 인기 검색어 한 줄 — `GET /api/v1/search/popular-keywords` 가 주는 세 값만 그린다.
+ * 인기 검색어 한 줄 — 순위 · 검색어 · 등락.
  *
- * 순위 변동(상승·하락)을 알려주는 필드가 서버에 없으므로 화살표를 그리지 않는다.
- * 오른쪽에 두는 것은 서버가 실제로 주는 `searchCount` 다.
+ * 등락은 서버가 준 `rankTrend`/`rankChange` 뿐이다(기준은 전일 순위). 검색 횟수는 감춘다 —
+ * QA 검색이 만든 숫자가 실제 인기와 무관해 보였다(사용자 결정 2026-09-09).
+ * 줄 높이 44 · 간격 16 · 순위 3위까지 초록은 화면기획 12 를 그대로 따른 값이다.
  */
 @Composable
 private fun PopularKeywordRow(row: PopularKeyword, onClick: () -> Unit) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .height(44.dp)
             .clickable(onClick = onClick)
-            .testTag("search-popular-${row.rank}")
-            .padding(vertical = 10.dp),
+            .testTag("search-popular-${row.rank}"),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         Text(
             text = row.rank.toString(),
             modifier = Modifier.width(16.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            // 웹과 같이 순위 색을 나누지 않는다 — 상위 3위를 따로 물들일 근거가 서버 응답에 없다.
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.ExtraBold
+            fontSize = 14.sp,
+            // 3위까지만 초록으로 물들인다 — 기획이 그렇게 나눈다.
+            color = if (row.rank <= 3) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.onSurfaceVariant
+            },
+            fontWeight = FontWeight.Bold
         )
         Text(
             text = row.keyword,
             modifier = Modifier.weight(1f),
-            style = MaterialTheme.typography.bodyMedium,
+            fontSize = 14.sp,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis
         )
-        Text(
-            text = "${row.searchCount}회",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
+        popularRankTrendMark(row)?.let { mark ->
+            Text(
+                text = mark.text,
+                modifier = Modifier
+                    .testTag("search-popular-trend-${row.rank}")
+                    .semantics { contentDescription = mark.label },
+                fontSize = 11.sp,
+                color = mark.color,
+                fontWeight = FontWeight.Bold
+            )
+        }
+    }
+}
+
+/** 등락 글자·색·읽어줄 말. */
+private data class RankTrendMark(val text: String, val color: Color, val label: String)
+
+/**
+ * 등락 표시를 고른다. 서버가 등락을 주지 않은 줄은 `null` 이고 **그 자리를 비운다** —
+ * 지어내지 않는다(정본 R1).
+ */
+@Composable
+private fun popularRankTrendMark(row: PopularKeyword): RankTrendMark? {
+    val step = abs(row.rankChange ?: 0)
+    return when (row.rankTrend) {
+        RankTrend.UP -> RankTrendMark(
+            text = if (step > 0) "▲$step" else "▲",
+            color = MaterialTheme.colorScheme.secondary,
+            label = "전일 대비 ${step}단계 상승"
         )
+
+        RankTrend.DOWN -> RankTrendMark(
+            text = if (step > 0) "▼$step" else "▼",
+            color = MoyeoTheme.tints.onInfoTint,
+            label = "전일 대비 ${step}단계 하락"
+        )
+
+        RankTrend.SAME -> RankTrendMark(
+            text = "—",
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            label = "전일과 같은 순위"
+        )
+
+        RankTrend.NEW -> RankTrendMark(
+            text = "NEW",
+            color = MaterialTheme.colorScheme.primary,
+            label = "새로 진입"
+        )
+
+        RankTrend.UNKNOWN -> null
     }
 }
 
@@ -2510,8 +2675,11 @@ private data class NotificationItem(
     val chatRoomId: Long? = null
 )
 
+/** 강퇴 일시 — iOS 와 **같은 형식**이다: `2026.08.24 (월) 오전 8:06 · 호스트 결정`. */
 private fun String.kickedAtLabel(): String = runCatching {
-    LocalDateTime.parse(this).format(DateTimeFormatter.ofPattern("yyyy.MM.dd HH:mm"))
+    val formatted = LocalDateTime.parse(this)
+        .format(DateTimeFormatter.ofPattern("yyyy.MM.dd (E) a h:mm", java.util.Locale.KOREAN))
+    "$formatted · 호스트 결정"
 }.getOrDefault(this)
 
 /** 실서버 알림 → 목록 행. 서버 type 을 화면기획 13의 아이콘 종류로 대응시킨다. */
@@ -2533,14 +2701,10 @@ private fun ServerNotification.toNotificationItem(): NotificationItem {
         today.minusDays(1) -> "어제"
         else -> "이전"
     }
-    val timeLabel = runCatching {
-        val created = LocalDateTime.parse(createdAt)
-        when (group) {
-            "오늘" -> created.format(DateTimeFormatter.ofPattern("HH:mm"))
-            "어제" -> created.format(DateTimeFormatter.ofPattern("어제 HH:mm"))
-            else -> created.format(DateTimeFormatter.ofPattern("M월 d일"))
-        }
-    }.getOrDefault(createdAt)
+    // 알림 한 줄의 시각은 **상대 시각**이다 (`3시간 전`). 웹이 그렇게 쓰고 있었는데
+    // 앱 둘만 `HH:mm` · `M월 d일` 처럼 절대 시각이었다 (사용자 지적, 2026-09-09).
+    // 피드·댓글과 **같은 부품**을 쓴다 — 화면마다 반올림이 다르면 같은 시각이 갈린다.
+    val timeLabel = moyeoRelativeTime(createdAt)
     return NotificationItem(
         title = content,
         body = "",

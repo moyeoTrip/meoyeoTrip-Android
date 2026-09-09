@@ -61,7 +61,7 @@ android {
         applicationId = "kr.hanchae.moyeotrip"
         minSdk = 26
         targetSdk = 37
-        versionCode = configuredProperty("MOYEO_VERSION_CODE", "3").toInt()
+        versionCode = configuredProperty("MOYEO_VERSION_CODE", "4").toInt()
         versionName = configuredProperty("MOYEO_VERSION_NAME", "1.0")
 
         testInstrumentationRunner = "kr.hanchae.moyeotrip.MoyeoTripTestRunner"

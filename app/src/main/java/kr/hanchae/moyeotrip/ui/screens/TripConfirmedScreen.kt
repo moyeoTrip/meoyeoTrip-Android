@@ -61,6 +61,7 @@ import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
 import kr.hanchae.moyeotrip.data.rooms.RoomMembers
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.emphasized
+import kr.hanchae.moyeotrip.ui.components.moyeoTripDateText
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 /**
@@ -150,10 +151,22 @@ fun TripConfirmedScreen(tripId: String? = null, onBack: () -> Unit, onOpenChat: 
                     fontWeight = FontWeight.ExtraBold
                 )
                 members?.let { loadedMembers ->
+                    // 마감일을 함께 적는다 — 기획(「5월 22일 마감까지」)·웹·iOS 셋 다 적는데
+                    // 안드로이드만 인원만 말해서 「언제까지 모은 결과인지」가 빠졌다 (20-4, 2026-09-09).
+                    // 서버가 마감일을 안 주면 그 구절 없이 인원만 적는다 (NO-MOCK R1).
+                    val deadline = room?.recruitmentDeadlineDate
+                        ?.takeIf(String::isNotBlank)
+                        ?.let { moyeoTripDateText(it) }
+                    val sentence = if (deadline == null) {
+                        "${loadedMembers.participantCount}명이 모였어요.\n이제 함께 떠나기만 하면 돼요."
+                    } else {
+                        "$deadline 마감까지 ${loadedMembers.participantCount}명이 모였어요.\n" +
+                            "이제 함께 떠나기만 하면 돼요."
+                    }
                     Text(
                         // 화면기획 20-4는 모인 인원만 굵은 초록으로 강조한다
                         text = emphasized(
-                            "${loadedMembers.participantCount}명이 모였어요.\n이제 함께 떠나기만 하면 돼요.",
+                            sentence,
                             "${loadedMembers.participantCount}명",
                             boldWeight = FontWeight.ExtraBold,
                             boldColor = MoyeoTheme.tints.primaryEmphasis

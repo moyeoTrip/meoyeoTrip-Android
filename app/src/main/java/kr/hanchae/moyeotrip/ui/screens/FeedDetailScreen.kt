@@ -9,7 +9,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -43,7 +42,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -55,10 +53,9 @@ import kr.hanchae.moyeotrip.data.ServerDataDependencies
 import kr.hanchae.moyeotrip.data.feed.FeedComment
 import kr.hanchae.moyeotrip.data.feed.ServerFeed
 import kr.hanchae.moyeotrip.ui.LocalServerData
-import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
-import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
+import kr.hanchae.moyeotrip.ui.components.moyeoRelativeTime
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 /**
@@ -336,7 +333,7 @@ private fun ServerFeedDetail(
                                     color = colorScheme.onSurface
                                 )
                                 Text(
-                                    text = loadedFeed.createdAt.take(10).replace('-', '.'),
+                                    text = moyeoRelativeTime(loadedFeed.createdAt),
                                     style = MaterialTheme.typography.labelSmall,
                                     color = colorScheme.onSurfaceVariant
                                 )
@@ -362,30 +359,9 @@ private fun ServerFeedDetail(
                     }
                     if (loadedFeed.imageUrls.isNotEmpty()) {
                         item {
-                            Row(
-                                modifier = Modifier
-                                    .padding(top = 18.dp)
-                                    .fillMaxWidth()
-                                    .height(190.dp)
-                                    .clip(RoundedCornerShape(10.dp)),
-                                horizontalArrangement = Arrangement.spacedBy(2.dp)
-                            ) {
-                                loadedFeed.imageUrls.take(2).forEach { imageUrl ->
-                                    CachedRemoteImage(
-                                        url = imageUrl,
-                                        contentDescription = null,
-                                        modifier = Modifier.weight(1f).fillMaxHeight(),
-                                        contentScale = ContentScale.Crop,
-                                        fallbackShape = MoyeoPlaceholderShape.SQUARE
-                                    ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .fillMaxHeight()
-                                                .background(colorScheme.surfaceVariant)
-                                        )
-                                    }
-                                }
-                            }
+                            // 예전에는 `take(2)` 로 앞 2장만 나란히 그려 나머지는 볼 수 없었다.
+                            // 전체를 좌우로 넘기고 배지가 지금 위치를 가리킨다 (기획 정본).
+                            FeedPhotoPager(imageUrls = loadedFeed.imageUrls, height = 190)
                         }
                     }
                     item {

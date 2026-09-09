@@ -85,11 +85,12 @@ class MoyeoTripAppTest {
     }
 
     @Test
-    fun searchDropsThePopularKeywordSectionThatHasNoApi() {
+    fun searchHidesPopularKeywordsWithoutAServer() {
         showApp("search")
 
         composeRule.onNodeWithTag("search-recent-section").assertIsDisplayed()
-        // 인기 검색어 순위는 조회 API 가 없어 섹션째 뺐다 (§4)
+        // 인기 검색어는 `GET /search/popular-keywords` 가 근거다. 서버가 없는 이 테스트에서는
+        // 0건이므로 **섹션째 사라진다** — 빈 상태 문구를 새로 만들지 않는다(정본 §2-1).
         composeRule.onAllNodesWithText("인기 검색어").assertCountEquals(0)
     }
 

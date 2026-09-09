@@ -66,6 +66,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
@@ -80,6 +81,8 @@ import kr.hanchae.moyeotrip.data.tourism.TourismContentSummary
 import kr.hanchae.moyeotrip.data.tourism.TourismContentTypeOption
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
+import kr.hanchae.moyeotrip.ui.components.MOYEO_CTA_HEIGHT
+import kr.hanchae.moyeotrip.ui.components.MOYEO_CTA_RADIUS
 import kr.hanchae.moyeotrip.ui.components.MapMarker
 import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
 import kr.hanchae.moyeotrip.ui.components.MapUnavailablePlaceholder
@@ -206,7 +209,7 @@ fun PlaceSearchScreen(
             results = page.items.map { summary -> summary.toPlace().withServerTypeLabel(typeOptions) }
             totalCount = page.totalElements.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
         } catch (cancelled: CancellationException) {
-            throw cancelled          // 취소는 실패가 아니다 — 상태를 건드리지 않고 그대로 넘긴다
+            throw cancelled // 취소는 실패가 아니다 — 상태를 건드리지 않고 그대로 넘긴다
         } catch (error: Throwable) {
             searchFailed = true
             results = emptyList()
@@ -257,9 +260,13 @@ fun PlaceSearchScreen(
                     horizontalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text("${addedIds.size}곳 담김", Modifier.weight(1f), fontWeight = FontWeight.ExtraBold)
-                    Button(onClick = {
-                        onDone(draftId)
-                    }, modifier = Modifier.testTag("place-search-done"), shape = RoundedCornerShape(12.dp)) {
+                    Button(
+                        onClick = { onDone(draftId) },
+                        modifier = Modifier
+                            .height(MOYEO_CTA_HEIGHT)
+                            .testTag("place-search-done"),
+                        shape = RoundedCornerShape(MOYEO_CTA_RADIUS)
+                    ) {
                         Text("코스에 반영")
                     }
                 }
@@ -945,15 +952,62 @@ private fun String.toTermBlocks(): List<TermBlock> {
     return blocks
 }
 
+/**
+ * 상단바 — **제목은 가운데**, 아이콘은 원형 배경 안에.
+ *
+ * 예전에는 `Text(title, Modifier.weight(1f))` 로 두어 제목이 **왼쪽에 붙었고**,
+ * 아이콘도 맨 `IconButton` 이라 원형 배경이 없었다. 그래서 15·17-1a·17-1b·20-1 에서
+ * 안드로이드만 제목이 왼쪽으로 쏠려 보였다 (사용자가 세 번 지적, 2026-09-09).
+ * 정본은 `ChatRoomScreen.ChatRoomTopBar` 다 — **양쪽을 같은 폭으로 잡아** 가운데를 맞추고
+ * 아이콘은 `Surface(CircleShape)` 로 감싼다. 그 구조를 그대로 옮겼다.
+ */
 @Composable
 private fun ChangeLogTopBar(title: String, onBack: () -> Unit, action: (@Composable () -> Unit)? = null) {
+    val colors = MaterialTheme.colorScheme
     Row(
-        Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 8.dp),
+        Modifier.fillMaxWidth().height(64.dp).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "뒤로") }
-        Text(title, Modifier.weight(1f), fontWeight = FontWeight.ExtraBold)
-        if (action != null) action() else Spacer(Modifier.width(48.dp))
+        // 좌우를 같은 폭으로 잡는다 — 한쪽만 넓으면 제목이 가운데에서 밀린다.
+        Box(Modifier.width(52.dp), contentAlignment = Alignment.CenterStart) {
+            MoyeoTopBarIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
+                contentDescription = "뒤로",
+                onClick = onBack
+            )
+        }
+        Text(
+            title,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.titleMedium,
+            color = colors.onSurface,
+            fontWeight = FontWeight.ExtraBold,
+            textAlign = TextAlign.Center,
+            maxLines = 1
+        )
+        Box(Modifier.width(52.dp), contentAlignment = Alignment.CenterEnd) {
+            if (action != null) action()
+        }
+    }
+}
+
+/**
+ * 상단바 아이콘 버튼 — **원형 배경 + 외곽선**.
+ *
+ * 기획·웹·iOS 는 상단 아이콘을 동그란 뷰로 감싼다. 안드로이드만 맨 아이콘이라
+ * 다크 모드에서 흰 아이콘이 배경 없이 떠 보였다 (사용자 지적, 2026-09-09).
+ */
+@Composable
+internal fun MoyeoTopBarIconButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        color = colors.surface,
+        shape = CircleShape,
+        border = BorderStroke(1.dp, colors.outline.copy(alpha = 0.55f))
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.size(44.dp)) {
+            Icon(icon, contentDescription = contentDescription, tint = colors.onSurface)
+        }
     }
 }
 

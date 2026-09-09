@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -113,10 +114,12 @@ import kr.hanchae.moyeotrip.ui.screens.ChatListScreen
 import kr.hanchae.moyeotrip.ui.screens.ChatMenuScreen
 import kr.hanchae.moyeotrip.ui.screens.ChatMenuSheet
 import kr.hanchae.moyeotrip.ui.screens.ChatRoomScreen
+import kr.hanchae.moyeotrip.ui.screens.CommentEditScreen
 import kr.hanchae.moyeotrip.ui.screens.CourseDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.CoursePublishScreen
 import kr.hanchae.moyeotrip.ui.screens.CourseRatingScreen
 import kr.hanchae.moyeotrip.ui.screens.CourseRouteScreen
+import kr.hanchae.moyeotrip.ui.screens.CourseTitleEditScreen
 import kr.hanchae.moyeotrip.ui.screens.CreateDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.CreateMeetPointScreen
 import kr.hanchae.moyeotrip.ui.screens.CreatePeopleScreen
@@ -126,8 +129,11 @@ import kr.hanchae.moyeotrip.ui.screens.CustomCourseScreen
 import kr.hanchae.moyeotrip.ui.screens.CustomerCenterScreen
 import kr.hanchae.moyeotrip.ui.screens.ExploreScreen
 import kr.hanchae.moyeotrip.ui.screens.FavoriteRoomsScreen
+import kr.hanchae.moyeotrip.ui.screens.FeedActionsScreen
 import kr.hanchae.moyeotrip.ui.screens.FeedCommentsScreen
+import kr.hanchae.moyeotrip.ui.screens.FeedDeleteScreen
 import kr.hanchae.moyeotrip.ui.screens.FeedDetailScreen
+import kr.hanchae.moyeotrip.ui.screens.FeedEditScreen
 import kr.hanchae.moyeotrip.ui.screens.FeedScreen
 import kr.hanchae.moyeotrip.ui.screens.FeedWriteScreen
 import kr.hanchae.moyeotrip.ui.screens.FriendDexScreen
@@ -139,6 +145,7 @@ import kr.hanchae.moyeotrip.ui.screens.KickHistoryScreen
 import kr.hanchae.moyeotrip.ui.screens.MeetingChatTab
 import kr.hanchae.moyeotrip.ui.screens.MeetingEditScreen
 import kr.hanchae.moyeotrip.ui.screens.MeetingsScreen
+import kr.hanchae.moyeotrip.ui.screens.MessageDeleteScreen
 import kr.hanchae.moyeotrip.ui.screens.MyFeedScreen
 import kr.hanchae.moyeotrip.ui.screens.MyScreen
 import kr.hanchae.moyeotrip.ui.screens.NoticeEditScreen
@@ -157,6 +164,7 @@ import kr.hanchae.moyeotrip.ui.screens.ProfileEditScreen
 import kr.hanchae.moyeotrip.ui.screens.QaComponentStatesScreen
 import kr.hanchae.moyeotrip.ui.screens.QaDesignSystemOverviewScreen
 import kr.hanchae.moyeotrip.ui.screens.QaLeaveAlertScreen
+import kr.hanchae.moyeotrip.ui.screens.RecruitEditScreen
 import kr.hanchae.moyeotrip.ui.screens.RecruitmentCourseSourceScreen
 import kr.hanchae.moyeotrip.ui.screens.RemovalReasonScreen
 import kr.hanchae.moyeotrip.ui.screens.ReportScreen
@@ -175,6 +183,7 @@ import kr.hanchae.moyeotrip.ui.screens.TripDetailScreen
 import kr.hanchae.moyeotrip.ui.screens.TripMessageScreen
 import kr.hanchae.moyeotrip.ui.screens.TripStatusScreen
 import kr.hanchae.moyeotrip.ui.screens.UnblockConfirmScreen
+import kr.hanchae.moyeotrip.ui.screens.serverFeedIdOrZero
 import kr.hanchae.moyeotrip.ui.screens.serverRoomIdOrNull
 import kr.hanchae.moyeotrip.ui.state.LocalTabDataStore
 import kr.hanchae.moyeotrip.ui.state.TabDataStore
@@ -429,7 +438,15 @@ fun MoyeoTripApp(
             // 19·19-1은 화면기획에서 "모임" 탭 화면이다 — 세그먼트만 다른 라우트에서도 탭바를 유지한다
             val bottomBarRoute = bottomTabRouteFor(currentRoute)
             val showBottomBar = bottomBarRoute != null
-            val topSafePadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 12.dp
+            // 오프라인 배너가 떠 있으면 **상태바는 배너가 이미 차지한다**(배너에 statusBarsPadding 이 붙어 있고,
+            // Scaffold 가 배너 높이만큼 innerPadding 을 준다). 여기서 상태바 인셋을 또 더하면
+            // 배너와 화면 사이가 상태바 하나만큼 벌어진다 (사용자 지적, 2026-09-06 · 안드 37).
+            val offlineBannerVisible = networkExperience == OfflineExperience.Cached
+            val topSafePadding = if (offlineBannerVisible) {
+                12.dp
+            } else {
+                WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 12.dp
+            }
 
             LaunchedEffect(skipStartupSplash) {
                 if (!skipStartupSplash) {
@@ -477,9 +494,11 @@ fun MoyeoTripApp(
                         containerColor = MaterialTheme.colorScheme.background,
                         contentWindowInsets = WindowInsets(0.dp),
                         topBar = {
-                            if (networkExperience == OfflineExperience.Cached &&
-                                currentRoute?.startsWith("chat/") != true
-                            ) {
+                            if (networkExperience == OfflineExperience.Cached) {
+                                // 채팅방도 이 배너를 쓴다. 예전에는 채팅에서만 감추고
+                                // 화면 안에 전용 배너를 따로 그렸는데, **오프라인 안내는
+                                // 앱 전역 배너 하나로 통일**하기로 했다 (2026-09-06 사용자 결정).
+                                // iOS 는 두 배너가 겹쳐 「연결이 끊겼어요」가 두 번 나왔다.
                                 // Scaffold 가 인셋을 소비하지 않으므로 배너가 상태바와 겹친다
                                 OfflineCachedBanner(modifier = Modifier.statusBarsPadding())
                             }
@@ -509,6 +528,17 @@ fun MoyeoTripApp(
                             modifier = Modifier
                                 .padding(innerPadding)
                                 .padding(top = if (edgeToEdgeRoute) 0.dp else topSafePadding)
+                                // 상태바 인셋은 **여기서 다 썼다**. 소비해 두지 않으면 화면 안에서
+                                // `statusBarsPadding()` 을 다시 붙일 때 상태바 높이만큼 또 밀려
+                                // 제목 위에 빈 띠가 생긴다 (18-7·29-5 안드로이드만 상단이 남던 원인,
+                                // 사용자 지적 2026-09-09). 스플래시는 상태바 뒤까지 채우니 그대로 둔다.
+                                .then(
+                                    if (edgeToEdgeRoute) {
+                                        Modifier
+                                    } else {
+                                        Modifier.consumeWindowInsets(WindowInsets.statusBars)
+                                    }
+                                )
                         ) {
                             composable(AppRoutes.HOME) {
                                 HomeScreen(
@@ -550,7 +580,8 @@ fun MoyeoTripApp(
                             composable(AppRoutes.FEED) {
                                 FeedScreen(
                                     onOpenPost = { navController.navigate(AppRoutes.feedDetail(it)) },
-                                    onWritePost = { navController.navigate(AppRoutes.feedWrite()) }
+                                    onWritePost = { navController.navigate(AppRoutes.feedWrite()) },
+                                    onOpenReport = { navController.navigate(AppRoutes.report(it)) }
                                 )
                             }
                             composable(AppRoutes.MY) {
@@ -774,12 +805,22 @@ fun MoyeoTripApp(
                                     onOpenSchedule = { navController.navigate(AppRoutes.createSchedule(it)) }
                                 )
                             }
-                            composable(AppRoutes.CUSTOM_COURSE) { entry ->
+                            composable(
+                                route = AppRoutes.CUSTOM_COURSE,
+                                arguments = listOf(
+                                    navArgument("courseId") {
+                                        type = NavType.LongType
+                                        // 0 = 불러올 코스 없음(빈 에디터). 17-1 캡처만 코스 id 를 넘긴다.
+                                        defaultValue = 0L
+                                    }
+                                )
+                            ) { entry ->
                                 CustomCourseScreen(
                                     draftId = entry.arguments?.getString("draftId").orEmpty(),
                                     onBack = { navController.popBackStack() },
                                     onOpenPlaceSearch = { navController.navigate(AppRoutes.placeSearch(it)) },
-                                    onContinue = { navController.navigate(AppRoutes.createSchedule(it)) }
+                                    onContinue = { navController.navigate(AppRoutes.createSchedule(it)) },
+                                    startingCourseId = entry.arguments?.getLong("courseId")?.takeIf { it > 0L }
                                 )
                             }
                             composable(AppRoutes.PLACE_SEARCH) { entry ->
@@ -967,7 +1008,9 @@ fun MoyeoTripApp(
                                         navController.navigate(AppRoutes.roomNotification(threadId))
                                     },
                                     onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
-                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) }
+                                    onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                    // 20-1 「모집 상세」 — 15 모집 상세로 간다.
+                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) }
                                 )
                             }
                             composable(
@@ -1128,6 +1171,8 @@ fun MoyeoTripApp(
                                     },
                                     onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
                                     onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                    // 20-1 「모집 상세」 — 15 모집 상세로 간다.
+                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
                                     initialSheet = ChatMenuSheet.MemberActions
                                 )
                             }
@@ -1144,6 +1189,8 @@ fun MoyeoTripApp(
                                     },
                                     onOpenNotices = { navController.navigate(AppRoutes.noticeHistory(it)) },
                                     onOpenRoute = { navController.navigate(AppRoutes.courseRoute(it)) },
+                                    // 20-1 「모집 상세」 — 15 모집 상세로 간다.
+                                    onOpenTrip = { navController.navigate(AppRoutes.tripDetail(it)) },
                                     initialSheet = ChatMenuSheet.MemberRemove
                                 )
                             }
@@ -1337,7 +1384,9 @@ internal data class QaStartRequest(private val key: String, private val identifi
 
             "create", "createrecruitment", "createreview" -> AppRoutes.createRecruitment(courseId)
 
-            "customcourse" -> AppRoutes.customCourse(draftKey)
+            // 17-1 은 초안 식별자 자리에 **코스 id** 를 받는다 (`customcourse:81`) —
+            // 그 등록 코스를 불러온 상태로 열어 빈 에디터가 찍히지 않게 한다.
+            "customcourse" -> AppRoutes.customCourse("new", courseId.toLongOrNull())
 
             "placesearch" -> AppRoutes.placeSearch(draftKey)
 
@@ -1424,6 +1473,21 @@ internal data class QaStartRequest(private val key: String, private val identifi
                 tripId = identifier?.substringBefore('/').orEmpty(),
                 noticeId = identifier?.substringAfter('/', "")?.toLongOrNull() ?: 0L
             )
+
+            // 내가 만든 것을 되돌리는 화면들 — 기획·웹·iOS 와 같은 라우트 이름을 쓴다.
+            "feedactions" -> AppRoutes.feedActions(serverFeedRoute(identifier).orEmpty())
+
+            "feeddelete" -> AppRoutes.feedDelete(serverFeedRoute(identifier).orEmpty())
+
+            "feededit" -> AppRoutes.feedEdit(serverFeedRoute(identifier).orEmpty())
+
+            "commentedit" -> AppRoutes.commentEdit(serverFeedRoute(identifier).orEmpty())
+
+            "recruitedit" -> AppRoutes.recruitEdit(tripId)
+
+            "coursetitleedit" -> AppRoutes.courseTitleEdit(tripId)
+
+            "messagedelete" -> AppRoutes.messageDelete(chatId)
 
             "favoriterooms" -> AppRoutes.FAVORITE_ROOMS
 
@@ -1688,6 +1752,60 @@ private fun NavGraphBuilder.gapDestinations(navController: NavHostController) {
             tripId = entry.arguments?.getString("tripId").orEmpty(),
             noticeId = entry.arguments?.getLong("noticeId") ?: 0L,
             onBack = { navController.popBackStack() }
+        )
+    }
+    // 내가 만든 것을 되돌리는 화면 7종 (2026-09-04 BE 회신으로 API 가 열렸다).
+    // 캡처 라우트 이름은 기획·웹·iOS 와 **글자 그대로 같게** 맞춘다.
+    composable(AppRoutes.FEED_ACTIONS, listOf(optionalArgument("feedId"))) { entry ->
+        val feedId = entry.arguments?.getString("feedId").orEmpty()
+        FeedActionsScreen(
+            feedId = feedId.serverFeedIdOrZero(),
+            onBack = { navController.popBackStack() },
+            onEdit = { navController.navigate(AppRoutes.feedEdit(feedId)) },
+            onDelete = { navController.navigate(AppRoutes.feedDelete(feedId)) }
+        )
+    }
+    composable(AppRoutes.FEED_DELETE, listOf(optionalArgument("feedId"))) { entry ->
+        FeedDeleteScreen(
+            feedId = entry.arguments?.getString("feedId").orEmpty().serverFeedIdOrZero(),
+            onBack = { navController.popBackStack() },
+            onDeleted = { navController.navigate(AppRoutes.FEED) { popUpTo(AppRoutes.FEED) } }
+        )
+    }
+    composable(AppRoutes.FEED_EDIT, listOf(optionalArgument("feedId"))) { entry ->
+        val feedId = entry.arguments?.getString("feedId").orEmpty()
+        FeedEditScreen(
+            feedId = feedId.serverFeedIdOrZero(),
+            onBack = { navController.popBackStack() },
+            onDelete = { navController.navigate(AppRoutes.feedDelete(feedId)) }
+        )
+    }
+    composable(AppRoutes.COMMENT_EDIT, listOf(optionalArgument("feedId"))) { entry ->
+        CommentEditScreen(
+            feedId = entry.arguments?.getString("feedId").orEmpty().serverFeedIdOrZero(),
+            onBack = { navController.popBackStack() }
+        )
+    }
+    composable(AppRoutes.RECRUIT_EDIT, listOf(optionalArgument("tripId"))) { entry ->
+        RecruitEditScreen(
+            tripId = entry.arguments?.getString("tripId").orEmpty(),
+            onBack = { navController.popBackStack() }
+        )
+    }
+    composable(AppRoutes.COURSE_TITLE_EDIT, listOf(optionalArgument("tripId"))) { entry ->
+        val tripId = entry.arguments?.getString("tripId").orEmpty()
+        CourseTitleEditScreen(
+            tripId = tripId,
+            onBack = { navController.popBackStack() },
+            onOpenRoute = { navController.navigate(AppRoutes.courseRoute(tripId)) }
+        )
+    }
+    composable(AppRoutes.MESSAGE_DELETE, listOf(optionalArgument("tripId"))) { entry ->
+        val tripId = entry.arguments?.getString("tripId").orEmpty()
+        MessageDeleteScreen(
+            tripId = tripId,
+            onBack = { navController.popBackStack() },
+            onDeleted = { navController.navigate(AppRoutes.chatRoom(tripId)) }
         )
     }
     composable(AppRoutes.FAVORITE_ROOMS) {

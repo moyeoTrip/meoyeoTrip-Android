@@ -42,11 +42,19 @@ data class RecruitmentDraft(
     val id: String,
     val courseSource: CourseSource = CourseSource.Linked,
     val scheduleType: TripScheduleType = TripScheduleType.DayTrip,
-    val travelDate: String = "",
+    /**
+     * 여행 날짜와 모집 마감일의 **폼 기본값**이다.
+     *
+     * 예전에는 둘 다 비워 뒀다. 그런데 17-6 요약에서 「마감」 값이 통째로 비어
+     * 사용자가 「마감 일시가 안 보인다」고 지적했다 (2026-09-09).
+     * 웹은 이미 날짜 기본값을 갖고 있었으므로 세 구현을 같은 규칙으로 맞춘다:
+     * **출발 = 2주 뒤 · 마감 = 출발 3일 전**. 호스트가 2단계에서 언제든 바꾼다.
+     */
+    val travelDate: String = defaultTravelDate(),
     val startTime: String = "08:00",
     val endTime: String = "18:00",
     val endDate: String? = null,
-    val recruitmentDeadline: String = "",
+    val recruitmentDeadline: String = defaultRecruitmentDeadline(),
     val recruitmentName: String = "",
     val estimatedCostPerPerson: Int = 0,
     // 나이대 기본값은 4개 플랫폼 공통으로 25~35세다
@@ -81,3 +89,13 @@ enum class FeedVisibility(val label: String) {
     Friends("친구만"),
     Private("나만 보기")
 }
+
+/** 「2026.09.23 (수)」 — 오늘부터 2주 뒤. 모집 만들기 2단계의 시작값이다. */
+internal fun defaultTravelDate(): String = draftDateText(days = 14)
+
+/** 「2026.09.20 (일) 23:59」 — 출발 3일 전 자정 직전. */
+internal fun defaultRecruitmentDeadline(): String = "${draftDateText(days = 11)} 23:59"
+
+private fun draftDateText(days: Int): String = java.time.LocalDate.now()
+    .plusDays(days.toLong())
+    .format(java.time.format.DateTimeFormatter.ofPattern("yyyy.MM.dd (E)", java.util.Locale.KOREAN))

@@ -232,11 +232,14 @@ fun MyScreen(
                 }
             }
         }
-        item { MyDogamShortcut(onClick = onOpenFriendDex, dexCount = dexCount) }
+        // 「지금까지 만난 친구」 카드를 두지 않는다 — 아래 「메뉴」의 「친구 도감」 줄과
+        // **같은 곳으로 가는 진입점**이라 한 화면에 두 번 있었다. 기획·웹·iOS 에는 없다
+        // (26, 사용자 지적 2026-09-09).
         item {
             MyHubMenuPanel(
                 onOpenMyFeed = onOpenMyFeed,
                 onOpenFriendDex = onOpenFriendDex,
+                onOpenProfileEdit = onOpenProfile,
                 onOpenFriends = onOpenFriends,
                 onOpenCustomerCenter = onOpenCustomerCenter,
                 dexCount = dexCount
@@ -652,6 +655,8 @@ private fun MyMiniChip(text: String, tint: Color) {
 private fun MyHubMenuPanel(
     onOpenMyFeed: () -> Unit,
     onOpenFriendDex: () -> Unit,
+    /** 28 프로필 수정 — 25 가 프로필 카드로 바뀌면서 이 진입점이 메뉴로 왔다. */
+    onOpenProfileEdit: () -> Unit,
     onOpenFriends: () -> Unit,
     onOpenCustomerCenter: () -> Unit,
     dexCount: Int?
@@ -670,6 +675,8 @@ private fun MyHubMenuPanel(
             shape = RoundedCornerShape(12.dp),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
         ) {
+            // 네 표면이 **같은 다섯 줄·같은 순서**를 쓴다 (26, 사용자 지적 2026-09-09).
+            // 예전에는 「내 정보 수정」이 빠져 있었고 순서도 달랐다.
             MyHubMenuRow(
                 title = "내 피드",
                 subtitle = "내가 기록한 경북 여행",
@@ -678,17 +685,24 @@ private fun MyHubMenuPanel(
             )
             MyHubMenuDivider()
             MyHubMenuRow(
-                title = "친구 관리",
-                subtitle = "친구 신청 · 수락 · 내 친구",
-                onClick = onOpenFriends,
-                modifier = Modifier.testTag("my-friends-shortcut")
-            )
-            MyHubMenuDivider()
-            MyHubMenuRow(
                 title = "친구 도감",
                 subtitle = dexCount?.let { "${it}마리 · 최근 동행 순" } ?: "여행에서 만난 친구들",
                 onClick = onOpenFriendDex,
                 modifier = Modifier.testTag("my-friend-dex-shortcut")
+            )
+            MyHubMenuDivider()
+            MyHubMenuRow(
+                title = "내 정보 수정",
+                subtitle = "프로필과 여행 취향을 관리해요",
+                onClick = onOpenProfileEdit,
+                modifier = Modifier.testTag("my-profile-edit-shortcut")
+            )
+            MyHubMenuDivider()
+            MyHubMenuRow(
+                title = "친구 관리",
+                subtitle = "친구 신청과 수락을 관리해요",
+                onClick = onOpenFriends,
+                modifier = Modifier.testTag("my-friends-shortcut")
             )
             MyHubMenuDivider()
             MyHubMenuRow(

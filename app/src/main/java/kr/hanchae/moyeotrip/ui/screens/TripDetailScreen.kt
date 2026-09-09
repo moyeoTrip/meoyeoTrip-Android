@@ -51,6 +51,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.platform.testTag
@@ -229,33 +230,27 @@ private fun ServerTripDetail(
                                 )
                             )
                     )
+                    // 히어로 위에는 **아이콘 둘만** 둔다.
+                    // 예전에는 「모집 상세」 문구까지 얹어 안드로이드만 제목이 붙어 있었고,
+                    // 아이콘도 배경 없이 흰색이라 다크 모드에서 떠 보였다 (사용자 지적, 2026-09-09).
+                    // 기획·웹·iOS 는 원형 배경에 담긴 아이콘 둘뿐이다.
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(start = 12.dp, end = 12.dp, top = 14.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        IconButton(onClick = onBack) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = "뒤로",
-                                tint = Color.White
-                            )
-                        }
-                        Text(
-                            text = "모집 상세",
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.titleMedium,
-                            color = Color.White,
-                            fontWeight = FontWeight.Bold
+                        HeroIconButton(
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "뒤로",
+                            onClick = onBack
                         )
-                        IconButton(onClick = { onOpenChatRoom("room-$roomId") }) {
-                            Icon(
-                                imageVector = Icons.Filled.ChatBubble,
-                                contentDescription = "채팅",
-                                tint = Color.White
-                            )
-                        }
+                        HeroIconButton(
+                            icon = Icons.Filled.ChatBubble,
+                            contentDescription = "채팅",
+                            onClick = { onOpenChatRoom("room-$roomId") }
+                        )
                     }
                 }
             }
@@ -779,16 +774,17 @@ private fun ApplicationSheet(
                 .align(Alignment.TopCenter)
                 .background(Color.Black.copy(alpha = 0.44f))
         )
-        IconButton(
-            onClick = onDismiss,
-            modifier = Modifier
+        // 사진 위 아이콘은 **원형 배경**에 담는다 — 기획·웹이 그렇고,
+        // 맨 아이콘은 사진 밝기에 따라 안 보인다 (사용자 지적, 2026-09-09).
+        Box(
+            Modifier
                 .align(Alignment.TopStart)
                 .padding(start = 12.dp, top = 14.dp)
         ) {
-            Icon(
-                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+            HeroIconButton(
+                icon = Icons.AutoMirrored.Filled.ArrowBack,
                 contentDescription = "뒤로",
-                tint = Color.White
+                onClick = onDismiss
             )
         }
 
@@ -827,6 +823,7 @@ private fun ApplicationSheet(
                         onClick = onDone,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(48.dp)
                             .testTag("application-done"),
                         colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
                         shape = RoundedCornerShape(9.dp)
@@ -928,9 +925,11 @@ private fun ApplicationSheet(
                             }
                         },
                         enabled = !isSubmitting,
-                        modifier = Modifier.fillMaxWidth(),
+                        // 높이 52dp · 모서리 12dp — 기획 `Btn`(48) · 웹(52) · iOS 와 같은 기준.
+                        // 9dp 는 이 화면만 쓰던 값이었다 (버튼 전수조사 2026-09-09).
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
                         colors = ButtonDefaults.buttonColors(containerColor = colors.primary),
-                        shape = RoundedCornerShape(9.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Text(
                             text = if (isSubmitting) "신청 중…" else "신청하기",
@@ -1015,4 +1014,22 @@ private fun kakaoDirectionsUrl(latitude: Double?, longitude: Double?, name: Stri
     val label = (name?.takeIf(String::isNotBlank) ?: "집합 장소").replace(",", " ").trim()
     val encoded = java.net.URLEncoder.encode(label, "UTF-8").replace("+", "%20")
     return "https://map.kakao.com/link/to/$encoded,$latitude,$longitude"
+}
+
+/**
+ * 히어로 이미지 위에 얹는 원형 아이콘 버튼.
+ *
+ * 사진 위라 배경이 어떤 색일지 모른다 — **반투명 검정 원**에 담아 흰 아이콘을 올린다.
+ * 기획·웹·iOS 가 같은 방식이다.
+ */
+@Composable
+private fun HeroIconButton(icon: ImageVector, contentDescription: String, onClick: () -> Unit) {
+    Surface(
+        color = Color.Black.copy(alpha = 0.38f),
+        shape = CircleShape
+    ) {
+        IconButton(onClick = onClick, modifier = Modifier.size(42.dp)) {
+            Icon(icon, contentDescription = contentDescription, tint = Color.White)
+        }
+    }
 }

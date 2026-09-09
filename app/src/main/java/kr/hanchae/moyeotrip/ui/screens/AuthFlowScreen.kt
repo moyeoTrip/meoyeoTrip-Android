@@ -102,6 +102,7 @@ import kr.hanchae.moyeotrip.domain.auth.NicknameSelectionState
 import kr.hanchae.moyeotrip.domain.auth.ProfileImageCandidate
 import kr.hanchae.moyeotrip.notifications.MoyeoPushTokenStore
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MOYEO_CTA_HEIGHT
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
@@ -1188,7 +1189,7 @@ private fun NicknameStep(state: NicknameSelectionState, onSelectNickname: (Strin
             enabled = state.canRefresh,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp)
+                .height(MOYEO_CTA_HEIGHT)
                 .testTag("auth-nickname-refresh")
                 .semantics { contentDescription = "서버에서 다른 이름 세 개 추천받기" },
             shape = RoundedCornerShape(10.dp),
@@ -1695,8 +1696,12 @@ private fun RequiredFieldLabel(text: String) {
 // / 06 단계 상단의 닉네임 카드 — 앞 단계에서 고른 친구를 다시 보여준다.
 @Composable
 private fun SelectedNicknameCard(nickname: String?) {
-    // 앞 단계에서 아직 고르지 않았으면 카드를 그리지 않는다 — 예시 닉네임을 대신 세우지 않는다
-    val label = nickname?.takeIf { it.isNotBlank() } ?: return
+    // 닉네임이 없어도 **카드는 그린다.** 없으면 그 줄만 빼고 아바타는 `🐾` 폴백이다 —
+    // 기획·웹·iOS 가 그렇게 한다(iOS `SelectedNicknameCard` 에 같은 규칙이 주석으로 있다).
+    // 예전에는 여기서 통째로 `return` 해서 **06 화면에 안드로이드만 상단 카드가 없었다**
+    // (사용자 지적, 2026-09-09 · PDF 06 쪽). 예시 닉네임을 세우지 않는다는 규칙은
+    // "이름 줄을 비운다"는 뜻이지 "카드를 없앤다"는 뜻이 아니다.
+    val label = nickname?.takeIf { it.isNotBlank() }
     Surface(
         modifier = Modifier.fillMaxWidth().testTag("auth-basic-nickname"),
         shape = RoundedCornerShape(16.dp),
@@ -1720,11 +1725,14 @@ private fun SelectedNicknameCard(nickname: String?) {
                 }
             }
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                Text(
-                    text = label,
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold
-                )
+                // 닉네임 줄은 값이 있을 때만 — 목 이름을 대신 세우지 않는다.
+                if (label != null) {
+                    Text(
+                        text = label,
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 Text(
                     text = "새 친구가 옆에 앉았어요",
                     style = MaterialTheme.typography.labelMedium,
@@ -2254,6 +2262,7 @@ private fun AuthErrorCard(message: String, onRetry: () -> Unit) {
                 onClick = onRetry,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .height(46.dp)
                     .testTag("auth-error-retry"),
                 shape = RoundedCornerShape(12.dp)
             ) {
@@ -2436,7 +2445,7 @@ private fun AuthSecondaryButton(
         enabled = enabled,
         modifier = modifier
             .then(if (modifier == Modifier) Modifier.fillMaxWidth() else Modifier)
-            .height(54.dp)
+            .height(MOYEO_CTA_HEIGHT)
             .testTag(tag)
             .semantics { this.contentDescription = contentDescription },
         shape = RoundedCornerShape(12.dp),
@@ -2633,7 +2642,7 @@ private fun RowScope.CompactChoice(
     Surface(
         modifier = Modifier
             .weight(1f)
-            .height(48.dp)
+            .height(MOYEO_CTA_HEIGHT)
             .testTag(tag)
             .semantics { this.contentDescription = contentDescription }
             .clickable(onClick = onClick),

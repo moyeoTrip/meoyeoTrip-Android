@@ -29,7 +29,7 @@ object AppRoutes {
     const val CUSTOMER_CENTER = "customer_center"
     const val NOTIFICATIONS = "notifications"
     const val CREATE_RECRUITMENT = "create_recruitment/{courseId}"
-    const val CUSTOM_COURSE = "custom_course/{draftId}"
+    const val CUSTOM_COURSE = "custom_course/{draftId}?courseId={courseId}"
     const val CREATE_SCHEDULE = "create_schedule/{draftId}"
 
     /**
@@ -87,6 +87,17 @@ object AppRoutes {
 
     /** 20-3a 공지 수정 · 삭제 — PUT/DELETE chat-rooms/{id}/notices/{noticeId} */
     const val NOTICE_EDIT = "notice_edit?tripId={tripId}&noticeId={noticeId}"
+
+    // 내가 만든 것을 되돌리는 화면들 (2026-09-04 BE 회신으로 API 가 열렸다).
+    // 정본 `docs/api/BACKEND_REQUEST_CHANGES_2026-09-04.md`.
+    // 프로필 이미지 삭제는 **없다** — 회신 §7 대로 API 가 없고 기획에도 없다.
+    const val FEED_ACTIONS = "feed_actions?feedId={feedId}"
+    const val FEED_DELETE = "feed_delete?feedId={feedId}"
+    const val FEED_EDIT = "feed_edit?feedId={feedId}"
+    const val COMMENT_EDIT = "comment_edit?feedId={feedId}"
+    const val RECRUIT_EDIT = "recruit_edit?tripId={tripId}"
+    const val COURSE_TITLE_EDIT = "course_title_edit?tripId={tripId}"
+    const val MESSAGE_DELETE = "message_delete?tripId={tripId}"
 
     /** 26-1 찜한 모집 — GET chat-rooms/my/favorites */
     const val FAVORITE_ROOMS = "favorite_rooms"
@@ -222,6 +233,20 @@ object AppRoutes {
 
     fun noticeEdit(tripId: String, noticeId: Long) = "notice_edit?tripId=$tripId&noticeId=$noticeId"
 
+    fun feedActions(feedId: String) = "feed_actions?feedId=$feedId"
+
+    fun feedDelete(feedId: String) = "feed_delete?feedId=$feedId"
+
+    fun feedEdit(feedId: String) = "feed_edit?feedId=$feedId"
+
+    fun commentEdit(feedId: String) = "comment_edit?feedId=$feedId"
+
+    fun recruitEdit(tripId: String) = "recruit_edit?tripId=$tripId"
+
+    fun courseTitleEdit(tripId: String) = "course_title_edit?tripId=$tripId"
+
+    fun messageDelete(tripId: String) = "message_delete?tripId=$tripId"
+
     fun tripConfirmed(tripId: String? = null) =
         if (tripId.isNullOrBlank()) "trip_confirmed" else "trip_confirmed?tripId=$tripId"
 
@@ -253,7 +278,15 @@ object AppRoutes {
 
     fun createRecruitment(courseId: String) = "create_recruitment/$courseId"
 
-    fun customCourse(draftId: String) = "custom_course/$draftId"
+    /**
+     * 17-1 코스 직접 만들기. [courseId] 를 주면 **그 등록 코스를 불러온 상태**로 연다
+     * (딥링크·QA 진입 · `create_people` 의 `capacity` 와 같은 관례).
+     */
+    fun customCourse(draftId: String, courseId: Long? = null) = if (courseId == null) {
+        "custom_course/$draftId"
+    } else {
+        "custom_course/$draftId?courseId=$courseId"
+    }
 
     fun createSchedule(draftId: String) = "create_schedule/$draftId"
 

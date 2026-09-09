@@ -4,12 +4,15 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -30,11 +33,14 @@ object MoyeoEmptyText {
     const val NO_NOTICES = "아직 등록된 공지가 없어요."
     const val NO_COMMENTS = "아직 댓글이 없어요."
     const val NO_FEEDS = "아직 올라온 피드가 없어요."
+
     /** 26-1 내 피드가 0건일 때. 남의 피드가 없는 것(`NO_FEEDS`)과 다른 상황이라 따로 둔다 —
      *  여기서는 **내가** 쓰면 채워지므로 무엇을 하면 되는지까지 알려준다. */
     const val NO_MY_FEEDS = "아직 쓴 피드가 없어요.\n다녀온 여행을 피드로 남겨보세요."
+
     /** 25-1 카드 뒷면에 함께한 여행도 받은 평가도 없을 때. 뒷면이 통째로 비어 있었다. */
     const val NO_COMPANION_HISTORY = "아직 함께한 여행과 평가가 없어요.\n함께 여행하면 기록과 한줄평이 여기 쌓여요."
+
     /** 25-1 「다른 여행자들이 남긴 평가」가 0건일 때. 제목만 남고 아래가 비어 휑했다 —
      *  무엇을 하면 채워지는지까지 적는다. */
     const val NO_RECEIVED_REVIEWS = "아직 받은 한줄평이 없어요.\n함께 여행하면 서로 한줄평을 남길 수 있어요."
@@ -60,7 +66,14 @@ fun MoyeoEmptyState(
     text: String,
     modifier: Modifier = Modifier,
     testTag: String? = null,
-    onRetry: (() -> Unit)? = null
+    onRetry: (() -> Unit)? = null,
+    /**
+     * 문구 위에 놓을 아이콘. **없으면 그리지 않는다** — 빈 상태마다 아이콘을 억지로 붙이지 않는다.
+     *
+     * iOS 가 12 검색의 「최근 검색어가 없어요」에 시계 아이콘(`clock.arrow.circlepath`)을 쓰고 있었고,
+     * 사용자가 그게 낫다고 해서 네 표면으로 넓혔다 (2026-09-09).
+     */
+    icon: ImageVector? = null
 ) {
     Column(
         modifier = modifier
@@ -70,6 +83,14 @@ fun MoyeoEmptyState(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
+        if (icon != null) {
+            Icon(
+                icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(28.dp)
+            )
+        }
         Text(
             text = text,
             style = MaterialTheme.typography.bodyMedium,

@@ -21,6 +21,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
+import androidx.compose.material.icons.outlined.Map
+import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -44,6 +47,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -293,21 +297,33 @@ private fun ServerCourseDetail(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 item {
+                    // 코스 사진은 **좌우로 꽉 찬다** (기획 14). 목록의 좌우 여백(20dp)을
+                    // 음수 패딩으로 되돌려 화면 폭 전체를 쓴다 — 예전에는 여백 안에 갇혀
+                    // 안드로이드만 사진이 좁아 보였다 (사용자 지적, 2026-09-09).
                     CachedRemoteImage(
                         url = loadedCourse.thumbnail,
                         contentDescription = loadedCourse.title,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .height(190.dp)
-                            .clip(RoundedCornerShape(14.dp)),
+                            .layout { measurable, constraints ->
+                                val extra = 20.dp.roundToPx() * 2
+                                val placeable = measurable.measure(
+                                    constraints.copy(
+                                        minWidth = constraints.maxWidth + extra,
+                                        maxWidth = constraints.maxWidth + extra
+                                    )
+                                )
+                                layout(placeable.width, placeable.height) {
+                                    placeable.place(-20.dp.roundToPx(), 0)
+                                }
+                            }
+                            .height(210.dp),
                         contentScale = ContentScale.Crop,
                         fallbackShape = MoyeoPlaceholderShape.LANDSCAPE
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(190.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .height(210.dp)
                                 .background(colors.surfaceVariant)
                         )
                     }
@@ -327,18 +343,15 @@ private fun ServerCourseDetail(
                                 color = colors.onSurfaceVariant
                             )
                         }
-                        val meta = listOfNotNull(
-                            loadedCourse.travelTime,
-                            loadedCourse.distanceKm?.let { "${it}km" },
-                            loadedCourse.averageRating?.let { "★ $it (${loadedCourse.ratingCount})" }
-                        ).joinToString(" · ")
-                        if (meta.isNotBlank()) {
-                            Text(
-                                text = meta,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = colors.onSurfaceVariant
-                            )
-                        }
+                        // 소요시간·이동거리·평점은 **아이콘이 붙은 3열**이다 (기획 14).
+                        // 예전에는 `10시간 · 19.9km · ★ 4.0` 한 줄이라 눈에 잘 안 띄었다
+                        // (사용자 지적, 2026-09-09).
+                        CourseMetaRow(
+                            travelTime = loadedCourse.travelTime,
+                            distanceKm = loadedCourse.distanceKm,
+                            rating = loadedCourse.averageRating,
+                            ratingCount = loadedCourse.ratingCount
+                        )
                         if (loadedCourse.tags.isNotEmpty()) {
                             Text(
                                 text = loadedCourse.tags.joinToString(" ") { "#${it.name}" },
@@ -560,3 +573,46 @@ private fun serverCoursePublisherMeta(course: TravelCourse): String = listOfNotN
     course.creatorTravelStartDate?.takeIf { it.isNotBlank() }?.let { "${it.replace('-', '.')} 여행 후 공개" },
     course.chatRoomCount?.let { "이 코스로 떠난 모임 $it" }
 ).joinToString(" · ")
+
+/**
+ * 14 코스 상세의 소요시간 · 이동거리 · 평점 — **아이콘 위, 값 아래**의 3열이다.
+ *
+ * 기획이 그렇게 그리고 웹·iOS 도 같다. 서버가 안 준 값은 **그 칸을 비운다** — 지어내지 않는다.
+ */
+@Composable
+private fun CourseMetaRow(travelTime: String?, distanceKm: Double?, rating: Double?, ratingCount: Int?) {
+    val colors = MaterialTheme.colorScheme
+    val cells = listOfNotNull(
+        travelTime?.let { Triple(Icons.Outlined.Schedule, "소요시간", it) },
+        distanceKm?.let { Triple(Icons.Outlined.Map, "이동거리", "${it}km") },
+        rating?.let {
+            Triple(
+                Icons.Outlined.StarBorder,
+                "평점",
+                if (ratingCount !=
+                    null
+                ) {
+                    "$it ($ratingCount)"
+                } else {
+                    "$it"
+                }
+            )
+        }
+    )
+    if (cells.isEmpty()) return
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceEvenly
+    ) {
+        cells.forEach { (icon, label, value) ->
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Icon(icon, contentDescription = null, tint = colors.onSurfaceVariant, modifier = Modifier.size(20.dp))
+                Text(label, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+                Text(value, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.ExtraBold)
+            }
+        }
+    }
+}

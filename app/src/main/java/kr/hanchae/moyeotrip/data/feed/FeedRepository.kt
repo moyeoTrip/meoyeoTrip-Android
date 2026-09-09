@@ -88,6 +88,38 @@ interface FeedRepository {
 
     suspend fun addComment(feedId: Long, content: String, parentCommentId: Long? = null): FeedComment
 
+    /**
+     * 피드 수정 — **본문만** 받는다 (`PUT /feeds/{feedId}` · `{ content }`).
+     *
+     * 사진은 이 API 로 교체하지 않고 기존 첨부가 유지된다. 공개 범위도 못 바꾼다 —
+     * 댓글 쓴 사람이 갑자기 피드를 못 보게 되는 것을 막으려는 정책이다.
+     * 그래서 24-6 화면에는 사진·공개범위 편집 UI 를 두지 않는다(두면 죽은 버튼이 된다).
+     * 작성자 본인만 된다. 없는 피드는 404 `40417`.
+     */
+    suspend fun updateFeed(feedId: Long, content: String): ServerFeed
+
+    /**
+     * 피드 삭제 — 204 No Content.
+     *
+     * 사진·댓글·좋아요·신고 관계가 함께 정리되고, 커밋 뒤 이미지 파일도 지워진다.
+     * **되돌릴 수 없다** — 23-3 확인 단계를 거친 뒤에만 부른다.
+     */
+    suspend fun deleteFeed(feedId: Long)
+
+    /**
+     * 댓글 수정 — 공백 불가 · **최대 500자**다.
+     *
+     * 신고 `details` 의 300자와 다르다. 작성자 본인만 되고, 없는 댓글은 404 `40422`.
+     */
+    suspend fun updateComment(feedId: Long, commentId: Long, content: String): FeedComment
+
+    /**
+     * 댓글 삭제 — 최상위 댓글을 지우면 **달린 답글도 함께** 사라진다.
+     *
+     * 화면이 그 사실을 먼저 알려야 한다.
+     */
+    suspend fun deleteComment(feedId: Long, commentId: Long)
+
     suspend fun toggleLike(feedId: Long): FeedLikeResult
 
     /** 신고 사유 목록. 코드와 표시 문구를 서버가 함께 준다 — 클라가 문구를 갖지 않는다. */
@@ -146,6 +178,27 @@ class HttpFeedRepository(private val client: MoyeoApiClient) : FeedRepository {
         val body = JSONObject().put("content", content)
         parentCommentId?.let { body.put("parentCommentId", it) }
         return client.sendForObject("POST", "/api/v1/feeds/$feedId/comments", body).toComment()
+    }
+
+    // 수정·삭제 (2026-09-04 BE 회신) — 정본 `docs/api/BACKEND_REQUEST_CHANGES_2026-09-04.md`.
+    // 2026-09-07 실서버로 존재·권한·검증(501자 → 400)을 확인했다.
+
+    override suspend fun updateFeed(feedId: Long, content: String): ServerFeed =
+        client.sendForObject("PUT", "/api/v1/feeds/$feedId", JSONObject().put("content", content)).toFeed()
+
+    override suspend fun deleteFeed(feedId: Long) {
+        client.send("DELETE", "/api/v1/feeds/$feedId")
+    }
+
+    override suspend fun updateComment(feedId: Long, commentId: Long, content: String): FeedComment =
+        client.sendForObject(
+            "PUT",
+            "/api/v1/feeds/$feedId/comments/$commentId",
+            JSONObject().put("content", content)
+        ).toComment()
+
+    override suspend fun deleteComment(feedId: Long, commentId: Long) {
+        client.send("DELETE", "/api/v1/feeds/$feedId/comments/$commentId")
     }
 
     override suspend fun reportReasons(): List<FeedReportReason> =

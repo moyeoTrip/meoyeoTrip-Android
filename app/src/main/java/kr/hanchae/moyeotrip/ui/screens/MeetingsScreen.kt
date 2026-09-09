@@ -8,11 +8,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -22,7 +24,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Description
-import androidx.compose.material.icons.filled.Map
 import androidx.compose.material3.Badge
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,6 +59,7 @@ import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.ServerListState
+import kr.hanchae.moyeotrip.ui.components.moyeoTripDateText
 import kr.hanchae.moyeotrip.ui.state.LocalTabDataStore
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -177,11 +179,33 @@ internal fun MeetingChatList(
                 selectedTab == MeetingChatTab.Applied -> if (waiting.isEmpty()) {
                     item { MoyeoEmptyState(MoyeoEmptyText.NO_JOINED_ROOMS, testTag = "meetings-empty") }
                 } else {
-                    items(waiting, key = { it.roomId }) { room ->
+                    // 기획은 신청 상태를 **두 묶음**으로 갈라 소제목을 붙인다 —
+                    // 「호스트 승인을 기다리는 중」과 「대기열에 있는 모임」은 기다리는 이유가 다르다.
+                    // 예전에는 세 구현 모두 소제목 없이 한 줄로 이어 붙였다 (19-1, 2026-09-09).
+                    val pending = waiting.filter { it.applicationStatus != "WAITLISTED" }
+                    val queued = waiting.filter { it.applicationStatus == "WAITLISTED" }
+                    if (pending.isNotEmpty()) {
+                        item(key = "applied-pending-title") {
+                            WaitingSectionTitle("호스트 승인을 기다리는 중")
+                        }
+                    }
+                    items(pending, key = { "pending-${it.roomId}" }) { room ->
                         ServerWaitingRoomCard(
                             room = room,
                             // 19-2 — 예전에는 여기서 바로 DELETE 가 나갔다. 대기 순번을 잃는 행동이라
                             // 되돌릴 수 없어 확인 화면을 먼저 지난다(정본 §6-1).
+                            onCancel = { onOpenApplyCancel("room-${room.roomId}") },
+                            onOpenDetail = { onOpenTrip("room-${room.roomId}") }
+                        )
+                    }
+                    if (queued.isNotEmpty()) {
+                        item(key = "applied-queued-title") {
+                            WaitingSectionTitle("대기열에 있는 모임")
+                        }
+                    }
+                    items(queued, key = { "queued-${it.roomId}" }) { room ->
+                        ServerWaitingRoomCard(
+                            room = room,
                             onCancel = { onOpenApplyCancel("room-${room.roomId}") },
                             onOpenDetail = { onOpenTrip("room-${room.roomId}") }
                         )
@@ -306,36 +330,72 @@ private fun ServerWaitingRoomCard(room: MyWaitingRoom, onCancel: () -> Unit, onO
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                    Text(
-                        room.title,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+            Row(verticalAlignment = Alignment.Top, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 썸네일이 없어 안드로이드 카드만 글자만 있었다 — 기획·웹·iOS 는 56dp 사진을 둔다.
+                CachedRemoteImage(
+                    url = room.thumbnail,
+                    contentDescription = room.title,
+                    modifier = Modifier.size(56.dp).clip(RoundedCornerShape(16.dp)),
+                    contentScale = ContentScale.Crop,
+                    fallbackShape = MoyeoPlaceholderShape.SQUARE
+                ) {
+                    Box(
+                        Modifier
+                            .size(56.dp)
+                            .clip(RoundedCornerShape(16.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
                     )
+                }
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            room.title,
+                            modifier = Modifier.weight(1f, fill = false),
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Surface(shape = RoundedCornerShape(50), color = badgeContainer) {
+                            Text(
+                                when {
+                                    rejected -> "거절됨"
+                                    waitlisted -> "대기열 ${room.waitlistPosition ?: 1}번"
+                                    else -> "승인 대기"
+                                },
+                                Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                color = badgeContent,
+                                fontWeight = FontWeight.ExtraBold,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+                        }
+                    }
                     Text(
-                        if (room.endDate != null) "${room.startDate} ~ ${room.endDate}" else room.startDate,
+                        room.waitingScheduleText(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Text(
-                        "${room.participantCount}/${room.maxParticipants}명",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    room.meetingDetails?.takeIf(String::isNotBlank)?.let {
+                        Text(
+                            it,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-                Surface(shape = RoundedCornerShape(50), color = badgeContainer) {
+            }
+            // 왜 기다리는지 말해 주는 말풍선. 기획·iOS 에는 있고 웹·안드로이드에는 없었다.
+            if (!rejected) {
+                Surface(shape = RoundedCornerShape(10.dp), color = badgeContainer) {
                     Text(
-                        when {
-                            rejected -> "거절됨"
-                            waitlisted -> "대기열 ${room.waitlistPosition ?: 1}번"
-                            else -> "승인 대기"
+                        if (waitlisted) {
+                            "정원(${room.maxParticipants}명)이 차서 대기 중이에요. 자리가 나면 순서대로 자동 합류돼요."
+                        } else {
+                            "호스트가 확인하면 채팅방이 열려요. 보통 24시간 이내에 응답해요."
                         },
-                        Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        color = badgeContent,
-                        fontWeight = FontWeight.ExtraBold,
-                        style = MaterialTheme.typography.labelMedium
+                        Modifier.fillMaxWidth().padding(horizontal = 11.dp, vertical = 9.dp),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = badgeContent
                     )
                 }
             }
@@ -357,6 +417,33 @@ private fun ServerWaitingRoomCard(room: MyWaitingRoom, onCancel: () -> Unit, onO
             }
         }
     }
+}
+
+/** 19-1 신청중 목록의 소제목. 기획의 12sp 회색 굵은 줄과 같은 자리다. */
+@Composable
+private fun WaitingSectionTitle(text: String) {
+    Text(
+        text = text,
+        modifier = Modifier.fillMaxWidth().padding(top = 14.dp, bottom = 2.dp),
+        style = MaterialTheme.typography.labelMedium,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant
+    )
+}
+
+/**
+ * 「2026.10.03 (토) · 당일치기 · 09:30-17:30」.
+ *
+ * 예전에는 `2026-10-03` 을 그대로 찍어 요일도 시각도 없었다 — 웹·iOS 는 둘 다 보여 준다.
+ */
+private fun MyWaitingRoom.waitingScheduleText(): String {
+    val parts = mutableListOf(moyeoTripDateText(startDate))
+    endDate?.takeIf(String::isNotBlank)?.let { parts[0] = "${parts[0]} ~ ${moyeoTripDateText(it)}" }
+    parts += if (tripType == "DAY_TRIP") "당일치기" else "숙박"
+    if (tripType == "DAY_TRIP" && dayTripStartTime != null) {
+        parts += "${dayTripStartTime.take(5)}-${dayTripEndTime?.take(5).orEmpty()}"
+    }
+    return parts.joinToString(" · ")
 }
 
 @Composable
@@ -454,15 +541,19 @@ private fun SpecialMessagesEntry(onClick: () -> Unit) {
                     modifier = Modifier.weight(1f),
                     verticalArrangement = Arrangement.spacedBy(3.dp)
                 ) {
+                    // 이 줄은 **친구 도감 메시지**(여행 뒤 남는 한 줄 메시지)로 간다.
+                    // 예전에는 이름이 「특수 메시지」였고 목적지도 21 특수 메시지였다 —
+                    // 기획·웹·iOS 셋은 도감 메시지를 가리키므로 안드로이드만 다른 곳으로 갔다
+                    // (19-1, 사용자 지적 2026-09-09).
                     Text(
-                        text = "특수 메시지",
+                        text = "친구 도감 메시지",
                         fontSize = 15.sp,
                         lineHeight = 19.sp,
                         color = colorScheme.onSurface,
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
-                        text = "사진·장소·투표·정산 카드를 모아봐요.",
+                        text = "여행 뒤 남는 특별 메시지를 모아봐요.",
                         fontSize = 12.sp,
                         lineHeight = 16.sp,
                         color = colorScheme.onSurfaceVariant,

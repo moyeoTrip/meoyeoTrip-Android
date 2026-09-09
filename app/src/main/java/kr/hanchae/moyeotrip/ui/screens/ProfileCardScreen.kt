@@ -73,6 +73,7 @@ import kr.hanchae.moyeotrip.data.social.DexMemory
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.LocalCaptureMode
+import kr.hanchae.moyeotrip.ui.components.MOYEO_CTA_HEIGHT
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoNicknameAnimal
 import kr.hanchae.moyeotrip.ui.theme.MoyeoUserCardPalette
@@ -117,6 +118,11 @@ fun ProfileCardScreen(
     }
     var profile by remember(server, userId) { mutableStateOf<ServerPublicProfile?>(null) }
     var reviews by remember(server, userId) { mutableStateOf<List<ServerReceivedTravelReview>>(emptyList()) }
+    // 도감(27)에서 들어오면 동행 정보가 `dexCompanion` 으로 함께 온다. 그런데 **유저 id 만 아는
+    // 진입점**(피드 작성자 · 멤버 · 캡처 라우트)에서는 그 값이 없어 「N회 동행」 배지와
+    // 「최근 동행」 줄, 뒷면의 한 줄 메시지가 통째로 사라졌다 — 같은 화면이 들어온 길에 따라
+    // 달라 보였다 (25, 사용자 지적 2026-09-09). 도감 응답에 그 값이 다 있으니 찾아 쓴다.
+    var foundDexCompanion by remember(server, userId) { mutableStateOf<DexCompanion?>(null) }
     LaunchedEffect(server, userId) {
         if (server == null || userId == null) {
             profile = null
@@ -125,7 +131,14 @@ fun ProfileCardScreen(
         }
         profile = runCatching { server.userProfile.publicProfile(userId) }.getOrNull()
         reviews = runCatching { server.userProfile.receivedTravelReviews(userId) }.getOrEmpty()
+        if (dexCompanion == null) {
+            // 도감에 없으면 나와 동행한 적이 없는 사람이다 — 그 칸은 비워 둔다.
+            foundDexCompanion = runCatching { server.social.travelDex() }
+                .getOrNull()
+                ?.firstOrNull { it.userId == userId }
+        }
     }
+    val companion = dexCompanion ?: foundDexCompanion
 
     val subject = profile?.let { loaded ->
         ProfileCardSubject(
@@ -135,13 +148,13 @@ fun ProfileCardScreen(
             introduction = loaded.introduction,
             travelStyles = loaded.travelStyles.map { it.label },
             mannerRating = loaded.mannerRating,
-            // 서버가 주지 않는 값은 null 로 둔다 → 칸이 만들어지지 않는다
+            // 여행·피드 횟수는 서버가 준다 (`completedTripCount` · `feedCount`).
             completedTripCount = loaded.completedTripCount,
             feedCount = loaded.feedCount,
-            withMeTripCount = dexCompanion?.tripCount,
-            latestTripTitle = dexCompanion?.latestTripTitle,
-            latestTripDate = dexCompanion?.latestTripDate,
-            memories = dexCompanion?.memories.orEmpty(),
+            withMeTripCount = companion?.tripCount,
+            latestTripTitle = companion?.latestTripTitle,
+            latestTripDate = companion?.latestTripDate,
+            memories = companion?.memories.orEmpty(),
             receivedReviews = reviews.map { ReceivedReview(it.reviewerNickname, it.reviewerNicknameColor, it.content) }
         )
     }
@@ -222,7 +235,7 @@ private fun ProfileCardBody(
     friendRequestState: ProfileFriendRequestState,
     friendRequestError: String?,
     onSendFriendRequest: () -> Unit,
-    /// 내 카드인지 — 자기에게 친구 신청을 걸 수는 없어 그 버튼을 그리지 않는다.
+    // / 내 카드인지 — 자기에게 친구 신청을 걸 수는 없어 그 버튼을 그리지 않는다.
     isMe: Boolean
 ) {
     val palette = rememberUserCardPalette(subject.nicknameColor)
@@ -382,26 +395,32 @@ private fun ProfileCardBody(
             }
             // DM 기획이 없다 — 여기서 할 수 있는 행동은 친구 신청뿐이다.
             // POST users/me/friend-requests/{userId}. 라벨은 20-1a 멤버 액션과 같은 것을 쓴다.
-            if (!isMe) Button(
-                onClick = onSendFriendRequest,
-                modifier = Modifier.weight(1f).testTag("profile-card-friend-request"),
-                enabled = friendRequestState == ProfileFriendRequestState.Idle,
-                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-            ) {
-                Text(
-                    text = when (friendRequestState) {
-                        ProfileFriendRequestState.Idle -> "친구 신청"
+            // 모서리를 **직접 준다**. Material3 `Button` 의 기본 모양은 완전한 알약이라
+            // 기획·웹·iOS 의 12dp 둥근 사각형과 달라 안드로이드만 좌우가 다 둥글게 찍혔다
+            // (25-1, 사용자 지적 2026-09-09).
+            if (!isMe) {
+                Button(
+                    onClick = onSendFriendRequest,
+                    modifier = Modifier.weight(1f).height(MOYEO_CTA_HEIGHT).testTag("profile-card-friend-request"),
+                    enabled = friendRequestState == ProfileFriendRequestState.Idle,
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(
+                        text = when (friendRequestState) {
+                            ProfileFriendRequestState.Idle -> "친구 신청"
 
-                        ProfileFriendRequestState.Sending -> "보내는 중..."
+                            ProfileFriendRequestState.Sending -> "보내는 중..."
 
-                        ProfileFriendRequestState.Sent -> "친구 요청을 보냈어요"
+                            ProfileFriendRequestState.Sent -> "친구 요청을 보냈어요"
 
-                        // 누구인지 모르면(userId 없이 열린 카드) 보낼 곳이 없다 — 왜 못 누르는지 적는다
-                        ProfileFriendRequestState.Unavailable -> "친구 신청"
-                    },
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                            // 누구인지 모르면(userId 없이 열린 카드) 보낼 곳이 없다 — 왜 못 누르는지 적는다
+                            ProfileFriendRequestState.Unavailable -> "친구 신청"
+                        },
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
         friendRequestError?.let { message ->
@@ -624,9 +643,9 @@ private fun CardFront(
             }
 
             // 뒷면에 볼 것이 하나라도 있을 때만 안내한다 — 매너 점수만 있어도 볼 것이 있다.
-            if (subject.mannerRating != null
-                || subject.memories.isNotEmpty()
-                || subject.receivedReviews.isNotEmpty()
+            if (subject.mannerRating != null ||
+                subject.memories.isNotEmpty() ||
+                subject.receivedReviews.isNotEmpty()
             ) {
                 // iOS·웹에는 화살표가 있는데 안드로이드에만 없었다 — 같은 안내는 같게 보여야 한다.
                 // 화살표를 3dp 폭으로 두 번 왕복시켜 "옆으로 밀 수 있다"를 알린다. 들여다보는
@@ -693,12 +712,7 @@ private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette)
                 fontWeight = FontWeight.Black,
                 color = MaterialTheme.colorScheme.onSurface
             )
-            Text(
-                text = "카드 뒷면",
-                fontSize = 9.5.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // 「카드 뒷면」 문구를 두지 않는다 — 뒤집힌 것은 화면이 이미 보여준다.
         }
 
         Column(
@@ -770,9 +784,9 @@ private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette)
             // 평가 칸은 **0건이어도 그린다** — 제목만 남고 아래가 비면 고장으로 읽힌다.
             // 뒷면에 다른 내용이 하나라도 있을 때만이다.
             // 도감의 oneLineReview 는 "내가 남긴" 값이라 여기 섞으면 안 된다.
-            if (subject.receivedReviews.isNotEmpty()
-                || subject.mannerRating != null
-                || subject.memories.isNotEmpty()
+            if (subject.receivedReviews.isNotEmpty() ||
+                subject.mannerRating != null ||
+                subject.memories.isNotEmpty()
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(
@@ -821,9 +835,9 @@ private fun CardBack(subject: ProfileCardSubject, palette: MoyeoUserCardPalette)
             }
             // 매너 점수도 함께한 여행도 평가도 없으면 뒷면이 통째로 비어 있었다 —
             // 뒤집어 봤는데 아무것도 없으면 고장으로 읽힌다.
-            if (subject.mannerRating == null
-                && subject.memories.isEmpty()
-                && subject.receivedReviews.isEmpty()
+            if (subject.mannerRating == null &&
+                subject.memories.isEmpty() &&
+                subject.receivedReviews.isEmpty()
             ) {
                 Text(
                     text = MoyeoEmptyText.NO_COMPANION_HISTORY,

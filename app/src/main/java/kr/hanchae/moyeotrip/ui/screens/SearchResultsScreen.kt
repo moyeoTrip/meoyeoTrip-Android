@@ -292,16 +292,26 @@ private fun SearchCourseCard(course: TravelCourse, onClick: () -> Unit) {
                             modifier = Modifier.weight(1f),
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
+                            // 태그는 **칩**이다 — 기획·웹·iOS 가 외곽선 칩으로 그린다.
+                            // 예전에는 `#섬 #자연` 해시태그 글자였고, 작아서 카드가 비어 보였다
+                            // (사용자 지적, 2026-09-09).
                             course.tags.take(3).forEach { tag ->
-                                Text(
-                                    text = "#${tag.name}",
+                                Surface(
                                     modifier = Modifier.testTag("search-results-tag-${tag.tagId}"),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colors.primary,
-                                    fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
+                                    shape = RoundedCornerShape(999.dp),
+                                    color = colors.surface,
+                                    border = BorderStroke(1.dp, colors.outline.copy(alpha = 0.6f))
+                                ) {
+                                    Text(
+                                        text = tag.name,
+                                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = colors.onSurface,
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
                     } else {

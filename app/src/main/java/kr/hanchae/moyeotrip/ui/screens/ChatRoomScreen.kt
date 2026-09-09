@@ -162,7 +162,9 @@ private fun OfflineOrSignedOutChatRoom(
             onSearchClick = null,
             onMoreClick = onOpenMenu
         )
-        if (!isOnline) OfflineChatWarning()
+        // 오프라인 안내는 **앱 전역 배너 하나로만** 낸다 (MoyeoTripApp 의 OfflineCachedBanner).
+        // 화면 안에 전용 배너를 또 그리면 「연결이 끊겼어요」가 한 화면에 두 번 나온다
+        // (2026-09-06 사용자 지적 · iOS 37 캡처에서 드러났다).
         LazyColumn(
             state = messageListState,
             modifier = Modifier
@@ -868,34 +870,6 @@ internal fun ChatRoomBody(threadId: String = OVERLAY_BACKDROP_THREAD_ID, isOnlin
 }
 
 @Composable
-private fun OfflineChatWarning() {
-    val tints = MoyeoTheme.tints
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(36.dp)
-            .background(tints.warningTint)
-            .padding(horizontal = 14.dp)
-            .testTag("offline-chat-banner"),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Box(
-            Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(tints.onWarningTint)
-        )
-        Text(
-            text = "연결이 끊겼어요. 보낸 메시지는 연결되면 자동으로 전송돼요.",
-            modifier = Modifier.padding(start = 7.dp),
-            style = MaterialTheme.typography.labelMedium,
-            color = tints.onWarningTint,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
-        )
-    }
-}
-
-@Composable
 private fun QueuedMessageBubble(message: QueuedChatMessage) {
     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
         Column(
@@ -932,7 +906,7 @@ private fun QueuedMessageBubble(message: QueuedChatMessage) {
                     modifier = Modifier.padding(start = 7.dp),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold
+                    fontWeight = FontWeight.Bold
                 )
             }
         }

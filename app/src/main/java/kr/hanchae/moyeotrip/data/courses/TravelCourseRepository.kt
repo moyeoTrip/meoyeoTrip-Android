@@ -9,6 +9,7 @@ import kr.hanchae.moyeotrip.data.api.stringOrNull
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomSearchResult
 import kr.hanchae.moyeotrip.data.rooms.RoomTag
 import kr.hanchae.moyeotrip.data.rooms.toChatRoomSearchResult
+import org.json.JSONArray
 import org.json.JSONObject
 
 data class TravelCoursePlace(
@@ -26,6 +27,12 @@ data class TravelCourse(
     val courseId: Long,
     val title: String,
     val description: String?,
+    /**
+     * `PUBLIC` 또는 `CUSTOM`. 서버는 늘 주는데 예전에는 받지 않았다
+     * (2026-09-07 실서버 확인). **18-7 이름 수정은 `CUSTOM` 만 된다** — 이 값이 근거다.
+     * 예전 응답을 캐시로 읽는 경우가 있어 기본값을 둔다.
+     */
+    val type: String? = null,
     val travelTime: String?,
     val distanceKm: Double?,
     val averageRating: Double?,
@@ -64,6 +71,14 @@ data class LikedTravelCourse(
 /** `POST /api/v1/travel-courses/{courseId}/publication` 응답. */
 data class CoursePublication(val courseId: Long, val publicationStatus: String)
 
+/**
+ * 코스 수정에 실어 보내는 방문지 한 곳.
+ *
+ * 읽기 모델([TravelCourse] 의 방문지)에는 제목·썸네일·좌표가 더 있지만
+ * 서버가 **쓰기에서 받는 것은 이 네 개뿐**이라 전송용을 따로 둔다.
+ */
+data class CoursePlaceEdit(val contentId: Long, val dayNumber: Int, val sequence: Int, val visitTime: String?)
+
 interface TravelCourseRepository {
     suspend fun publicCourses(tagId: Long? = null): List<TravelCourse>
 
@@ -74,6 +89,22 @@ interface TravelCourseRepository {
     suspend fun course(courseId: Long): TravelCourse
 
     suspend fun roomCourse(roomId: Long): TravelCourse
+
+    /**
+     * 18-1 경로 수정 · 18-7 이름·소개 수정 — **같은 엔드포인트**다
+     * (`PATCH /travel-courses/chat-rooms/{roomId}`).
+     *
+     * 2026-09-04 BE 회신 §5 로 `title`·`description` 선택 필드가 붙었다.
+     * **생략하면 기존 값을 유지하는 부분 수정**이라 PUT 이 아니라 PATCH 다.
+     * 조건: 호스트가 직접 만든 `CUSTOM` 코스이고 **여행 확정 전**일 때만.
+     * 제목을 보냈다면 공백일 수 없다(빈 문자열은 400).
+     */
+    suspend fun updateRoomCourse(
+        roomId: Long,
+        title: String? = null,
+        description: String? = null,
+        places: List<CoursePlaceEdit>? = null
+    )
 
     /**
      * 12-1 검색 결과 — GET travel-courses/search?keyword=.
@@ -147,6 +178,36 @@ class HttpTravelCourseRepository(private val client: MoyeoApiClient) : TravelCou
     override suspend fun roomCourse(roomId: Long): TravelCourse =
         client.getObject("/api/v1/travel-courses/chat-rooms/$roomId").getJSONObject("course").toCourse()
 
+    // null 은 **키를 아예 넣지 않는다**는 뜻이다 — 서버가 "생략" 으로 읽어 기존 값을 유지한다.
+    // JSONObject.NULL 을 넣으면 지우려는 시도로 읽힐 수 있다.
+    override suspend fun updateRoomCourse(
+        roomId: Long,
+        title: String?,
+        description: String?,
+        places: List<CoursePlaceEdit>?
+    ) {
+        val body = JSONObject()
+        title?.let { body.put("title", it) }
+        description?.let { body.put("description", it) }
+        places?.let { list ->
+            body.put(
+                "places",
+                JSONArray().apply {
+                    list.forEach { place ->
+                        put(
+                            JSONObject()
+                                .put("contentId", place.contentId)
+                                .put("dayNumber", place.dayNumber)
+                                .put("sequence", place.sequence)
+                                .put("visitTime", place.visitTime ?: JSONObject.NULL)
+                        )
+                    }
+                }
+            )
+        }
+        client.send("PATCH", "/api/v1/travel-courses/chat-rooms/$roomId", body)
+    }
+
     override suspend fun searchCourses(keyword: String): List<TravelCourse> {
         // 검색어는 한글이 대부분이라 반드시 인코딩해서 보낸다.
         val encoded = URLEncoder.encode(keyword, "UTF-8")
@@ -203,6 +264,7 @@ private fun JSONObject.toCourse() = TravelCourse(
     courseId = getLong("courseId"),
     title = getString("title"),
     description = stringOrNull("description"),
+    type = stringOrNull("type"),
     travelTime = stringOrNull("travelTime"),
     distanceKm = doubleOrNull("distanceKm"),
     averageRating = doubleOrNull("averageRating"),

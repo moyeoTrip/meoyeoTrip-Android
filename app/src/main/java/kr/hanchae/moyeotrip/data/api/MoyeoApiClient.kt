@@ -245,6 +245,44 @@ class MoyeoApiClient(
         return RequestPayload(contentType = "multipart/form-data; boundary=$boundary", bytes = bytes)
     }
 
+    /**
+     * JSON 파트 + **선택** 파일 파트 — 18-6 모집 내용 수정(`PATCH /chat-rooms/{id}`)이 이 형태다.
+     *
+     * 썸네일을 생략하면 서버가 기존 값을 유지한다(그래서 PUT 이 아니라 PATCH 다).
+     * 파일이 필수인 [sendMultipartJsonAndFileForObject] 와 달리 null 을 받는다.
+     */
+    suspend fun sendMultipartJsonAndOptionalFile(
+        method: String,
+        path: String,
+        jsonPartName: String,
+        jsonPart: JSONObject,
+        file: MultipartFile? = null
+    ): JSONObject {
+        val payload = if (file == null) {
+            multipartJsonPayload(jsonPartName, jsonPart)
+        } else {
+            multipartJsonAndFilePayload(jsonPartName, jsonPart, file)
+        }
+        val text = requestWithPayload(method, path, payload)
+        return if (text.isBlank()) JSONObject() else JSONObject(text)
+    }
+
+    /** JSON 파트 하나만 있는 multipart. 파일 파트가 없을 때 쓴다. */
+    private fun multipartJsonPayload(jsonPartName: String, jsonPart: JSONObject): RequestPayload {
+        val boundary = "moyeo-${System.nanoTime()}"
+        val body = buildString {
+            append("--$boundary\r\n")
+            append("Content-Disposition: form-data; name=\"$jsonPartName\"\r\n")
+            append("Content-Type: application/json; charset=utf-8\r\n\r\n")
+            append(jsonPart.toString())
+            append("\r\n--$boundary--\r\n")
+        }
+        return RequestPayload(
+            contentType = "multipart/form-data; boundary=$boundary",
+            bytes = body.toByteArray(Charsets.UTF_8)
+        )
+    }
+
     private fun multipartJsonAndFilePayload(
         jsonPartName: String,
         jsonPart: JSONObject,

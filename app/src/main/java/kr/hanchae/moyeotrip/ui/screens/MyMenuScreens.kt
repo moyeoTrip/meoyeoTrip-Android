@@ -22,10 +22,10 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -33,7 +33,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -74,6 +73,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -94,13 +94,13 @@ import kr.hanchae.moyeotrip.domain.auth.EmailAuthRequest
 import kr.hanchae.moyeotrip.domain.auth.UserDisplayProfile
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.MoyeoContact
-import kr.hanchae.moyeotrip.ui.components.AnimalAvatar
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoNicknameAnimal
 import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.ServerListState
+import kr.hanchae.moyeotrip.ui.components.moyeoRelativeTime
 import kr.hanchae.moyeotrip.ui.theme.Coral
 import kr.hanchae.moyeotrip.ui.theme.ForestGreen
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
@@ -259,39 +259,27 @@ fun ProfileEditScreen(
                 ) {
                     Box {
                         // 화면기획 28의 아바타 배경은 연초록(primary100)이다 — 기본 코랄이 아니다
-                        // 아바타는 서버 닉네임의 동물이다 (R5 정본 = MoyeoNicknameAnimal).
-                        // 예전에는 목데이터 닉네임으로 뽑아 닉네임과 아바타가 어긋났다.
-                        AnimalAvatar(
-                            MoyeoNicknameAnimal.emojiForNickname(serverProfile?.nickname ?: userProfile.nickname),
+                        // **올린 프로필 사진을 그린다.** 예전에는 `AnimalAvatar` 만 그려서
+                        // 사진을 올린 사람에게도 동물 이모지가 보였다 — 다른 화면(피드 카드 등)은
+                        // 이미 `UserAvatar` 로 사진을 그리고 있어 같은 사람이 화면마다 달라 보였다.
+                        // 사진이 없으면 `UserAvatar` 가 닉네임의 동물로 대신한다 (R5 규칙 그대로).
+                        //
+                        // 자물쇠 배지는 두지 않는다 — 고칠 수 없다는 사실은 아래 비공개 정보의
+                        // `닉네임`·`캐릭터` 줄에 잠금 표시로 이미 있다.
+                        UserAvatar(
+                            imageUrl = serverProfile?.profileImageUrl,
+                            nickname = serverProfile?.nickname ?: userProfile.nickname,
                             modifier = Modifier.size(96.dp),
-                            container = tints.primaryTintStrong
+                            fallbackFontSize = 44.sp
                         )
-                        Surface(
-                            modifier = Modifier.align(Alignment.BottomEnd).size(26.dp),
-                            shape = CircleShape,
-                            color = colors.surfaceVariant,
-                            border = BorderStroke(1.dp, colors.outline)
-                        ) {
-                            Box(contentAlignment = Alignment.Center) {
-                                Icon(
-                                    Icons.Filled.Lock,
-                                    contentDescription = "캐릭터 고정",
-                                    modifier = Modifier.size(13.dp),
-                                    tint = colors.onSurfaceVariant
-                                )
-                            }
-                        }
                     }
                     Text(
                         serverProfile?.nickname ?: userProfile.nickname.orEmpty(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.ExtraBold
                     )
-                    Text(
-                        "한 번 정한 친구는 바꿀 수 없어요",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colors.onSurfaceVariant
-                    )
+                    // "바꿀 수 없어요" 경고를 두지 않는다 — 아래 비공개 정보의
+                    // `닉네임`·`캐릭터` 줄에 잠금 표시로 이미 있다 (기획 28 과 같다).
                     HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
             }
@@ -482,15 +470,19 @@ private fun ProfileFieldEditSheet(
                     // 서버가 받는 값은 F·M·N 세 가지다 — 화면 문구는 `genderLabel()` 과 같은 표를 쓴다.
                     listOf("F", "M", "N").forEach { code ->
                         val selected = gender == code
+                        // 모서리·높이를 직접 준다 — Material3 기본은 알약 + 40dp 라
+                        // 기획·웹의 12dp 둥근 사각형 + 44dp 와 달라 보인다 (버튼 전수조사 2026-09-09).
                         if (selected) {
                             Button(
                                 onClick = { gender = code },
-                                modifier = Modifier.testTag("profile-edit-gender-$code")
+                                modifier = Modifier.weight(1f).height(44.dp).testTag("profile-edit-gender-$code"),
+                                shape = RoundedCornerShape(12.dp)
                             ) { Text(code.genderLabel()) }
                         } else {
                             OutlinedButton(
                                 onClick = { gender = code },
-                                modifier = Modifier.testTag("profile-edit-gender-$code")
+                                modifier = Modifier.weight(1f).height(44.dp).testTag("profile-edit-gender-$code"),
+                                shape = RoundedCornerShape(12.dp)
                             ) { Text(code.genderLabel()) }
                         }
                     }
@@ -507,8 +499,12 @@ private fun ProfileFieldEditSheet(
 
 private fun String.genderLabel(): String = when (this) {
     "F" -> "여성"
+
     "M" -> "남성"
-    else -> "비공개"
+
+    // 가입(06)에서 고르는 이름이 「선택 안 함」이다 — 프로필에서 「비공개」로 바꿔 부르면
+    // 같은 값을 두 이름으로 부르게 된다. 웹·iOS 도 「선택 안 함」이다 (28, 2026-09-09).
+    else -> "선택 안 함"
 }
 
 /** 28의 여행 취향 통합 블록 — 조회와 수정 진입이 한 자리에서 일어난다 (changeLog13). */
@@ -732,12 +728,17 @@ private fun ProfileEditRow(
                 .padding(horizontal = 20.dp, vertical = 16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, modifier = Modifier.weight(1f), fontWeight = FontWeight.Bold)
+            // 라벨이 `weight(1f)` 이면 **값이 길 때 라벨이 눌려 줄바꿈된다** —
+            // 웹에서 자기소개가 길어지자 라벨이 「자/기/소/개」로 쪼개진 것을 봤다.
+            // 라벨은 제 폭을 지키고, 남은 폭을 값이 받아 줄임표로 줄인다.
+            Text(label, fontWeight = FontWeight.Bold, maxLines = 1)
             Text(
                 value,
+                modifier = Modifier.weight(1f).padding(start = 12.dp),
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (locked) colors.onSurfaceVariant else colors.onSurface,
                 fontWeight = if (locked) FontWeight.Normal else FontWeight.Bold,
+                textAlign = TextAlign.End,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis
             )
@@ -852,7 +853,7 @@ private fun MyFeedPostCard(feed: ServerFeed, onClick: () -> Unit) {
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = feed.createdAt.take(10).replace('-', '.'),
+                        text = moyeoRelativeTime(feed.createdAt),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.SemiBold
@@ -1978,25 +1979,25 @@ private fun ProviderConnectionCard(
                         fontWeight = FontWeight.ExtraBold
                     )
                     Text(
-                        text = if (connected) "연결됨" else provider.connectionHint(),
+                        text = if (connected) "연결됨" else "연결되지 않음",
                         style = MaterialTheme.typography.bodySmall,
                         color = if (connected) ForestGreen else MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
                 if (connected) {
                     Text("연결됨", color = ForestGreen, fontWeight = FontWeight.Bold)
+                } else if (showAction) {
+                    // 연결 버튼은 **줄 오른쪽에 작게** 둔다 (웹과 같은 배치, 사용자 지적 2026-09-09).
+                    // 예전에는 줄 아래에 폭을 꽉 채우는 큰 버튼이라 카드 하나가 웹의 두 배 높이였다.
+                    // 색은 그대로다 — 카카오 노랑·Apple 흑백·Google 외곽선은 각 사업자의 브랜드 규정이다.
+                    ProviderConnectionButton(
+                        provider = provider,
+                        isLoading = isLoading,
+                        onClick = onClick,
+                        enabled = enabled,
+                        modifier = Modifier.testTag("providers-${provider.pathValue}-link")
+                    )
                 }
-            }
-            if (!connected && showAction) {
-                ProviderConnectionButton(
-                    provider = provider,
-                    isLoading = isLoading,
-                    onClick = onClick,
-                    enabled = enabled,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("providers-${provider.pathValue}-link")
-                )
             }
             content()
         }
@@ -2036,8 +2037,8 @@ private fun ProviderConnectionButton(
     Button(
         onClick = onClick,
         enabled = enabled,
-        modifier = modifier.height(54.dp),
-        shape = RoundedCornerShape(12.dp),
+        modifier = modifier.height(34.dp),
+        shape = RoundedCornerShape(10.dp),
         colors = ButtonDefaults.buttonColors(
             containerColor = containerColor,
             contentColor = contentColor,
@@ -2045,23 +2046,23 @@ private fun ProviderConnectionButton(
             disabledContentColor = contentColor.copy(alpha = 0.48f)
         ),
         border = border,
-        contentPadding = PaddingValues(horizontal = 16.dp)
+        contentPadding = PaddingValues(horizontal = 14.dp)
     ) {
-        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-            if (isLoading) {
-                CircularProgressIndicator(
-                    modifier = Modifier
-                        .align(Alignment.CenterStart)
-                        .size(22.dp),
-                    color = contentColor,
-                    strokeWidth = 2.dp
-                )
-            }
-            Text(
-                text = if (isLoading) "연결하고 있어요" else "${provider.displayName()} 연결",
-                fontWeight = FontWeight.ExtraBold
+        if (isLoading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                color = contentColor,
+                strokeWidth = 2.dp
             )
+            Spacer(Modifier.width(6.dp))
         }
+        // 문구는 네 표면 모두 「연결하기」다 (기획 `ScreenAccountProviders`).
+        // 사업자 이름은 바로 왼쪽 줄에 이미 적혀 있어 버튼에서 한 번 더 부르지 않는다.
+        Text(
+            text = if (isLoading) "연결 중" else "연결하기",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.ExtraBold
+        )
     }
 }
 
@@ -2119,11 +2120,6 @@ private fun AuthProvider.iconResource(): Int = when (this) {
     AuthProvider.GOOGLE -> R.drawable.google_g_official
     AuthProvider.APPLE -> R.drawable.apple_continue_official
     AuthProvider.EMAIL -> error("이메일은 텍스트 아이콘을 사용해요.")
-}
-
-private fun AuthProvider.connectionHint(): String = when (this) {
-    AuthProvider.EMAIL -> "새 이메일과 비밀번호가 필요해요"
-    else -> "추가 로그인 수단으로 연결할 수 있어요"
 }
 
 private fun Set<AuthProvider>.providerSummary(): String = sortedBy(AuthProvider::ordinal)
@@ -2211,11 +2207,13 @@ private fun SettingsActionDialog(
                     val uriHandler = LocalUriHandler.current
                     OutlinedButton(
                         onClick = { uriHandler.openUri(MoyeoContact.ISSUES_URL) },
-                        modifier = Modifier.fillMaxWidth().testTag("settings-contact-issues")
+                        modifier = Modifier.fillMaxWidth().height(44.dp).testTag("settings-contact-issues"),
+                        shape = RoundedCornerShape(12.dp)
                     ) { Text(MoyeoContact.ISSUES_LABEL, fontWeight = FontWeight.ExtraBold) }
                     OutlinedButton(
                         onClick = { uriHandler.openUri(MoyeoContact.MAILTO_URL) },
-                        modifier = Modifier.fillMaxWidth().testTag("settings-contact-email")
+                        modifier = Modifier.fillMaxWidth().height(44.dp).testTag("settings-contact-email"),
+                        shape = RoundedCornerShape(12.dp)
                     ) { Text(MoyeoContact.EMAIL_LABEL, fontWeight = FontWeight.ExtraBold) }
                 }
                 errorMessage?.let {

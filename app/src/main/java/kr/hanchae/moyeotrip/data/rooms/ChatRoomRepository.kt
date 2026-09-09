@@ -172,6 +172,11 @@ data class MyWaitingRoom(
     val tripType: String,
     val startDate: String,
     val endDate: String?,
+    /** 당일치기 시각. 서버는 `09:30:00` 꼴로 준다 — 없으면 숙박이다. */
+    val dayTripStartTime: String?,
+    val dayTripEndTime: String?,
+    /** 집합 안내. 19-1 카드가 날짜 줄 아래에 그린다 (기획·웹과 같은 줄). */
+    val meetingDetails: String?,
     val participantCount: Int,
     val maxParticipants: Int
 )
@@ -294,6 +299,30 @@ data class MeetingInfoUpdate(
     val meetingLatitude: Double?,
     val meetingLongitude: Double?,
     val meetingDetails: String?
+)
+
+/**
+ * `PATCH /chat-rooms/{roomId}` — 18-6 모집 내용 수정 (multipart 의 `request` 파트).
+ *
+ * **모든 필드를 보낸다.** 부분 수정은 `thumbnail` 파트를 생략하는 것으로만 성립한다 —
+ * JSON 필드를 빼면 서버가 400 `40033`(JSON 형식)으로 떨어진다(2026-09-07 실측).
+ * 그래서 화면은 방을 먼저 읽어 현재 값으로 채운 뒤 바뀐 것만 갈아 보낸다.
+ *
+ * [dayTrip] 이면 시각 두 개를 채우고 [endDate] 는 null,
+ * 아니면 [endDate] 를 채우고 시각은 null 이다(방 생성과 같은 규칙).
+ */
+data class RoomContentUpdate(
+    val title: String,
+    val description: String?,
+    val dayTrip: Boolean,
+    val minimumParticipants: Int?,
+    val maxParticipants: Int,
+    val startDate: String,
+    val endDate: String?,
+    val recruitmentDeadlineDate: String,
+    val dayTripStartTime: String?,
+    val dayTripEndTime: String?,
+    val participationFee: Int?
 )
 
 /** POST chat-rooms/{id}/status 로 보낼 수 있는 상태. */
@@ -425,6 +454,25 @@ interface ChatRoomRepository {
 
     /** 17-3 집합 장소·시간 수정 (호스트). */
     suspend fun updateMeetingInfo(roomId: Long, update: MeetingInfoUpdate)
+
+    /**
+     * 18-6 모집 내용 수정 — `PATCH /chat-rooms/{roomId}` (multipart).
+     *
+     * **모집 중인 방의 호스트만** 된다 — 남의 방은 403 `40307`, 없는 방은 404 `40405`.
+     * 최대 인원을 현재 참가자 수보다 적게 줄일 수 없다.
+     * 저장되면 방에 `호스트가 모집 정보를 수정했어요.` 시스템 메시지가 남고 참가자에게 알린다.
+     * [thumbnail] 을 생략하면 기존 대표 사진을 그대로 둔다(비우는 길은 없다).
+     */
+    suspend fun updateRoomContent(roomId: Long, update: RoomContentUpdate, thumbnail: MultipartFile? = null)
+
+    /**
+     * 20-6 내 메시지 삭제 — 204 No Content.
+     *
+     * 참가자가 **자기 메시지만** 지울 수 있다(시스템 메시지·남의 메시지는 안 된다).
+     * 행을 지우지 않고 본문을 `삭제된 메시지입니다` 로 바꾸므로
+     * **id·보낸 사람·보낸 시각·답글 관계는 그대로 남는다.** 없는 메시지는 404 `40423`.
+     */
+    suspend fun deleteMessage(roomId: Long, messageId: Long)
 
     /** 18 모집 확정·취소 (호스트). */
     suspend fun changeStatus(roomId: Long, status: RoomStatusChange)
@@ -611,6 +659,20 @@ class HttpChatRoomRepository(private val client: MoyeoApiClient) : ChatRoomRepos
     override suspend fun cancelVote(roomId: Long, messageId: Long): RoomMessage =
         client.sendForObject("DELETE", "/api/v1/chat-rooms/$roomId/messages/$messageId/vote").toRoomMessage()
 
+    override suspend fun updateRoomContent(roomId: Long, update: RoomContentUpdate, thumbnail: MultipartFile?) {
+        client.sendMultipartJsonAndOptionalFile(
+            "PATCH",
+            "/api/v1/chat-rooms/$roomId",
+            "request",
+            update.toRequestJson(),
+            thumbnail
+        )
+    }
+
+    override suspend fun deleteMessage(roomId: Long, messageId: Long) {
+        client.send("DELETE", "/api/v1/chat-rooms/$roomId/messages/$messageId")
+    }
+
     override suspend fun updateMeetingInfo(roomId: Long, update: MeetingInfoUpdate) {
         client.send("PUT", "/api/v1/chat-rooms/$roomId/meeting-info", update.toRequestJson())
     }
@@ -706,6 +768,26 @@ internal fun MeetingInfoUpdate.toRequestJson(): JSONObject = JSONObject()
     .put("meetingLatitude", meetingLatitude ?: JSONObject.NULL)
     .put("meetingLongitude", meetingLongitude ?: JSONObject.NULL)
     .put("meetingDetails", meetingDetails ?: JSONObject.NULL)
+
+/**
+ * 18-6 모집 내용 수정 본문.
+ *
+ * 서버가 **모든 필드를 요구**한다 — 빼면 400 `40033` 이다.
+ * 당일치기면 시각을, 아니면 종료 날짜를 채우고 반대쪽은 명시적 null 을 보낸다
+ * (방 생성 요청과 같은 규칙).
+ */
+internal fun RoomContentUpdate.toRequestJson(): JSONObject = JSONObject()
+    .put("title", title)
+    .put("description", description ?: JSONObject.NULL)
+    .put("tripType", if (dayTrip) "DAY_TRIP" else "OVERNIGHT")
+    .put("minimumParticipants", minimumParticipants ?: JSONObject.NULL)
+    .put("maxParticipants", maxParticipants)
+    .put("startDate", startDate)
+    .put("endDate", if (dayTrip) JSONObject.NULL else (endDate ?: JSONObject.NULL))
+    .put("recruitmentDeadlineDate", recruitmentDeadlineDate)
+    .put("dayTripStartTime", if (dayTrip) (dayTripStartTime ?: JSONObject.NULL) else JSONObject.NULL)
+    .put("dayTripEndTime", if (dayTrip) (dayTripEndTime ?: JSONObject.NULL) else JSONObject.NULL)
+    .put("participationFee", participationFee ?: JSONObject.NULL)
 
 /**
  * 공지 수정 본문. 고정만 토글할 때 `notice` 를 함께 보내면 본문이 덮어써지므로
@@ -807,6 +889,9 @@ private fun JSONObject.toWaitingRoom() = MyWaitingRoom(
     tripType = optString("tripType"),
     startDate = optString("startDate"),
     endDate = stringOrNull("endDate"),
+    dayTripStartTime = stringOrNull("dayTripStartTime"),
+    dayTripEndTime = stringOrNull("dayTripEndTime"),
+    meetingDetails = stringOrNull("meetingDetails"),
     participantCount = optInt("participantCount"),
     maxParticipants = optInt("maxParticipants")
 )

@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bolt
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Check
@@ -37,7 +38,6 @@ import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Group
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Map
-import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.Payments
@@ -74,6 +74,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.AnnotatedString
@@ -85,7 +86,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import java.util.Locale
 import kotlinx.coroutines.launch
 import kr.hanchae.moyeotrip.R
 import kr.hanchae.moyeotrip.data.CourseSource
@@ -102,6 +102,7 @@ import kr.hanchae.moyeotrip.data.rooms.RoomNotices
 import kr.hanchae.moyeotrip.data.rooms.roomDateTimeClockText
 import kr.hanchae.moyeotrip.data.rooms.toNewChatRoom
 import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.CourseRouteMap
 import kr.hanchae.moyeotrip.ui.components.CourseRoutePoint
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
@@ -110,7 +111,10 @@ import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
 import kr.hanchae.moyeotrip.ui.components.MoyeoLinearProgress
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.ServerListState
+import kr.hanchae.moyeotrip.ui.components.moyeoDashedOutline
+import kr.hanchae.moyeotrip.ui.components.moyeoNoticeTime
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
 /**
@@ -225,6 +229,7 @@ fun RecruitmentCourseSourceScreen(
                         // 서버가 코스 작성자를 주면 화면기획의 "여행자 코스"에 해당한다
                         sourceLabel = if (course.creatorNickname != null) "여행자 코스" else "모여트립 추천",
                         selected = course.courseId == draft.serverCourseId,
+                        thumbnail = course.thumbnail,
                         onClick = { draft = draft.applyServerCourse(course) }
                     )
                 }
@@ -239,9 +244,11 @@ fun RecruitmentCourseSourceScreen(
         } else {
             item {
                 Surface(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        // 아직 코스를 짜지 않은 자리 — 기획·웹은 점선이다.
+                        .moyeoDashedOutline(MaterialTheme.colorScheme.outline),
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
                     color = MaterialTheme.colorScheme.surface
                 ) {
                     Column(
@@ -263,21 +270,24 @@ fun RecruitmentCourseSourceScreen(
     }
 }
 
+/** 서버 코스의 방문지 → 초안 방문지. 이름·시각·일차·좌표를 그대로 옮긴다. */
+private fun TravelCourse.toRouteStops(): List<RouteStop> = places.mapIndexed { index, place ->
+    RouteStop(
+        id = "srv-$courseId-stop-${place.contentId}-$index",
+        day = place.dayNumber,
+        time = place.visitTime?.take(5).orEmpty(),
+        name = place.title,
+        memo = "",
+        latitude = place.latitude,
+        longitude = place.longitude
+    )
+}
+
 /** 서버 코스를 고른 초안. 방문지는 서버 방문지(좌표 포함)를 그대로 옮긴다. */
 private fun RecruitmentDraft.applyServerCourse(course: TravelCourse): RecruitmentDraft = copy(
     serverCourseId = course.courseId,
     serverCourseTitle = course.title,
-    routeStops = course.places.mapIndexed { index, place ->
-        RouteStop(
-            id = "srv-${course.courseId}-stop-${place.contentId}-$index",
-            day = place.dayNumber,
-            time = place.visitTime?.take(5).orEmpty(),
-            name = place.title,
-            memo = "",
-            latitude = place.latitude,
-            longitude = place.longitude
-        )
-    }
+    routeStops = course.toRouteStops()
 )
 
 @Composable
@@ -285,9 +295,27 @@ fun CustomCourseScreen(
     draftId: String,
     onBack: () -> Unit,
     onOpenPlaceSearch: (String) -> Unit,
-    onContinue: (String) -> Unit
+    onContinue: (String) -> Unit,
+    startingCourseId: Long? = null
 ) {
     var draft by remember(draftId) { mutableStateOf(RecruitmentDraftStore.draft(draftId)) }
+    val server = LocalServerData.current
+
+    // `?courseId=` 로 들어오면 **그 코스를 불러온 상태**로 에디터를 연다 (딥링크·QA 진입).
+    // 담기는 값은 서버가 준 방문지 이름·방문 시각·일차·좌표뿐이다 — 지어낸 방문지를 담지 않는다.
+    // 이미 담은 방문지가 있으면 덮어쓰지 않는다(사용자가 짜던 코스를 지우면 안 된다).
+    LaunchedEffect(draftId, startingCourseId, server) {
+        val courseId = startingCourseId ?: return@LaunchedEffect
+        if (server == null || draft.routeStops.isNotEmpty()) return@LaunchedEffect
+        val course = runCatching { server.courses.course(courseId) }.getOrNull() ?: return@LaunchedEffect
+        val stops = course.toRouteStops()
+        if (stops.isEmpty()) return@LaunchedEffect
+        // **방문지만** 옮긴다. `serverCourseId` 까지 넣으면 초안이 「연동 코스」가 되어
+        // 17-5 가 PUBLIC 으로 만들어 버린다 — 여기서 고친 코스는 새 커스텀 코스다.
+        draft = draft
+            .copy(routeStops = stops, dayCount = stops.maxOf { it.day })
+            .also(RecruitmentDraftStore::update)
+    }
 
     RecruitmentScaffold(
         title = "코스 직접 만들기",
@@ -380,8 +408,12 @@ fun CustomCourseScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(46.dp)
+                    .moyeoDashedOutline(MaterialTheme.colorScheme.outlineVariant)
                     .testTag("custom-course-add-stop"),
-                shape = RoundedCornerShape(8.dp)
+                // 「담기」 자리는 **점선 박스**다 — 기획·웹·iOS 모두 점선이고 반지름 12 다
+                // (iOS `StrokeStyle(lineWidth: 1, dash: [4])`). 안드로이드만 실선 8 이었다.
+                shape = RoundedCornerShape(12.dp),
+                border = null
             ) {
                 Icon(Icons.Filled.Add, contentDescription = null)
                 Text(
@@ -397,13 +429,17 @@ fun CustomCourseScreen(
                     RecruitmentDraftStore.update(draft)
                 },
                 enabled = draft.dayCount < RecruitmentDraftStore.MAX_COURSE_DAYS,
-                modifier = Modifier.fillMaxWidth().testTag("custom-course-add-day"),
-                shape = RoundedCornerShape(8.dp)
+                // 위 「방문지 추가」와 같은 보조 버튼 높이(46)다 — 값을 주지 않으면
+                // Material3 기본값 40dp 이 쓰여 안드로이드만 낮았다.
+                modifier = Modifier.fillMaxWidth().height(46.dp).testTag("custom-course-add-day"),
+                // 반지름은 네 표면이 같아야 한다 — 기획·웹·iOS 가 12 다.
+                shape = RoundedCornerShape(12.dp)
             ) { Text("+ 다음 날 추가 (1박 이상일 때)") } // 글자에 '+'가 있으니 아이콘은 두지 않는다
         }
         item {
             InfoBanner(
-                icon = Icons.Filled.EditNote,
+                // 기획의 안내 박스 아이콘은 **반짝임**(`sparkle`)이다 — iOS 도 `sparkles` 를 쓴다.
+                icon = Icons.Filled.AutoAwesome,
                 text = "직접 만든 코스는 여행이 확정되기 전까지 호스트가 언제든 고칠 수 있어요. 수정하면 채팅방 멤버 모두에게 알림이 가요."
             )
         }
@@ -872,7 +908,10 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                     placeholder = { Text("장소 검색") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth().padding(12.dp).background(MaterialTheme.colorScheme.surface)
+                    // `background` 에 **모양을 함께 준다.** 모양 없이 칠하면 모서리 밖까지
+                    // 사각으로 채워져 둥근 입력창이 각진 판으로 보였다 (사용자 지적, 2026-09-09).
+                    modifier = Modifier.fillMaxWidth().padding(12.dp)
+                        .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(10.dp))
                         .testTag("meeting-point-search"),
                     shape = RoundedCornerShape(10.dp)
                 )
@@ -923,13 +962,9 @@ fun CreateMeetPointScreen(draftId: String, onBack: () -> Unit, onSave: (String) 
                 )
             }
         }
-        item {
-            LabeledValue(
-                "좌표 (자동 저장)",
-                "%.6f, %.6f".format(Locale.US, pinned.latitude, pinned.longitude),
-                Icons.Filled.MyLocation
-            )
-        }
+        // 좌표는 **사용자에게 보여주지 않는다** — 지도 핀으로 위치를 알 수 있고
+        // 위경도 숫자는 읽을 일이 없다 (사용자 결정, 2026-09-09).
+        // 값 자체는 그대로 저장돼 채팅방 지도 카드·길 찾기에 쓰인다.
         item { LabeledValue("집합 시간 *", draft.meetingLocation.meetingTime, Icons.Filled.Schedule) }
         item {
             InfoBanner(
@@ -1222,13 +1257,16 @@ fun CreateSummaryScreen(draftId: String, onBack: () -> Unit, onCreatedRoom: (Lon
                     SummaryRow(
                         Icons.Filled.Place,
                         "집합",
-                        "${draft.meetingLocation.meetingTime} ${draft.meetingLocation.name} ${draft.meetingLocation.detail}"
+                        // 값이 비면 구분자만 남는다 — 빈 조각은 버리고 이어 붙인다.
+                        listOf(
+                            draft.meetingLocation.meetingTime,
+                            draft.meetingLocation.name,
+                            draft.meetingLocation.detail
+                        ).filter { it.isNotBlank() }.joinToString(" ")
                     )
-                    SummaryRow(
-                        Icons.Filled.MyLocation,
-                        "좌표",
-                        "${draft.meetingLocation.latitude}, ${draft.meetingLocation.longitude}"
-                    )
+                    // 좌표 줄은 **없앤다** — 위경도는 사용자가 읽을 값이 아니다.
+                    // 게다가 지도를 끌지 않은 초안에서는 `0.0, 0.0` 이 그대로 찍혔다
+                    // (17-3 에서 네 표면 다 뺀 것과 같은 이유 · 17-6 사용자 지적 2026-09-09).
                     // 화면기획 17-6은 인원과 조건을 두 줄로 나눈다
                     SummaryRow(
                         Icons.Filled.Group,
@@ -1581,7 +1619,10 @@ private fun ServerNoticeCard(
         MaterialTheme.colorScheme.surfaceVariant,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(9.dp)) {
+            // 아이콘과 배지가 **첫 줄**을 차지하고 본문은 그 아래 한 폭을 다 쓴다.
+            // 예전에는 셋을 한 줄에 넣어 본문이 배지 옆 좁은 칸으로 밀려 두 줄로 접혔고,
+            // 그래서 카드가 낮아져 안드로이드만 화면 아래가 텅 비었다 (20-3, 사용자 지적 2026-09-09).
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     Icons.Filled.Description,
@@ -1593,34 +1634,41 @@ private fun ServerNoticeCard(
                         MaterialTheme.colorScheme.onSurfaceVariant
                     }
                 )
-                // 제목 줄이 없다 — 본문이 카드의 주인공이다(정본 §2). 그래서 제목체가 아니라 본문체로 쓴다.
-                Text(
-                    notice.content.orEmpty(),
-                    Modifier.weight(1f).padding(start = 6.dp),
-                    style = MaterialTheme.typography.bodyMedium,
+                Spacer(Modifier.weight(1f))
+                Surface(
+                    shape = RoundedCornerShape(50),
                     color = if (notice.pinned) {
-                        MaterialTheme.colorScheme.primary
+                        MoyeoTheme.tints.primaryTint
                     } else {
-                        MaterialTheme.colorScheme.onSurface
+                        MaterialTheme.colorScheme.surface
                     }
-                )
-                if (notice.pinned) {
-                    Surface(shape = RoundedCornerShape(50), color = MoyeoTheme.tints.primaryTint) {
-                        Text(
-                            "📌 고정",
-                            Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MoyeoTheme.tints.onPrimaryTint,
-                            fontWeight = FontWeight.ExtraBold
-                        )
-                    }
+                ) {
+                    Text(
+                        if (notice.pinned) "📌 고정" else "고정 해제됨",
+                        Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (notice.pinned) {
+                            MoyeoTheme.tints.onPrimaryTint
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                        fontWeight = FontWeight.ExtraBold
+                    )
                 }
             }
+            // 제목 줄이 없다 — 본문이 카드의 주인공이다(정본 §2). 그래서 제목체가 아니라 본문체로 쓴다.
+            // 색은 고정 여부와 무관하게 본문색이다 — 초록으로 칠하면 안드로이드만 글자색이 달라진다.
+            Text(
+                notice.content.orEmpty(),
+                Modifier.fillMaxWidth(),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     listOfNotNull(
                         notice.authorNickname.takeIf(String::isNotBlank),
-                        notice.createdAt.take(10).replace('-', '.').takeIf(String::isNotBlank)
+                        moyeoNoticeTime(notice.createdAt).takeIf(String::isNotBlank)
                     ).joinToString(" · "),
                     modifier = Modifier.weight(1f),
                     style = MaterialTheme.typography.labelSmall,
@@ -1801,17 +1849,26 @@ private fun CourseSourceChoice(
         )
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(
-                if (source ==
-                    CourseSource.Linked
-                ) {
-                    Icons.Filled.Map
-                } else {
-                    Icons.Filled.Route
-                },
-                null,
-                tint = MaterialTheme.colorScheme.primary
-            )
+            // 아이콘은 **둥근 사각형 배경**에 담는다 — 기획·웹·iOS 가 그렇고
+            // 안드로이드만 맨 아이콘이었다 (사용자 지적, 2026-09-09).
+            Surface(
+                modifier = Modifier.size(40.dp),
+                shape = RoundedCornerShape(10.dp),
+                color = if (selected) MaterialTheme.colorScheme.primary else MoyeoTheme.tints.primaryTint
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        if (source == CourseSource.Linked) Icons.Filled.Map else Icons.Filled.Route,
+                        null,
+                        tint = if (selected) {
+                            MaterialTheme.colorScheme.onPrimary
+                        } else {
+                            MaterialTheme.colorScheme.primary
+                        },
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+            }
             Column(Modifier.padding(start = 12.dp).weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(title, fontWeight = FontWeight.ExtraBold)
                 Text(
@@ -1856,6 +1913,9 @@ private fun CompactCourseChoice(
     subtitle: String,
     selected: Boolean,
     sourceLabel: String? = null,
+    /** 코스 대표 사진. **서버가 준다** — 예전에는 안 그려서 안드로이드만 사진이 없었다
+     *  (사용자 지적, 2026-09-09). 없으면 공용 플레이스홀더를 쓴다. */
+    thumbnail: String? = null,
     onClick: () -> Unit
 ) {
     Surface(
@@ -1868,7 +1928,13 @@ private fun CompactCourseChoice(
         )
     ) {
         Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Map, null, tint = MaterialTheme.colorScheme.primary)
+            CachedRemoteImage(
+                url = thumbnail,
+                contentDescription = null,
+                modifier = Modifier.size(52.dp).clip(RoundedCornerShape(10.dp)),
+                contentScale = ContentScale.Crop,
+                fallbackShape = MoyeoPlaceholderShape.SQUARE
+            ) { Box(Modifier.background(MaterialTheme.colorScheme.surfaceVariant)) }
             Column(Modifier.padding(start = 10.dp).weight(1f)) {
                 Text(title, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
@@ -2150,6 +2216,9 @@ private fun LabeledValue(
 }
 
 @Composable private fun SummaryRow(icon: ImageVector, label: String, value: String) {
+    // 값이 없으면 **줄 자체를 그리지 않는다** — 아이콘과 라벨만 남으면 정보가 빠진 것처럼 읽힌다
+    // (17-6 의 「마감」이 그렇게 비어 있었다, 사용자 지적 2026-09-09).
+    if (value.isBlank()) return
     Row(verticalAlignment = Alignment.Top) {
         Icon(icon, null, Modifier.size(17.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
         Text(

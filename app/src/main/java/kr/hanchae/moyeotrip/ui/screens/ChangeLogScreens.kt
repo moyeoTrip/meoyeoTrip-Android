@@ -69,6 +69,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledIconButton
@@ -85,7 +86,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -141,11 +141,13 @@ import kr.hanchae.moyeotrip.data.rooms.recruitmentDDayText
 import kr.hanchae.moyeotrip.ui.LocalServerData
 import kr.hanchae.moyeotrip.ui.MoyeoContact
 import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
+import kr.hanchae.moyeotrip.ui.components.MOYEO_CTA_HEIGHT
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.OverlayBackdrop
 import kr.hanchae.moyeotrip.ui.components.emphasized
+import kr.hanchae.moyeotrip.ui.components.moyeoRelativeTime
 import kr.hanchae.moyeotrip.ui.navigation.AppRoutes
 import kr.hanchae.moyeotrip.ui.theme.MoyeoTheme
 
@@ -203,22 +205,32 @@ private fun ChangeLogScaffold(
         modifier = modifier.fillMaxSize(),
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
+            // **제목은 가운데**다. `TopAppBar` 는 기본이 왼쪽 정렬이라 안드로이드만 제목이
+            // 왼쪽으로 쏠려 보였다 (20-1 「모임 정보」 등 · 사용자 지적 2026-09-09).
+            // 아이콘도 원형 배경으로 감싼다 — 기획·웹·iOS 가 그렇고, 다크 모드에서
+            // 맨 흰 아이콘이 배경 없이 떠 보이던 것도 이것 때문이었다.
+            CenterAlignedTopAppBar(
                 title = {
                     Text(
                         text = title,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.ExtraBold
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center,
+                        maxLines = 1
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = onBack, modifier = Modifier.size(48.dp)) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "뒤로")
+                    Box(Modifier.padding(start = 8.dp)) {
+                        MoyeoTopBarIconButton(
+                            icon = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "뒤로",
+                            onClick = onBack
+                        )
                     }
                 },
                 actions = { actions() },
                 windowInsets = WindowInsets(0.dp),
-                colors = TopAppBarDefaults.topAppBarColors(
+                colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 )
             )
@@ -290,6 +302,8 @@ fun ChatMenuScreen(
     onOpenNotificationSettings: (String) -> Unit,
     onOpenNotices: (String) -> Unit,
     onOpenRoute: (String) -> Unit,
+    /** 20-1 「모집 상세」 — 15 모집 상세로 간다. */
+    onOpenTrip: (String) -> Unit = {},
     /**
      * 20-1a 멤버 액션 · 20-1b 내보내기 사유는 20-1 위에 뜨는 **시트**다.
      *
@@ -319,6 +333,7 @@ fun ChatMenuScreen(
         onBack = onBack,
         onOpenNotices = onOpenNotices,
         onOpenRoute = onOpenRoute,
+        onOpenTrip = onOpenTrip,
         onOpenSpecialMessages = onOpenSpecialMessages,
         onOpenNotificationSettings = onOpenNotificationSettings,
         initialSheet = initialSheet
@@ -343,6 +358,8 @@ private fun ServerChatMenu(
     onBack: () -> Unit,
     onOpenNotices: (String) -> Unit,
     onOpenRoute: (String) -> Unit,
+    /** 20-1 「모집 상세」 — 15 모집 상세로 간다. */
+    onOpenTrip: (String) -> Unit,
     onOpenSpecialMessages: () -> Unit,
     onOpenNotificationSettings: (String) -> Unit,
     initialSheet: ChatMenuSheet
@@ -454,6 +471,24 @@ private fun ServerChatMenu(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 8.dp)
                             )
+                        }
+                        // 「모집 상세」·「여행 경로」 두 버튼. 기획·웹·iOS 는 머리글 바로 아래에
+                        // 이 둘을 두는데 안드로이드에만 없어서 아래 메뉴 줄로만 갈 수 있었다
+                        // (20-1, 사용자 지적 2026-09-09).
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { onOpenTrip("room-$roomId") },
+                                modifier = Modifier.weight(1f).height(46.dp).testTag("chat-menu-recruitment"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("모집 상세", fontWeight = FontWeight.Bold) }
+                            OutlinedButton(
+                                onClick = { onOpenRoute("room-$roomId") },
+                                modifier = Modifier.weight(1f).height(46.dp).testTag("chat-menu-route"),
+                                shape = RoundedCornerShape(12.dp)
+                            ) { Text("여행 경로", fontWeight = FontWeight.Bold) }
                         }
                     }
                 }
@@ -901,7 +936,7 @@ private fun MemberActionsSheet(
                 onClick = onDismiss,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(MOYEO_CTA_HEIGHT)
                     .testTag("member-actions-close"),
                 shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary)
@@ -1177,7 +1212,8 @@ fun ChatAttachmentScreen(
 ) {
     val backdropThreadId = threadId ?: OVERLAY_BACKDROP_THREAD_ID
     val items = listOf(
-        AttachTile(Icons.Filled.CameraAlt, "사진", "최대 20MB · 1장씩", AppRoutes.attachPhoto(threadId)),
+        // 부제는 네 표면이 글자까지 같다 — 예전에는 안드로이드만 「전송」이 빠져 있었다 (20-2).
+        AttachTile(Icons.Filled.CameraAlt, "사진", "최대 20MB · 1장씩 전송", AppRoutes.attachPhoto(threadId)),
         AttachTile(Icons.Filled.LocationOn, "장소", "관광 정보에서 찾기", AppRoutes.attachPlace(threadId)),
         AttachTile(Icons.Filled.Map, "지도", "만날 위치 핀 공유", AppRoutes.attachMap(threadId)),
         AttachTile(Icons.Filled.Poll, "투표", "2~5개 · 익명 기본", AppRoutes.attachPoll(threadId)),
@@ -1185,7 +1221,7 @@ fun ChatAttachmentScreen(
         AttachTile(
             Icons.AutoMirrored.Filled.StickyNote2,
             "메모",
-            "상단 고정 공지",
+            "상단 고정 공지 (호스트)",
             AppRoutes.attachNotice(threadId)
         )
     )
@@ -1352,7 +1388,10 @@ fun FriendsScreen(
                 FriendEntry(
                     emoji = "🐻",
                     name = friend.user.nickname,
-                    subtitle = friend.user.introduction ?: friend.lastActive.orEmpty(),
+                    // 부제는 **마지막 접속**이 먼저다 — iOS·27-2a 시트와 같은 근거다.
+                    // 소개글을 먼저 쓰면 같은 친구가 화면마다 다른 부제로 보인다.
+                    subtitle = friend.lastActive?.takeIf(String::isNotBlank)?.let { "$it 접속" }
+                        ?: friend.user.introduction.orEmpty(),
                     imageUrl = friend.user.profileImageUrl,
                     userId = friend.user.userId
                 )
@@ -1407,7 +1446,7 @@ fun FriendsScreen(
         Column(modifier = Modifier.fillMaxSize().padding(padding)) {
             Row(modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp)) {
                 tabs.forEachIndexed { index, label ->
-                    TextButton(onClick = { tab = index }, modifier = Modifier.weight(1f).height(48.dp)) {
+                    TextButton(onClick = { tab = index }, modifier = Modifier.weight(1f).height(MOYEO_CTA_HEIGHT)) {
                         Text(
                             label,
                             color = if (tab ==
@@ -1508,6 +1547,10 @@ fun FriendsScreen(
                                     onClick = {
                                         friend.requestId?.let { answerRequest(it, accept = true) }
                                     },
+                                    // 목록 줄 안의 작은 버튼이다 — 하단 주 버튼(48)과 다른 크기가 맞다.
+                                    // 값을 **적어 둔다**: 안 적으면 프레임워크 기본값(40)에 맡기는 것이라
+                                    // 나중에 기본값이 바뀌면 조용히 달라진다.
+                                    modifier = Modifier.height(36.dp),
                                     contentPadding = PaddingValues(
                                         horizontal = 12.dp
                                     ),
@@ -1735,9 +1778,12 @@ fun TripMessageScreen(
                             verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             presets.forEach { preset ->
-                                OutlinedButton(onClick = {
-                                    messages[companion.userId] = preset
-                                }, shape = RoundedCornerShape(12.dp)) { Text(preset) }
+                                OutlinedButton(
+                                    onClick = { messages[companion.userId] = preset },
+                                    // 고르는 칩이다 — 하단 주 버튼과 다른 크기가 맞다(값은 적어 둔다).
+                                    modifier = Modifier.height(36.dp),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) { Text(preset) }
                             }
                         }
                     }
@@ -1838,11 +1884,13 @@ fun ReportUnsupportedDialog(onDismiss: () -> Unit) {
                 // 안내만 하고 끝나면 아무 일도 일어나지 않는다 — 실제로 갈 수 있는 두 창구를 버튼으로 둔다.
                 OutlinedButton(
                     onClick = { uriHandler.openUri(MoyeoContact.ISSUES_URL) },
-                    modifier = Modifier.fillMaxWidth().testTag("report-unsupported-issues")
+                    modifier = Modifier.fillMaxWidth().height(44.dp).testTag("report-unsupported-issues"),
+                    shape = RoundedCornerShape(12.dp)
                 ) { Text(MoyeoContact.ISSUES_LABEL, fontWeight = FontWeight.ExtraBold) }
                 OutlinedButton(
                     onClick = { uriHandler.openUri(MoyeoContact.MAILTO_URL) },
-                    modifier = Modifier.fillMaxWidth().testTag("report-unsupported-email")
+                    modifier = Modifier.fillMaxWidth().height(44.dp).testTag("report-unsupported-email"),
+                    shape = RoundedCornerShape(12.dp)
                 ) { Text(MoyeoContact.EMAIL_LABEL, fontWeight = FontWeight.ExtraBold) }
             }
         },
@@ -2031,7 +2079,7 @@ fun ReportScreen(onBack: () -> Unit, feedId: Long? = null) {
                         Surface(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(50.dp)
+                                .height(MOYEO_CTA_HEIGHT)
                                 .clickable { selected = reason.reason },
                             shape = RoundedCornerShape(11.dp),
                             border = BorderStroke(
@@ -2296,6 +2344,9 @@ fun CoursePublishScreen(onBack: () -> Unit, onPublished: () -> Unit) {
         course = lastTrip?.roomId?.let { runCatching { server.courses.roomCourse(it) }.getOrNull() }
         // 코스 이름은 서버 코스 제목에서 시작하고, 사용자가 고칠 수 있다
         course?.title?.let { if (title.isBlank()) title = it }
+        // 한 줄 소개도 코스 소개에서 시작한다 — 웹·iOS 는 그렇게 채우는데
+        // 안드로이드만 빈 칸으로 남아 「소개가 없는 코스」처럼 찍혔다 (27-3, 2026-09-09).
+        course?.description?.let { if (summary.isBlank()) summary = it.take(60) }
         runCatching { server.userProfile.profile() }.getOrNull()?.let { profile ->
             myNickname = profile.nickname
             myProfileImageUrl = profile.profileImageUrl
@@ -2313,7 +2364,11 @@ fun CoursePublishScreen(onBack: () -> Unit, onPublished: () -> Unit) {
                     modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(12.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    TextButton(onClick = onBack) { Text("지금은 안 할래요") }
+                    // 「지금은 안 할래요」는 **회색 글자**다 — 기획·웹·iOS 가 그렇다.
+                    // `TextButton` 기본색(초록)을 쓰면 안드로이드만 두 버튼이 다 초록으로 보인다.
+                    TextButton(onClick = onBack) {
+                        Text("지금은 안 할래요", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
                     Button(
                         onClick = { showConfirmation = true },
                         // 공개할 코스가 없으면 누를 수 없다. 서버는 소개도 필수로 받는다(@NotBlank).
@@ -2904,12 +2959,20 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
             }
             items(modes) { (title, description) ->
                 val selected = mode == title
+                // 고른 칸은 **체크 동그라미 + 옅은 초록 배경**이다.
+                // 예전에는 Material `RadioButton`(가운데 점)에 배경도 없어서,
+                // 기획·웹·iOS 셋이 체크 표시 + 옅은 초록인데 안드로이드만 달랐다 (29-2, 2026-09-09).
                 Surface(
                     modifier = Modifier.fillMaxWidth().clickable {
                         mode = title
                         pushServerSettings()
                     },
                     shape = RoundedCornerShape(12.dp),
+                    color = if (selected) {
+                        MaterialTheme.colorScheme.primaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
                     border = BorderStroke(
                         1.dp,
                         if (selected) {
@@ -2920,15 +2983,34 @@ fun NotificationDetailScreen(onBack: () -> Unit) {
                     )
                 ) {
                     Row(
-                        modifier = Modifier.padding(end = 14.dp, top = 10.dp, bottom = 10.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        RadioButton(selected = selected, onClick = {
-                            mode = title
-                            pushServerSettings()
-                        })
+                        Icon(
+                            imageVector = if (selected) {
+                                Icons.Filled.CheckCircle
+                            } else {
+                                Icons.Outlined.Circle
+                            },
+                            contentDescription = null,
+                            tint = if (selected) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.outline
+                            },
+                            modifier = Modifier.size(20.dp)
+                        )
                         Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
-                            Text(title, fontWeight = FontWeight.Bold)
+                            Text(
+                                title,
+                                fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Bold,
+                                color = if (selected) {
+                                    MaterialTheme.colorScheme.primary
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                }
+                            )
                             Text(
                                 description,
                                 style = MaterialTheme.typography.labelMedium,
@@ -3378,6 +3460,9 @@ fun FeedCommentsScreen(postId: String, onBack: () -> Unit) {
     // 댓글 신고는 접수 API 가 없다 — 안내만 한다. 차단은 신고와 분리해 따로 확인받는다(정본 §3).
     var showReportNotice by remember(feedId) { mutableStateOf(false) }
     var blockTarget by remember(feedId) { mutableStateOf<FeedComment?>(null) }
+    // 「답글 달기」의 대상. 서버는 `parentCommentId` 를 받는데 **어느 화면도 보내지 않아**
+    // 네 표면 모두 답글을 달 수 없었다 (기획에는 「답글 달기」가 있다, 23-1 사용자 지적 2026-09-09).
+    var replyTarget by remember(feedId) { mutableStateOf<FeedComment?>(null) }
     var reportMessage by remember(feedId) { mutableStateOf<String?>(null) }
     val commentScope = rememberCoroutineScope()
 
@@ -3431,52 +3516,87 @@ fun FeedCommentsScreen(postId: String, onBack: () -> Unit) {
         modifier = Modifier.testTag("feed-comments-screen-$postId"),
         bottomBar = {
             Surface(shadowElevation = 8.dp) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().navigationBarsPadding().padding(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    UserAvatar(
-                        imageUrl = myProfile?.profileImageUrl,
-                        nickname = myProfile?.nickname,
-                        modifier = Modifier.size(34.dp),
-                        fallbackFontSize = 16.sp
-                    )
-                    OutlinedTextField(
-                        value = draft,
-                        onValueChange = { draft = it },
-                        placeholder = { Text("댓글을 남겨주세요") },
-                        modifier = Modifier.weight(1f),
-                        singleLine = true,
-                        shape = RoundedCornerShape(24.dp)
-                    )
-                    FilledIconButton(
-                        onClick = {
-                            val trimmed = draft.trim()
-                            if (trimmed.isNotEmpty() && feedId != null && server != null) {
-                                commentScope.launch {
-                                    runCatching { server.feeds.addComment(feedId, trimmed) }
-                                        .onSuccess {
-                                            // 댓글을 달면 **첫 묶음부터 다시 읽는다**(웹과 같은 결정).
-                                            // 이미 받아 둔 여러 묶음 사이에 새 댓글을 손으로 끼워
-                                            // 넣으면 서버 순서를 클라가 흉내내야 해서 어긋난다.
-                                            draft = ""
-                                            feed = feed?.let { it.copy(commentCount = it.commentCount + 1) }
-                                            val reloaded = runCatching {
-                                                server.feeds.comments(feedId, limit = FEED_COMMENTS_PAGE_SIZE)
-                                            }.getOrNull()
-                                            if (reloaded != null) {
-                                                comments = reloaded.comments
-                                                nextCommentCursor = reloaded.nextId
-                                                commentListState.scrollToItem(0)
-                                            }
+                Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+                    // 답글을 쓰는 중이면 누구에게 쓰는지 위에 띠로 알려 준다 — 아니면 일반 댓글과 구분되지 않는다.
+                    replyTarget?.let { target ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(horizontal = 14.dp, vertical = 8.dp)
+                                .testTag("feed-comment-reply-banner"),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "${target.author.nickname}님에게 답글",
+                                modifier = Modifier.weight(1f),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                "취소",
+                                modifier = Modifier
+                                    .clickable(role = Role.Button) { replyTarget = null }
+                                    .testTag("feed-comment-reply-cancel"),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        UserAvatar(
+                            imageUrl = myProfile?.profileImageUrl,
+                            nickname = myProfile?.nickname,
+                            modifier = Modifier.size(34.dp),
+                            fallbackFontSize = 16.sp
+                        )
+                        OutlinedTextField(
+                            value = draft,
+                            onValueChange = { draft = it },
+                            placeholder = {
+                                Text(if (replyTarget == null) "댓글을 남겨주세요" else "답글을 남겨주세요")
+                            },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            shape = RoundedCornerShape(24.dp)
+                        )
+                        FilledIconButton(
+                            onClick = {
+                                val trimmed = draft.trim()
+                                if (trimmed.isNotEmpty() && feedId != null && server != null) {
+                                    commentScope.launch {
+                                        runCatching {
+                                            server.feeds.addComment(feedId, trimmed, replyTarget?.commentId)
                                         }
+                                            .onSuccess {
+                                                replyTarget = null
+                                                // 댓글을 달면 **첫 묶음부터 다시 읽는다**(웹과 같은 결정).
+                                                // 이미 받아 둔 여러 묶음 사이에 새 댓글을 손으로 끼워
+                                                // 넣으면 서버 순서를 클라가 흉내내야 해서 어긋난다.
+                                                draft = ""
+                                                feed = feed?.let { it.copy(commentCount = it.commentCount + 1) }
+                                                val reloaded = runCatching {
+                                                    server.feeds.comments(feedId, limit = FEED_COMMENTS_PAGE_SIZE)
+                                                }.getOrNull()
+                                                if (reloaded != null) {
+                                                    comments = reloaded.comments
+                                                    nextCommentCursor = reloaded.nextId
+                                                    commentListState.scrollToItem(0)
+                                                }
+                                            }
+                                    }
                                 }
-                            }
-                        },
-                        enabled = draft.isNotBlank() && feedId != null && server != null,
-                        modifier = Modifier.size(48.dp)
-                    ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "댓글 보내기") }
+                            },
+                            enabled = draft.isNotBlank() && feedId != null && server != null,
+                            modifier = Modifier.size(48.dp)
+                        ) { Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "댓글 보내기") }
+                    }
                 }
             }
         }
@@ -3546,7 +3666,8 @@ fun FeedCommentsScreen(postId: String, onBack: () -> Unit) {
                             FeedCommentRow(
                                 comment,
                                 onReport = { showReportNotice = true },
-                                onBlock = { blockTarget = comment }
+                                onBlock = { blockTarget = comment },
+                                onReply = { replyTarget = comment }
                             )
                             comment.replies.forEach { reply ->
                                 // 대댓글은 들여쓰기로 부모와의 관계를 보여준다
@@ -3626,7 +3747,14 @@ fun FeedCommentsScreen(postId: String, onBack: () -> Unit) {
  * 좋아요·"함께 간 친구" 배지는 서버 댓글 응답에 없어 두지 않는다(§4 BE 요청).
  */
 @Composable
-private fun FeedCommentRow(comment: FeedComment, compact: Boolean = false, onReport: () -> Unit, onBlock: () -> Unit) {
+private fun FeedCommentRow(
+    comment: FeedComment,
+    compact: Boolean = false,
+    onReport: () -> Unit,
+    onBlock: () -> Unit,
+    /** null 이면 답글을 달 수 없는 자리(대댓글의 답글은 서버가 받지 않는다). */
+    onReply: (() -> Unit)? = null
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.Top) {
         UserAvatar(
             imageUrl = comment.author.profileImageUrl,
@@ -3644,8 +3772,10 @@ private fun FeedCommentRow(comment: FeedComment, compact: Boolean = false, onRep
                     fontWeight = FontWeight.ExtraBold,
                     style = MaterialTheme.typography.bodySmall
                 )
+                // 시각은 피드·댓글과 같은 **상대 시각**이다 (기획·웹·iOS 가 「15시간 전」이라고 쓴다).
+                // 예전에는 안드로이드만 `2026.09.07` 처럼 날짜만 찍었다.
                 Text(
-                    comment.createdAt.take(10).replace('-', '.'),
+                    moyeoRelativeTime(comment.createdAt),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -3653,6 +3783,18 @@ private fun FeedCommentRow(comment: FeedComment, compact: Boolean = false, onRep
             Text(comment.content, style = MaterialTheme.typography.bodyMedium)
             // 신고와 차단은 결과가 다르다 — 한 줄에 섞지 않고 두 행동으로 나눈다(정본 §3).
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                // 기획의 「답글 달기」. 누르면 아래 작성 줄이 이 댓글의 답글 모드로 바뀐다.
+                onReply?.let { reply ->
+                    Text(
+                        "답글 달기",
+                        modifier = Modifier
+                            .clickable(role = Role.Button, onClick = reply)
+                            .testTag("feed-comment-reply"),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
                 Text(
                     "신고",
                     modifier = Modifier

@@ -21,15 +21,19 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContactPage
 import androidx.compose.material.icons.filled.Event
 import androidx.compose.material.icons.filled.Groups
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.PersonRemove
 import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.DatePicker
@@ -59,6 +63,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -70,6 +75,7 @@ import java.time.LocalTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.launch
+import kr.hanchae.moyeotrip.data.courses.TravelCourse
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomDetail
 import kr.hanchae.moyeotrip.data.rooms.ChatRoomSearchResult
 import kr.hanchae.moyeotrip.data.rooms.MeetingInfoUpdate
@@ -79,6 +85,7 @@ import kr.hanchae.moyeotrip.data.rooms.RoomNotice
 import kr.hanchae.moyeotrip.data.rooms.RoomStatusChange
 import kr.hanchae.moyeotrip.data.social.Friend
 import kr.hanchae.moyeotrip.ui.LocalServerData
+import kr.hanchae.moyeotrip.ui.components.CachedRemoteImage
 import kr.hanchae.moyeotrip.ui.components.KakaoMapView
 import kr.hanchae.moyeotrip.ui.components.MapMarker
 import kr.hanchae.moyeotrip.ui.components.MapMarkerShape
@@ -86,6 +93,7 @@ import kr.hanchae.moyeotrip.ui.components.MapUnavailablePlaceholder
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyState
 import kr.hanchae.moyeotrip.ui.components.MoyeoEmptyText
 import kr.hanchae.moyeotrip.ui.components.MoyeoLatLng
+import kr.hanchae.moyeotrip.ui.components.MoyeoPlaceholderShape
 import kr.hanchae.moyeotrip.ui.components.OverlayBackdrop
 import kr.hanchae.moyeotrip.ui.components.ServerListState
 import kr.hanchae.moyeotrip.ui.components.afterReload
@@ -101,11 +109,13 @@ import kr.hanchae.moyeotrip.ui.components.afterReload
 // 실행 버튼만 잠그고 이유를 적는다 — 예시 값을 대신 그리지 않는다.
 
 /** 대상 방을 못 찾았을 때 CTA 아래에 적는 이유. 20-2a~f 의 `NO_ROOM_HINT` 와 같은 자리다. */
-private const val GAP_NO_ROOM_HINT = "실제 모임에서 열어야 보낼 수 있어요."
+// `internal` 이다 — 수정·삭제 화면 7종(`EditDeleteScreens.kt`)이 같은 골격을 쓴다.
+// 화면마다 다른 껍데기를 만들면 같은 종류로 읽히지 않는다.
+internal const val GAP_NO_ROOM_HINT = "실제 모임에서 열어야 보낼 수 있어요."
 
 /** §6 화면 공통 골격. [cta] 가 null 이면 하단 바 없이 스크롤 본문만 그린다. */
 @Composable
-private fun GapScaffold(
+internal fun GapScaffold(
     title: String,
     onBack: () -> Unit,
     testTag: String,
@@ -225,7 +235,7 @@ private fun GapNoteBox(lines: List<String>) {
 }
 
 @Composable
-private fun GapFieldLabel(text: String, required: Boolean = false) {
+internal fun GapFieldLabel(text: String, required: Boolean = false) {
     Text(
         text = if (required) "$text *" else text,
         style = MaterialTheme.typography.labelMedium,
@@ -257,7 +267,9 @@ internal fun MoyeoStarRating(
     ) {
         (1..5).forEach { n ->
             Icon(
-                imageVector = Icons.Filled.Star,
+                // 안 고른 별은 **외곽선**이다. 채운 회색 별을 쓰면 진입 상태가 「5점 줬다」로
+                // 읽힌다 — 기획·웹·iOS 셋 다 외곽선을 쓴다 (27-4, 사용자 지적 2026-09-09).
+                imageVector = if (n <= score) Icons.Filled.Star else Icons.Outlined.StarOutline,
                 contentDescription = "${n}점",
                 modifier = Modifier
                     .size(starSize.dp)
@@ -298,10 +310,15 @@ fun CourseRatingScreen(threadId: String?, onBack: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var room by remember(roomId, server) { mutableStateOf<ChatRoomDetail?>(null) }
+    // 코스 사진·방문지 수·거리는 **코스 응답**에 있다 (방 상세에는 없다).
+    // 예전에는 방 상세만 받아서 안드로이드 카드만 사진이 없고 「2026.08.28 · 1일」로 찍혔다
+    // (27-4, 사용자 지적 2026-09-09).
+    var course by remember(roomId, server) { mutableStateOf<TravelCourse?>(null) }
 
     LaunchedEffect(roomId, server) {
         if (server == null || roomId == null) return@LaunchedEffect
         room = runCatching { server.chatRooms.room(roomId) }.getOrNull()
+        course = runCatching { server.courses.roomCourse(roomId) }.getOrNull()
     }
 
     GapScaffold(
@@ -345,20 +362,44 @@ fun CourseRatingScreen(threadId: String?, onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.surface,
                 border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
             ) {
-                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        detail.courseTitle ?: detail.title,
-                        fontWeight = FontWeight.ExtraBold,
-                        modifier = Modifier.testTag("course-rating-course")
-                    )
-                    Text(
-                        listOfNotNull(
-                            detail.startDate.takeIf(String::isNotBlank)?.replace('-', '.'),
-                            "${detail.tripDays}일"
-                        ).joinToString(" · "),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Row(
+                    Modifier.padding(14.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CachedRemoteImage(
+                        url = course?.thumbnail ?: detail.thumbnail,
+                        contentDescription = detail.courseTitle ?: detail.title,
+                        modifier = Modifier.size(54.dp).clip(RoundedCornerShape(12.dp)),
+                        contentScale = ContentScale.Crop,
+                        fallbackShape = MoyeoPlaceholderShape.SQUARE
+                    ) {
+                        Box(
+                            Modifier
+                                .size(54.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                        )
+                    }
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            detail.courseTitle ?: detail.title,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.testTag("course-rating-course")
+                        )
+                        // 「2026.08.28 다녀옴 · 3곳 · 19.9km」 — 기획·iOS 와 같은 줄이다.
+                        Text(
+                            listOfNotNull(
+                                detail.startDate.takeIf(String::isNotBlank)
+                                    ?.replace('-', '.')
+                                    ?.let { "$it 다녀옴" },
+                                course?.places?.size?.takeIf { it > 0 }?.let { "${it}곳" },
+                                course?.distanceKm?.let { "%.1fkm".format(it) }
+                            ).joinToString(" · "),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }
@@ -1311,7 +1352,7 @@ fun KickHistoryScreen(onBack: () -> Unit) {
  * 각자 다른 모양이면 사용자가 "이건 아까 그거랑 다른 건가" 하고 멈칫한다.
  */
 @Composable
-private fun GapConfirmSheet(
+internal fun GapConfirmSheet(
     title: String,
     description: String,
     lines: List<String>,
@@ -1583,11 +1624,25 @@ fun FriendManageScreen(
                     onClick = { onOpenProfile(userId) },
                     modifier = Modifier.fillMaxWidth().height(54.dp).testTag("friend-manage-profile")
                 ) {
+                    // 아이콘은 기획·iOS 와 같은 자리·같은 뜻이다 (카드 · 오른쪽 화살표).
+                    // 예전에는 글자만 있어서 안드로이드만 줄이 비어 보였다.
+                    Icon(
+                        Icons.Filled.ContactPage,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = colors.onSurfaceVariant
+                    )
                     Text(
                         "프로필 카드 보기",
-                        Modifier.weight(1f),
+                        Modifier.weight(1f).padding(start = 10.dp),
                         color = colors.onSurface,
                         fontWeight = FontWeight.SemiBold
+                    )
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = colors.onSurfaceVariant
                     )
                 }
                 HorizontalDivider(color = colors.outline.copy(alpha = .45f))
@@ -1596,9 +1651,15 @@ fun FriendManageScreen(
                     enabled = server != null && !busy,
                     modifier = Modifier.fillMaxWidth().height(54.dp).testTag("friend-manage-remove")
                 ) {
+                    Icon(
+                        Icons.Filled.PersonRemove,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
+                        tint = colors.error
+                    )
                     Text(
                         "친구 끊기",
-                        Modifier.weight(1f),
+                        Modifier.weight(1f).padding(start = 10.dp),
                         color = colors.error,
                         fontWeight = FontWeight.SemiBold
                     )
